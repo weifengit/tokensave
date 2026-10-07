@@ -280,3 +280,77 @@ dsh-host-gateway.mjs:449/466/479  cwd → createRootAgent({ cwd }) → agents.cr
 **⚠️ 需要重启 DSH**：本轮改了**宿主侧**（`src/board-web-route.ts`、`src/orchestration/parallel-explorer.ts`）。client bundle 会热重载，但宿主代码只在进程启动时加载——实测线上 `/plugins/dsh-tokensave/scope` 目前仍 404（客户端新代码已下发，但宿主没这个路由）。**重启后**该路由才生效，探索者才会强制跟随当前工作台项目。
 
 **浏览器目检项**：重启后进入项目 A 的工作台 → 在该工作台里发起 `tokensave_delegate`（即使发起会话属于项目 B）→ 探索者窗口应出现在 A、黑板写入 A、`?workspace=<A>` 能查到；退出工作台（回项目列表）后再发起 → 探索者跟随发起会话。
+
+## Step 21（2026-10-07）：第三轮反馈修复 —— 会话归属 / 消息呈现 / 卡片内滚动
+
+### #1 不同项目的工作台显示同一个会话（结构性 bug）
+
+**根因**：`conversation.view` 收到的 `sessionId` 是**宿主全局当前会话**，而中下格（MainChat）与探索者窗口都订阅这个全局会话。于是从 A 项目切到 B 项目后，B 的工作台仍然显示 A 的会话（实测表现为「dsh / info_report / tokensave 三个项目显示的都是 tokensave 最近一次会话」）。上一轮加的 `sessionBelongsToProject` 校验被绕过了——它只在「恢复记忆」路径上校验，而点「进入工作台」按钮时直接 `setOpenedId(p.id)`，从不校验。
+
+**修法**（把归属判定从「恢复路径」提到「工作台自身的生命周期」）：
+- `panel/sessions.ts` 新增 `latestProjectSession(ctx, projectPath)`：取该项目**最近活动的非空白会话**（真正有内容的那个），没有非空白会话时退回空白会话，都没有返回 null。
+- `HDesk` 挂载后（依赖 `project.path` / `sessionId`）：
+  - 当前会话**已属于本项目** → 不动（避免把用户手动切到的历史会话抢回最新）；
+  - 否则取本项目自己的会话 → 先写记忆 → `openSession(own.id)` 把宿主切过去。
+  - 这样 MainChat、探索者窗口、宿主原生输入条三者指向**同一个本项目会话**（输入条属于宿主，必须切会话才能一致）。
+  - 无会话时提示「点右上角＋新建会话开始」；导航失败复位守卫并提示，可重试。
+- `ControlRoom` 不再做归属校验（那是 UI 记忆恢复），只负责记忆恢复与列表；移除随之失效的 `getClientContext` / `sessionBelongsToProject` / `VIEW_ID` 导入。
+
+### #2 消息流一股脑平铺（英文工具输出淹没界面）
+
+`MsgList` 原样渲染全部消息。改为对齐 DSH 默认对话的呈现：
+- user / assistant 正常渲染（真实对话内容）；
+- **tool / system 默认折叠成一行预览**（120 字截断），点 `▾/▴` 才展开全文（展开区自身 `max-height:220px` 内滚）；
+- 只渲染**最近 120 条**，更早的折成「更早的 N 条已折叠」提示（避免 DOM 爆炸）。
+
+探索者窗口共用同一个 `MsgList`，因此同样受益。
+
+### #3 工作台整体长滚动条
+
+根因：`.ts-desk-col` 是 `overflow:auto`（整列滚），`.ts-cr` 也没锁溢出。改为：
+- `.ts-cr` 加 `overflow:hidden`；`.ts-desk-col` 改 `overflow:hidden`；
+- `.ts-card` 加 `overflow:hidden`，并显式让卡内列表（`.ts-chat-msgs` / `.ts-board-list` / `.ts-talk-list` / `.ts-save-body`）承担滚动（`min-height:0; overflow:auto`）。
+
+即：**工作台自身不滚动，滚动发生在各卡片内部**。
+
+### #4 项目中心右上角「添加项目」重复
+
+网格末尾本来就有「＋ 添加项目」新建卡（空列表时是居中大卡），右上角那个是重复入口。已删除头部按钮及其失效样式 `.ts-center-add`（保留注释说明）。
+
+**验证**：`pnpm run check` 全绿；bundle 152,288B + `node --check` 通过；解码核验 `latestProjectSession` / `sessionBelongsToProject` / 「该项目还没有会话」/「更早的…已折叠」/ `ts-msg-toggle` / `ts-msg-preview` / `ts-msg-full` 全部在位，右上角按钮类名已消失。
+
+**浏览器目检项**：项目 A 与项目 B 的工作台分别显示各自项目的会话（默认最新）；主对话里工具调用只占一行、点击可展开；探索者窗口同样折叠；工作台本身无长滚动条、各卡片内部滚动；项目中心右上角无「添加项目」。
+
+## Step 22（2026-10-07）：项目中心背景覆盖到输入框及其下方区域
+
+**用户反馈**：项目中心界面里，DSH 主聊天输入框及其以下区域没有被流光玻璃背景覆盖，整体不协调。
+
+### 根因（读宿主 DOM/CSS 得出）
+
+宿主 `ui-conversation` 的实际结构是：
+
+```
+[data-conversation-scroll]        ← 共享滚动容器（flex column）
+├─ [data-slot=conversation.session] → viewArea ← **我们的项目中心视图在这里**
+└─ [data-conversation-region="composer"]       ← 输入条座位（**兄弟节点**）
+```
+
+即输入条座位与本视图是**兄弟**，不是后代。因此视图内部的 `.ts-center-bg`（`position:absolute; inset:0`）**在结构上永远盖不到输入框**。
+
+雪上加霜：宿主给输入条座位加了自带的不透明渐变底（`composerSeat{ background:linear-gradient(180deg, transparent 0px, var(--dsw-alias-bg-base) 36px) }`），用来遮住从下方滚过的内容。
+
+### 修法
+
+把背景上提到**两者共享的父容器**，并把输入条座位的底色放开：
+
+1. `ControlRoom` 在**列表态**给 `document.body` 加 `ts-center-open`（进入工作台时 `openedKey` 非空 → 不添加；effect 位于早返回之前，hooks 顺序稳定）。
+2. `body.ts-center-open [data-conversation-scroll]` 铺三层径向渐变（紫/青/粉，与光晕同色系）+ 30px 网格，`background-size` 逐层对应。
+3. `body.ts-center-open [data-conversation-region="composer"] { background: transparent !important }` —— 让容器背景透上来。
+   - 之所以敢直接置透明：宿主那层渐变是为了遮「从下方滚过的内容」，而项目中心的滚动发生在**卡片内部**（`.ts-center-inner` / 各卡片），输入框下方没有内容会滚过，不存在穿透问题。
+4. `.ts-center-bg::after` 的网格**移除**（网格已上提到共享容器），只保留流动光晕，避免两层网格错位出现摩尔纹。
+
+工作台（HDesk）不受影响：`ts-center-open` 只在列表态添加，且与 `ts-hdesk-open` 互斥。
+
+**验证**：`pnpm run check` 全绿；bundle 154,404B + `node --check` 通过；CSS 大括号平衡校验为 0；解码核验 `ts-center-open` / `data-conversation-scroll` / `data-conversation-region` 均在位。
+
+**浏览器目检项**：项目中心列表态下，输入框及其下方区域与上方卡片区背景连成一片（网格 + 光晕连续）；输入框本体仍清晰可读；进入工作台后背景恢复原样、H 台不受影响。

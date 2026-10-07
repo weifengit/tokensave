@@ -26,7 +26,8 @@ import { TalkColumn } from './TalkColumn'
 import { SavingsColumn } from './SavingsColumn'
 import { MainChat } from './MainChat'
 import { SessionPicker } from './SessionPicker'
-import { useProjectSessions, openSession, startProjectSession } from './sessions'
+import { useProjectSessions, openSession, startProjectSession, latestProjectSession, sessionBelongsToProject } from './sessions'
+import { getClientContext } from '../session-subscribe'
 import { rememberOpenedProject } from './store'
 import type { ProjectRecord } from './store'
 import { reportExplorerCount } from '../float/mount'
@@ -230,6 +231,38 @@ export function HDesk({ project, sessionId, onBack }: Props) {
     void publishProjectScope(project.path)
     return () => { void publishProjectScope('') }
   }, [project.path])
+
+  // —— 主对话必须绑定「本项目自己的会话」（#1）——
+  //
+  // 中下格与探索者窗口都订阅宿主**当前**会话；而 conversation.view 拿到的 sessionId 是
+  // 宿主全局当前会话——若用户是从别的项目切过来，它就不属于本项目，于是每个项目的工作台
+  // 都会显示同一个（不相干的）会话。
+  //
+  // 这里把宿主切到本项目自己的会话（默认最新）。顺序很关键：先写记忆再导航——
+  // 导航会重挂 ControlRoom 并立即读记忆。
+  const boundRef = useRef<string>('')
+  useEffect(() => {
+    const ctx = getClientContext()
+    if (!ctx) return
+    // 当前会话已属于本项目：不动（避免把用户手动切到的历史会话抢回最新）
+    if (sessionId && sessionBelongsToProject(ctx, sessionId, project.path)) {
+      boundRef.current = sessionId
+      return
+    }
+    if (boundRef.current === project.id) return
+    boundRef.current = project.id
+    const own = latestProjectSession(ctx, project.path)
+    if (!own) {
+      setProbeError('该项目还没有会话，点右上角「＋ 新建会话」开始')
+      return
+    }
+    rememberOpenedProject(own.id, project.id)
+    // 导航失败不占位：复位守卫，下次依赖变化（如用户新建会话）可重试
+    if (!openSession(own.id)) {
+      boundRef.current = ''
+      setProbeError('切换本项目会话失败：会话导航服务不可用')
+    }
+  }, [project.path, sessionId])
 
   const cardOf = (id: string): CardState => cards[id] || CARD_DEFAULT
   const setCard = (id: string, patch: Partial<CardState>) =>

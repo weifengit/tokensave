@@ -7,13 +7,11 @@
  * 彩光光晕，配色全部走半透明中性色，深浅主题都自适应（不依赖宿主主题探测）。
  */
 import React, { useEffect, useState } from 'react'
-import { getClientContext } from '../session-subscribe'
 import { injectProjectCenterStyles } from './styles'
 import { loadProjects, removeProject, recallOpenedProject, rememberOpenedProject } from './store'
 import type { ProjectRecord } from './store'
 import { AddProjectDialog } from './AddProjectDialog'
 import { HDesk } from './HDesk'
-import { sessionBelongsToProject, VIEW_ID } from './sessions'
 
 interface Props {
   sessionId?: string
@@ -35,6 +33,7 @@ export function ControlRoom({ sessionId }: Props) {
   useEffect(() => { injectProjectCenterStyles() }, [])
 
   const [projects, setProjects] = useState<ProjectRecord[]>([])
+
   const [showAdd, setShowAdd] = useState(false)
   const [openedId, setOpenedId] = useState<string | null>(null)
 
@@ -42,36 +41,40 @@ export function ControlRoom({ sessionId }: Props) {
   useEffect(() => { refresh() }, [])
 
   // 会话重挂（切换会话/刷新页面）后恢复上次打开的工作台。
-  // 记忆只是 UI 偏好；真正的绑定校验看会话 cwd 是否属于该项目（隔离，见 #7）。
+  // 记忆只是 UI 偏好；真正“看哪个会话”由 HDesk 按项目自己解析（见 #1）。
   const [bindingError, setBindingError] = useState<string | null>(null)
   useEffect(() => {
     if (!sessionId) return
-    const ctx = getClientContext()
-    const all = loadProjects()
     const remembered = recallOpenedProject(sessionId)
-    setOpenedId((current) => {
-      const want = current ?? remembered
-      if (!want) return current
-      const proj = all.find((p) => p.id === want)
-      if (!proj) return current
-      // 会话不属于该项目：不展示其工作台，并清除陈旧记忆
-      if (ctx && !sessionBelongsToProject(ctx, sessionId, proj.path)) {
-        if (remembered === want) rememberOpenedProject(sessionId, null)
-        setBindingError(`当前会话不属于「${proj.name}」，已退回项目列表`)
-        return null
-      }
-      return current ?? want
-    })
+    if (!remembered) return
+    if (!loadProjects().some((p) => p.id === remembered)) {
+      rememberOpenedProject(sessionId, null)
+      return
+    }
+    setOpenedId(remembered)
   }, [sessionId])
 
   const openDesk = (id: string | null) => {
     setOpenedId(id)
     setBindingError(null)
-    // 记忆/清除「该会话打开的工作台」—— 切会话后仍停在同一个项目
-    if (sessionId) rememberOpenedProject(sessionId, id)
+    // 退回项目列表时清除记忆，避免刷新后又被拉回工作台
+    if (!id && sessionId) rememberOpenedProject(sessionId, null)
   }
 
   const opened = openedId ? projects.find((p) => p.id === openedId) : undefined
+
+  // 项目中心（列表态）打开时，把同一套流光玻璃背景延伸到主聊天输入框及其下方区域。
+  //
+  // 原因：输入条座位 [data-conversation-region="composer"] 与本视图是**兄弟节点**
+  // （同在 [data-conversation-scroll] 内），且自带不透明渐变底 —— 视图内部的背景
+  // 永远盖不到它，必须在这一层（共享滚动容器）处理。
+  // 进入工作台时 opened 不为空，类名移除，不影响 H 台。
+  const openedKey = opened?.id ?? ''
+  useEffect(() => {
+    if (openedKey) return
+    document.body.classList.add('ts-center-open')
+    return () => document.body.classList.remove('ts-center-open')
+  }, [openedKey])
 
   // —— H 型工作台 ——（仅在会话确实属于该项目时展示）
   if (opened && sessionId) {
@@ -98,10 +101,6 @@ export function ControlRoom({ sessionId }: Props) {
             <div className="ts-center-title">🎛 项目中心</div>
             <div className="ts-center-sub">添加项目文件夹 → 进入工作台：并行免费模型探索 + 共享黑板 + 协作收益</div>
           </div>
-          <button
-            className="ts-btn ts-btn-primary ts-center-add"
-            onClick={() => setShowAdd(true)}
-          >＋ 添加项目</button>
         </div>
 
         {bindingError && (

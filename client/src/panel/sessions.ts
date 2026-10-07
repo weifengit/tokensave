@@ -233,6 +233,18 @@ export function sessionBelongsToProject(ctx: any, sessionId: string, projectPath
 }
 
 /**
+ * 该项目自己的会话（默认取最近活动的一个）。
+ *
+ * 工作台的主对话必须关联**本项目**的会话：优先最近活动的非空白会话（真正有内容的那个），
+ * 没有非空白会话时退回空白会话（可用于开新对话），都没有返回 null。
+ */
+export function latestProjectSession(ctx: any, projectPath: string): ProjectSession | null {
+  const all = readProjectSessions(ctx, projectPath)
+  if (all.length === 0) return null
+  return all.find((s) => !s.blank) ?? all[0]
+}
+
+/**
  * 订阅该项目的历史会话列表（会话目录 + 工作区登记任一变化即重读）。
  * 读失败时给出空列表，由调用方显示空态。
  */

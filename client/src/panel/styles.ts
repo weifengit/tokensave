@@ -11,12 +11,32 @@ const STYLE_ID = 'tokensave-project-center-css'
 
 const CSS = `
 /* —— 基础 —— */
-.ts-cr { display:flex; flex-direction:column; height:100%; min-height:0; padding:12px; box-sizing:border-box; gap:10px; color:inherit; font-size:13px; position:relative; }
+.ts-cr { display:flex; flex-direction:column; height:100%; min-height:0; overflow:hidden; padding:12px; box-sizing:border-box; gap:10px; color:inherit; font-size:13px; position:relative; }
 .ts-cr a { color:inherit; }
 .ts-hdesk { width:100%; }
 /* 工作台打开时隐藏宿主那套全局宽度把手（值写在共享父元素上、一处拖动处处生效，
    且给把手预留 176px 永远铺不满）。工作台默认铺满。 */
 body.ts-hdesk-open [data-width-handle] { display:none !important; }
+
+/* —— 项目中心（列表态）：背景覆盖到输入框及其下方区域 ——
+   输入条座位 [data-conversation-region="composer"] 与本视图是**兄弟节点**
+   （同在 [data-conversation-scroll] 内），且它自带不透明渐变底。
+   因此把网格与光晕铺到共享容器上，并把输入条座位改透明。 */
+body.ts-center-open [data-conversation-scroll] {
+  background-image:
+    radial-gradient(circle at 12% 8%, rgba(122,92,255,.28), transparent 44%),
+    radial-gradient(circle at 80% 94%, rgba(0,194,255,.24), transparent 48%),
+    radial-gradient(circle at 90% 10%, rgba(255,95,158,.20), transparent 46%),
+    linear-gradient(rgba(127,127,127,.055) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(127,127,127,.055) 1px, transparent 1px);
+  background-size: auto, auto, auto, 30px 30px, 30px 30px;
+}
+/* 输入条座位原本自带「透明 → 不透明宿主底色」渐变，用来遮住从下方滚过的内容；
+   但项目中心的滚动发生在卡片内部（.ts-center-inner / 各卡片），并没有内容会从
+   输入框下方滚过，因此这里可以直接置透明，让容器背景完整连续地铺到输入框及其下方。 */
+body.ts-center-open [data-conversation-region="composer"] {
+  background: transparent !important;
+}
 
 /* —— 通用条/按钮 —— */
 .ts-bar { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
@@ -65,7 +85,7 @@ body.ts-hdesk-open [data-width-handle] { display:none !important; }
 /* —— 项目中心：流光玻璃背景 —— */
 .ts-center { padding:0; gap:0; overflow:hidden; }
 .ts-center-bg { position:absolute; inset:0; overflow:hidden; pointer-events:none; z-index:0; }
-.ts-center-bg::after { content:""; position:absolute; inset:0; background-image:linear-gradient(rgba(127,127,127,.055) 1px,transparent 1px),linear-gradient(90deg,rgba(127,127,127,.055) 1px,transparent 1px); background-size:30px 30px; }
+/* 网格已上提到共享容器（[data-conversation-scroll]），这里只留流动光晕，避免双重网格出现摩尔纹 */
 .ts-center-blob { position:absolute; width:52vmax; height:52vmax; border-radius:50%; filter:blur(70px); opacity:.30; mix-blend-mode:screen; }
 .ts-center-blob1 { background:radial-gradient(circle,#7a5cff,transparent 66%); top:-20%; left:-16%; animation:tsBlob1 17s ease-in-out infinite alternate; }
 .ts-center-blob2 { background:radial-gradient(circle,#00c2ff,transparent 66%); bottom:-24%; left:22%; animation:tsBlob2 13s ease-in-out infinite alternate; }
@@ -78,7 +98,7 @@ body.ts-hdesk-open [data-width-handle] { display:none !important; }
 .ts-center-headtext { flex:1; min-width:0; display:flex; flex-direction:column; gap:4px; }
 .ts-center-title { font-size:20px; font-weight:700; line-height:28px; letter-spacing:.01em; }
 .ts-center-sub { font-size:12.5px; opacity:.62; line-height:1.6; }
-.ts-center-add { flex:none; }
+/* 头部不再放“添加项目”按钮（与网格末尾的新建卡重复，已删）*/
 
 /* —— 项目中心：卡片网格（玻璃卡 + 圆锥渐变描边） —— */
 .ts-center-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(248px,1fr)); gap:16px; align-content:start; }
@@ -125,7 +145,7 @@ body.ts-hdesk-open [data-width-handle] { display:none !important; }
 
 /* —— H 型工作台：全台共享 R 行 1fr 网格（R 由 JSX 按窗口数注入），无中横线 —— */
 .ts-desk { display:grid; grid-template-columns:minmax(190px,250px) 1fr minmax(190px,250px); gap:8px; flex:1; min-height:0; position:relative; }
-.ts-desk-col { grid-row:1 / -1; display:flex; flex-direction:column; gap:8px; min-height:0; overflow:auto; }
+.ts-desk-col { grid-row:1 / -1; display:flex; flex-direction:column; gap:8px; min-height:0; overflow:hidden; }
 .ts-desk-left { grid-column:1; }
 .ts-desk-right { grid-column:3; }
 .ts-desk-board { grid-column:2; min-height:0; display:flex; flex-direction:column; }
@@ -135,6 +155,10 @@ body.ts-hdesk-open [data-width-handle] { display:none !important; }
    卡片的占位（高度/宽度）由外壳承担，内层组件一律 flex:1 填满外壳。 */
 .ts-card { display:flex; flex-direction:column; min-height:0; }
 .ts-card > * { flex:1; min-height:0; }
+/* 卡片自身绝不溢出：内容只能在卡片内部滚（#3） */
+.ts-card { overflow:hidden; }
+/* 卡片内部各自滚动：工作台整体不产生长滚动条 */
+.ts-card > * > .ts-chat-msgs, .ts-card > * > .ts-board-list, .ts-card > * > .ts-talk-list, .ts-card > * > .ts-save-body { min-height:0; overflow:auto; }
 .ts-card-fill { flex:1; min-height:0; }
 /* 左右两竖顶部两栏：与探索者窗口按 40% / 剩余均分 */
 .ts-card-talk, .ts-card-save { flex:0 0 40%; min-height:104px; }
@@ -183,7 +207,11 @@ body.ts-hdesk-open [data-width-handle] { display:none !important; }
 .ts-win-overlay { position:absolute; inset:0; z-index:40; flex:none; box-shadow:0 8px 32px rgba(0,0,0,.45); }
 .ts-msg-user { align-self:flex-end; background:rgba(96,165,250,.22); border:1px solid rgba(96,165,250,.4); border-radius:8px 8px 2px 8px; padding:5px 9px; max-width:88%; white-space:pre-wrap; word-break:break-word; }
 .ts-msg-assistant { align-self:flex-start; background:rgba(127,127,127,.14); border-radius:8px 8px 8px 2px; padding:5px 9px; max-width:94%; white-space:pre-wrap; word-break:break-word; }
-.ts-msg-tool, .ts-msg-system { align-self:stretch; opacity:.55; font-size:11px; border-left:2px solid rgba(127,127,127,.5); padding:2px 8px; max-height:72px; overflow:hidden; }
+.ts-msg-tool, .ts-msg-system { align-self:stretch; opacity:.62; font-size:11px; border-left:2px solid rgba(127,127,127,.5); padding:2px 8px; }
+.ts-msg-tool .ts-msg-role, .ts-msg-system .ts-msg-role { display:flex; align-items:center; gap:4px; }
+.ts-msg-toggle { padding:0 4px; font-size:11px; opacity:.7; }
+.ts-msg-preview { opacity:.85; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.ts-msg-full { white-space:pre-wrap; word-break:break-word; max-height:220px; overflow:auto; margin-top:2px; }
 .ts-msg-role { font-size:10px; opacity:.6; margin-bottom:2px; }
 .ts-win-hidden-bar { display:flex; gap:6px; flex-wrap:wrap; }
 .ts-chip { font-size:11px; padding:3px 9px; border-radius:99px; border:1px dashed rgba(127,127,127,.5); background:transparent; color:inherit; cursor:pointer; }
