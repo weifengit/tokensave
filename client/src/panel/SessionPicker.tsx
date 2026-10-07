@@ -6,7 +6,8 @@
  * - 点「＋ 新建会话」在该项目下开一个新对话（复用已有空白会话，没有则创建）。
  * 列表数据由 sessions.ts 的 useProjectSessions 提供（订阅宿主会话目录）。
  */
-import React, { useEffect, useMemo, useRef, useState } from 'react'
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import type { ProjectSession } from './sessions'
 
 /** 相对时间（列表里用，避免每行一串完整时间戳）。 */
@@ -30,15 +31,36 @@ export interface SessionPickerProps {
 export function SessionPicker({ sessions, currentId, onPick, onNew }: SessionPickerProps) {
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [pos, setPos] = useState<{ top: number; right: number } | null>(null)
   const boxRef = useRef<HTMLSpanElement>(null)
+  const popRef = useRef<HTMLDivElement>(null)
 
+  // 下拉定位：卡片链路上有 overflow:hidden（.ts-cr），就地渲染会被裁掉。
+  // 改用 portal 挂到 body，并按按钮位置算 fixed 坐标（右对齐，不超出视口）。
+  useLayoutEffect(() => {
+    if (!open) return
+    const place = () => {
+      const r = boxRef.current?.getBoundingClientRect()
+      if (!r) return
+      const margin = 12
+      setPos({ top: r.bottom + 6, right: Math.max(margin, window.innerWidth - r.right) })
+    }
+    place()
+    window.addEventListener('resize', place)
+    window.addEventListener('scroll', place, true)
+    return () => {
+      window.removeEventListener('resize', place)
+      window.removeEventListener('scroll', place, true)
+    }
+  }, [open])
   const current = useMemo(() => sessions.find((s) => s.id === currentId), [sessions, currentId])
 
   // 点击外部 / Esc 关闭下拉
   useEffect(() => {
     if (!open) return
     const onDoc = (e: MouseEvent) => {
-      if (!boxRef.current?.contains(e.target as Node)) setOpen(false)
+      // 点击外部（含 portal 内部）关闭：portal 不在 boxRef 子树里，需单独判断
+      if (!boxRef.current?.contains(e.target as Node) && !popRef.current?.contains(e.target as Node)) setOpen(false)
     }
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') setOpen(false)
@@ -83,8 +105,15 @@ export function SessionPicker({ sessions, currentId, onPick, onNew }: SessionPic
         {busy ? '新建中…' : '＋ 新建会话'}
       </button>
 
-      {open && (
-        <div className="ts-sess-pop" role="listbox">
+      {/* 下拉用 portal 挂到 body：卡片链路上有 overflow:hidden（.ts-cr），
+          就地渲染会被裁掉；坐标由上面 useLayoutEffect 按按钮位置算（fixed）。 */}
+      {open && pos && createPortal((
+        <div
+          className="ts-sess-pop"
+          role="listbox"
+          ref={popRef}
+          style={{ position: 'fixed', top: pos.top, right: pos.right, left: 'auto' }}
+        >
           <div className="ts-sess-pop-head">该项目的历史会话 · {sessions.length} 个</div>
           {sessions.length === 0 ? (
             <div className="ts-sess-empty">
@@ -117,7 +146,7 @@ export function SessionPicker({ sessions, currentId, onPick, onNew }: SessionPic
             </div>
           )}
         </div>
-      )}
+      ), document.body)}
     </span>
   )
 }

@@ -354,3 +354,317 @@ dsh-host-gateway.mjs:449/466/479  cwd → createRootAgent({ cwd }) → agents.cr
 **验证**：`pnpm run check` 全绿；bundle 154,404B + `node --check` 通过；CSS 大括号平衡校验为 0；解码核验 `ts-center-open` / `data-conversation-scroll` / `data-conversation-region` 均在位。
 
 **浏览器目检项**：项目中心列表态下，输入框及其下方区域与上方卡片区背景连成一片（网格 + 光晕连续）；输入框本体仍清晰可读；进入工作台后背景恢复原样、H 台不受影响。
+
+## Step 23（2026-10-07）：主对话卡片仍撑长 + 会话↔工作台全面绑定
+
+### #1 重启后主对话卡片仍然内容极多、界面很长
+
+**根因（读宿主 CSS 得出，上一轮只治了症状）**：宿主在**激活相**下显式让视图容器随内容长高：
+
+```
+.wSkVaW_scrollBody { flex:1; min-height:0; overflow-y:auto }
+.wSkVaW_root[data-phase=active] .wSkVaW_viewArea { flex:1 0 auto; min-height:auto }   ← 元凶
+```
+
+即 `viewArea` 是 `flex:1 0 auto` + `min-height:auto`——**内容多高它就多高**，于是外层 `scrollBody` 长出长滚动条。我上一轮只在卡片层加 `overflow:hidden`，而卡片在一条「允许无限长高」的链里，**根本轮不到生效**。
+
+**修法（把整条链都改成可收缩，并压过宿主的 !important 级规则）**：
+
+```
+body.ts-hdesk-open/ts-center-open [data-conversation-scroll]                      { overflow:hidden }
+body.… [data-conversation-scroll] > :not([data-conversation-region=composer])      { flex:1 1 0; min-height:0; overflow:hidden; display:flex; flex-direction:column }
+body.… [data-conversation-scroll] [class*="viewArea"]                             { flex:1 1 0 !important; min-height:0 !important; overflow:hidden }
+body.… [data-conversation-scroll] :has(.ts-cr)                                     { 同上 }
+.ts-cr                                                                             { flex:1 1 0; min-height:0; overflow:hidden }
+```
+
+要点：
+- `viewArea` 用 `!important` 压过宿主的 `flex:1 0 auto`（宿主类名带哈希前缀，用 `[class*="viewArea"]` 子串匹配）；
+- 用 `:has(.ts-cr)` 而不是写死层级——宿主 slot 可能有多层包裹（宿主自己也在用 `:has`），只要「装着我们的根节点」就统一压成可收缩容器；
+- 滚动最终落在**各卡片内部**（`.ts-chat-msgs` / `.ts-board-list` / `.ts-talk-list` / `.ts-save-body` 各自 `overflow:auto`）。
+
+### #2 会话与「项目中心→项目→工作台」的全面对应
+
+**需求**：不论从**左侧边栏**点会话/新建会话，还是从**工作台顶部**选历史会话/新建会话，只要该会话属于某个已登记项目，都应落到那个项目的**工作台**，而不是宿主默认的纯对话窗口。
+
+**机制**：宿主按**会话作用域**从 localStorage 读视图偏好（键 `dsh.conversation.<sessionId>`，`ui-conversation` 的 `readConversationViewPreference`）。只要在宿主激活视图**之前**写入 `view = tokensave-control-room`，宿主就会激活我们的 `conversation.view`。
+
+**两条互补路径**：
+
+1. **确定性拦截（主路径）**——`client/src/index.ts` 包装宿主服务，在导航/创建**之前**写好偏好：
+   - `wrapSessionNavigation()` 包装 `uiWorkspace.openSession`：调用前 `bindSessionToItsProject(id)`，再走原函数。覆盖「侧边栏点会话」「工作台内切会话」。
+   - `wrapSessionCreate()` 包装 `sessions.create`：创建返回后立即绑定。**必要**，因为新建流程是 `create → openSession`，而 `openSession` 时机该会话可能还没进 `sessions.list`（读不到 cwd）→ 绑定失败；在 `create` 返回时 cwd 已由宿主写入。
+   - 两者都经 `ctx.inject([...], cb)` 等服务就绪后再包装，**不依赖插件 apply 顺序**；包装幂等（`__tokensaveWrapped` 标记）；绑定失败只告警、**不阻断导航**。
+2. **兜底扫描**——`sweepProjectSessionBindings(ctx)` 在 **Probe**（挂在会话头部 actions 槽，**始终挂载**）里跑一次 + 每 5s 轮询，把「属于已登记项目的会话」全部补写偏好，覆盖包装没拦到的路径。
+
+**为什么扫描必须放在 Probe**：`ControlRoom` 只在本插件视图**已激活**时才挂载（实测宿主 `renderSlot("conversation.view", …, { only: viewId })` 只渲染激活的那个），因此放在 ControlRoom 里**无法自举**。Probe 常驻，才能保证首次进入就绑好。
+
+`primeViewPreference` 改为**幂等且返回是否变更**（已绑过就不重复写，避免每 5s 无谓的 localStorage 写）；新增 `recallViewPreference` 读当前偏好。
+
+**验证**：`pnpm run check` 全绿；CSS 大括号平衡 0；bundle 161,814B + `node --check` 通过；关键符号各仅 1 处定义（无重复）；**运行时冒烟**：`apply(无服务 ctx)` 不抛异常并优雅降级（`ctx.get` 只尝试 `uiWorkspace` / `sessions`）；解码核验「已接管 sessions.create」/「已接管 uiWorkspace.openSession」/`bindSessionToItsProject` / `has(.ts-cr)` 均在位。
+
+**浏览器目检项**：主对话卡片内容不再撑长整页，卡片内部出现自己的垂直滚动条（黑板/协作对话/协作收益同理）；从左侧边栏点某个项目的会话 → 直接进该项目工作台；从左侧边栏新建会话 → 同样进工作台；工作台顶部切换/新建会话 → 保持在工作台。
+
+## Step 24（2026-10-07）：第五轮反馈修复（5 项）
+
+### #1「新建会话 / 新会话」仍进默认 DSH 会话 —— 根因与修法
+
+上一轮只包了 `uiWorkspace.openSession`，**漏了一条路**。读宿主 `ui-workspace` 源码确认：
+
+```
+openSession(target)            → replaceMain(target, …)            ← 我上轮包的
+startSession(wsId)             → openWorkspace(wsId) → replaceMain(…)   ← 没包到！
+connectWorkspace / 默认恢复     → replaceMain(…)
+```
+
+侧边栏「新建会话」走的是 **`startSession` → `openWorkspace` → `replaceMain`**，**根本不经过 `openSession`**。所以上一轮的包装对新建会话完全无效。
+
+**修法**：改包 **`replaceMain`** —— 它是所有导航路径的**唯一汇合点**，且内部在 `selection.set`（即视图激活）之前会回调 `beforeOpen(resolvedId)`：
+
+```js
+const hooked = (resolvedId) => { bindSessionToItsProject(resolvedId); beforeOpen?.(resolvedId) }
+original(target, signal, panel, hooked)
+```
+
+这样拿到的是**已解析**的会话 id（`target` 可能是 workspaceId），且在宿主读偏好之前写好。`openSession` 包装降级为兜底（`replaceMain` 不可用时才用）。
+
+另外补上 `sessions.create` 的**入参定位**：宿主新建流程是 `create({workspaceId})`，刚返回的会话**还没进 `sessions.list` 快照**，靠 `sessionCwd` 查不到 cwd（这正是之前绑定失败的直接原因）。改为从入参的 `workspaceId`/`cwd` 反查项目（`bindByCreateOptions`），不等列表刷新。
+
+还有一处关键：侧边栏新建会**复用已存在的空白会话**（`reuseOrCreateBlank`），该会话的 binding 可能**已经物化**且视图已是 `chat` —— 此时只写 localStorage 不会重激活，必须显式 `uiConversation.binding(id).activate(VIEW_ID)`（新增 `activateView`）。
+
+**验证**：用模拟宿主（三条路径 + 宿主自带 `beforeOpen`）跑包装逻辑 —— 三个场景激活的视图都是 `tokensave-control-room`，且宿主自己的 `beforeOpen` 仍被正常调用（未破坏宿主行为）。
+
+### #2 历史会话列表超出界面
+
+根因：下拉 `position:absolute; left:0`，而按钮在工作台标题行**最右侧**，向下展开时右边超出视口；且祖先 `.ts-cr` 是 `overflow:hidden`，就地渲染还会被**裁掉**。
+
+修法：改用 **portal 挂到 `body`**，坐标由 `useLayoutEffect` 按按钮 `getBoundingClientRect()` 算成 `fixed`（**右对齐**，留 12px 边距）；宽度 `min(520px, calc(100vw - 32px))`。点击外部判定要同时排除 portal 容器（`popRef`），否则点列表项会被当成点外部而先关闭。
+
+### #3 三键位置（右上角）+ 其它信息居中
+
+标题条统一改为 **`[标题][中间信息][三键]`** 三段式：
+- 新增 `.ts-head-title`（靠左）、`.ts-head-mid`（`margin:0 auto` 居中 + 省略号）；
+- `.ts-card-actions` 加 `order:9`，**无论 DOM 顺序如何**三键都排最右；
+- 黑板把 tabs（全部/需求/坑/方案/简报/刷新/条数）移到标题与三键**之间**；协作对话/协作收益把计数从正文移回标题中间；探索者窗口加「N 条消息」中间信息。
+
+### #4 输入框遮住对话末尾几行
+
+根因：`.ts-mainchat .ts-chat-msgs { padding-bottom:72px }` 是**写死的**，输入条多行/换行时高度超过 72px，末尾几行就被盖住。
+
+修法：停靠时实测输入条高度写入 CSS 变量，消息流底部留白跟随：
+
+```js
+const seatH = Math.ceil(seat.getBoundingClientRect().height)
+if (seatH > 0) root.style.setProperty('--ts-composer-h', `${seatH}px`)
+```
+```css
+.ts-mainchat .ts-chat-msgs { padding-bottom: calc(var(--ts-composer-h, 72px) + 14px); }
+```
+卸载时 `removeProperty` 复原。
+
+### #5 主对话/探索者窗口「过程未折叠」，要对齐「对话」tab
+
+**先说结论：无法字面复用宿主组件**，依据（都读了源码）：
+1. `ChatView` **未导出**（`ui-chat` 的 `lib/types/client/index.d.ts` 只导出 `apply`/`inject` 和类型）；
+2. 宿主只渲染**激活**的那个 view：`renderSlot("conversation.view", …, { only: viewId })`；
+3. `ChatView` 需要约 25 个宿主内部 props（`useChat`/`useChatNode`/`useChatGroup`/`renderSlot`/`usePresentation`/`chatScroll`…），外部拿不到。
+
+**修法**：重写 `MsgList`，**对齐「对话」的呈现语义**（这才是用户要的观感）：
+- 按 user 消息切「轮」；
+- 每轮里 user → 气泡；**其余中间过程**（工具调用、中间文字）→ 折叠成一行「过程 N 步 · 工具 M 次」，点开才看细节；
+- 该轮**最后一条** assistant 文本 → 视为最终回答，用 `RichText` 展开渲染；
+- 只渲染最近 `MAX_TURNS = 40` 轮，更早的折成提示。
+
+主对话与各探索者窗口**共用**这一个组件，所以两边观感一致。边界已验证：工具未收尾（无最终回答）时全部折叠为过程、空输入 0 轮、仅 user 不误判回答。
+
+### 验证
+`pnpm run check` 全绿；CSS 大括号平衡 0；bundle 171,583B + `node --check` 通过；`function <name>` 各仅 1 处（无重复）；运行时冒烟 `apply(无服务 ctx)` 不抛异常；`react-dom` 已确认是宿主运行时模块表提供的平台种子（官方 trajectory/attachment/subagent 等插件同样 `require("react-dom")`）；为 tsc 补了 `types/react-dom.d.ts` 垫片并把 `types/**/*.d.ts` 加进 tsconfig include。
+
+## Step 25（2026-10-07）：工作台右侧被裁 ~40%（仅 tokensave / dsh 项目）
+
+### 现象与关键线索
+4 个项目里只有 **tokensave、dsh** 的工作台右侧被挡掉约 40%，另两个正常。
+关键区别：tokensave/dsh **有真实会话内容**（消息、工具输出、黑板条目），另两个是空项目。
+
+### 根因：CSS Grid 裸 `1fr` 的自动最小值是 `min-content`
+```
+.ts-desk { grid-template-columns: minmax(190px,250px) 1fr minmax(190px,250px) }   ← 旧
+```
+`1fr` 等价于 `minmax(auto, 1fr)`，而 `auto` 的**最小值是 min-content**（内容的最小不可断宽度）。
+中列卡片里一旦有长不可断内容——工具输出、`white-space:pre` 的代码块、长 URL、长 token——
+中列就被撑到内容宽度，整个网格超出容器；而 `.ts-cr` 是 `overflow:hidden`，
+于是**右列（250px）连同部分中列被裁掉**。空项目没有长内容 → 看起来正常。
+
+数学验证（容器 1400px、内容最小宽度 1800px、两侧各 250px、gap 8px）：
+```
+1fr             中列=1800  总宽=2316  溢出 916px  ← 右侧被裁 65%
+minmax(0,1fr)   中列= 884  总宽=1400  溢出   0px  ← 正常
+```
+与「约 40% 被挡住」的现象吻合（实际比例取决于内容宽度）。
+
+### 修法（把整条尺寸链的 `min-width:auto` 全部解开）
+1. **列轨道**：`1fr` → `minmax(0,1fr)`（核心修复）；
+2. **行轨道**：JSX 里 `repeat(R, 1fr)` → `repeat(R, minmax(0,1fr))`（同款纵向陷阱）；
+3. **网格项**：`.ts-desk > * { min-width:0 }`，`.ts-desk-board/.ts-desk-chat { min-width:0 }`；
+4. **容器**：`.ts-desk { min-width:0; overflow:hidden }`、`.ts-card { min-width:0 }`、
+   `.ts-card > * { min-width:0 }`；
+5. **长内容宿主**：`.ts-mainchat/.ts-board/.ts-talk/.ts-save/.ts-win/.ts-chat-msgs/.ts-win-body/
+   .ts-board-list/.ts-talk-list/.ts-save-body { min-width:0 }`，
+   以及 `.ts-rich-code/.ts-rich-plain/.ts-rich-table-wrap/.ts-rich-p/.ts-msg-full/
+   .ts-msg-preview/.ts-entry-body/.ts-entry-title { min-width:0 }`；
+6. 卡片内滚动容器补 `overflow-x:hidden`（横向只在卡片内滚，不外溢）。
+
+### 顺带核对（排除其它嫌疑）
+- 宿主宽度把手：选择器 `[data-width-handle]` 与宿主实际渲染的属性**一致**（宿主确实输出 `data-width-handle`），不是漏选；
+- 宿主 `max-width` 规则：全部只作用于 **composer**（`.wSkVaW_composerHero` / `.pXSMma_stack` / `.uV2eYG_dock`），不约束我们的 view → 排除；
+- `.ts-center-grid` 的 `minmax(248px,1fr)` 最小值是显式的，无此陷阱。
+
+### 验证
+`pnpm run check` 全绿；CSS 大括号平衡 0；bundle 173,630B + `node --check` 通过；
+运行时冒烟 `apply(无服务 ctx)` 不抛异常；产物内 CSS 已确认为 `minmax(0,1fr)`；
+线上 rev 本地 ⊆ 线上。
+
+## Step 26（2026-10-07）：主对话 / 探索者对话的 Markdown 与 JSON 渲染
+
+### 反馈
+「大模型回复里很多 `**`、`-`、` ``` ` 没渲染，JSON 也希望能用更好的形式」。
+
+### 定位方式：写探针跑真实样本，而不是猜
+把 `RichText` 单独用 esbuild 打成 CJS，喂 33 个真实模型输出样本，
+把 React 元素树展开成纯文本，再检测残留标记。这样能**精确**知道哪些没渲染、而不是凭感觉改。
+
+首轮探针暴露的问题（也正是用户看到的）：
+| 样本 | 症状 |
+|---|---|
+| `**a*b**` | 粗体内部含单个 `*` → 旧正则 `\*\*[^*]+\*\*` 不匹配 → **整段退化为纯文本** |
+| `result: {"ok":true}` | 句中夹 JSON → 旧判据只认**行首** `{` → 不渲染 |
+| 用 ` ``` ` 包围代码块 | 行内三反引号 → 旧正则只认成对单反引号 → 原样裸露 |
+| `~~已废弃~~` | 删除线完全不支持 |
+| `- [x] 已完成` | 任务列表不支持 |
+
+### 根因（最关键的一条）
+`MD_HINT` 是**总开关**：它不匹配 → `RichText` 直接走 `ts-rich-plain`（纯文本），
+**里面所有标记原样显示**。所以「正则漏一种语法」的后果不是「那一种不渲染」，
+而是**整段都不渲染**——这就是为什么用户看到 `**`、`-`、` ``` ` 全都裸露。
+
+### 修法
+1. **`MD_HINT` 与渲染器口径对齐**：支持 `**a*b**`、`~~删除~~`、行内 ` ``` `、
+   行内任意位置链接、句中 JSON（`{...:"`）。并让它跑在**折叠换行后**的文本上，
+   使跨行的 `**加粗**`（模型常把一段话折行）也能配对。
+2. **过程项（ProcItem）展开后走 `RichText`**：此前展开只输出 `msg.content` 原文——
+   工具输出里的 Markdown/JSON 全部裸露。这是「探索者对话里还是很多 `**`」的直接原因。
+3. **折叠预览用新的 `stripMarkdown()`**：预览行先去掉 `** / ` / ``` / # / > / 列表号 / 链接语法`，
+   再截断。用户扫一眼看到的那些 `**` 多来自预览行。
+4. **行内三反引号**当作行内代码渲染，不再裸露。
+5. **刻意不支持的**：`__粗__` / `_斜_` —— 下划线在标识符里极常见
+   （`__init__`、`my_file_name`），渲染会把代码标识符弄坏；这是取舍，已在代码注释写明。
+
+### JSON：按结构选更好的形式
+- **同构扁平对象数组**（含 JSONL 同构）→ **表格**（键作表头、值作单元格，数字等宽对齐）；
+  列数 > 8 或含嵌套值时**自动退回**着色的 JSON，避免把结构信息压扁丢掉；
+- 其余 JSON / JSONL（异构）→ 语法着色（键/字符串/数字/布尔/null 分色），JSONL 逐块排列；
+- **正文里夹带的 JSON**（`result: {...}`）→ 就地抽出来单独渲染成块，前后文字各自成段；
+  用括号配对 + `JSON.parse` 双重校验，且要求长度 ≥ 6，避免把普通花括号误判。
+
+### 验证
+- 33 个样本探针：**残留标记 0**（修复前 5 类）；
+- JSON 形式探针：同构数组→表格、嵌套→着色 JSON、9 列→着色 JSON、JSONL 同构→表格，全部符合预期；
+- `stripMarkdown` 探针：`## 标题 **重点**` → `标题 重点`，列表/代码块/链接均正确剥离；
+- `pnpm run check` 全绿；CSS 大括号平衡 0；bundle 181,499B + `node --check` 通过；
+- 线上 rev 本地 ⊆ 线上；新符号（`stripMarkdown`/`splitEmbeddedJson`/`ts-rich-tasks`/
+  `ts-rich-jsonl`/`ts-rich-jsontable`）均在产物中。
+- 黑板条目共用同一 `RichText`，一并受益。
+
+## Step 27（2026-10-07）：项目中心入口移到侧边栏 + 新建会话直达工作台
+
+### ①「项目中心」按钮放进左侧边栏
+
+**槽位调研**（读宿主 ui-sidebar 的契约）：
+- 侧边栏 shell 自己拥有 brand 行、New Session、全局 panel 行；可用槽有
+  `sidebar.panellist`（全局面板图标，需配 `main` 面板）、`sidebar.footer.action`（底部动作）、
+  `sidebar.workspaces`（会话浏览区，已被 ui-workspace 占用）；
+- `sidebar.footer.action` 是 **list + root 作用域**，渲染点是
+  `renderSlot("sidebar.footer.action", { wide })` —— 正好把 wide/rail 两态传进来。
+
+**关键约束与解法**：root 作用域**拿不到 sessionId**（sessionId 由宿主动态注入
+`conversation.*` 槽）。因此让**始终挂载**的 Probe（在会话头部 actions 槽）把当前会话 id
+经 `setCurrentSessionId` 写到 sessions.ts 的模块级变量，侧边栏按钮读它。
+
+新增 `client/src/panel/ControlRoomEntry.tsx`：wide 显示「🗂️ 项目中心」，rail 只显示图标。
+
+**`openControlRoom()` 三级降级**（保证点下去一定有反应）：
+1. 当前会话属于某已登记项目 → 绑到该项目（直接落工作台）；
+2. 当前会话不属于任何项目 → 仍激活本插件视图（落项目列表态）；
+3. 没有当前会话（如刚开应用）→ 打开第一个项目的最新会话。
+
+**诚实说明**：`conversation.view` 的 tab **无法隐藏**。查宿主 `viewTabs()`：tab 数组直接由
+`slots.entries("conversation.view")` 生成，没有 hidden 过滤；而**注册本身**是视图可渲染的前提
+（`resolveActiveView` 从 tab 里挑，未注册则该会话没有我们的 view）。所以侧边栏按钮是**新增的主入口**，
+tab 保留为次入口。
+
+### ②「新建会话 / 新会话」直达工作台
+
+补强两处（此前只靠 `replaceMain` 包装 + 5s 轮询，有时序窗口）：
+1. **Probe 立即绑定当前会话**：`sid` 一变就 `bindSessionToItsProject(sid)`，不依赖列表快照与轮询时机。
+   这是「新建后直接跳工作台」最关键的一步。
+2. **`scheduleActivate` 延迟重试激活**（0/60/200/600/1500ms）：
+   新建会话刚返回时 `uiConversation.binding(id)` 可能**还没物化**（抛错），只试一次会静默失败。
+   而且**空白会话**下宿主 `DefaultConversationViews` 直接 `return null`
+   （`session.blank && conversationPhase()==='blank'`）——一个 view 都不渲染；
+   只有把我们的 view 加进 `activeTargets`，`conversationPhase` 才变 `'active'`，工作台才显示。
+
+### 验证
+- **导航模拟**（5 个场景）：属于 tokensave → 视图=工作台；属于 dsh → 工作台；
+  不属于任何项目 → 仍激活（落列表）；无当前会话 → 打开首个项目最新会话；无项目 → 返回 false 不静默；
+- **槽位注册核对**：实际调用 `apply` 抓到三个槽
+  `conversation.session.header.actions` / `conversation.view` / `sidebar.footer.action`，id 与 order 正确；
+- 确认宿主渲染点确实传 `wide`：`renderSlot("sidebar.footer.action", { wide })`；
+- `pnpm run check` 全绿；CSS 大括号平衡 0；bundle 185,200B + `node --check` 通过；
+- 运行时冒烟 `apply(无服务 ctx)` 不抛异常；线上 rev 本地 ⊆ 线上。
+
+## Step 28（2026-10-07）：思考可见 + 滚动不再抢（工作台主对话）
+
+### ① 思考（thinking）看不见
+
+**根因**：投影层只收了 `text-delta`，把 `reasoning-delta` 整条丢弃。
+读 `dsh-llm` 的 `StreamChunk` 定义确认两类增量同构：
+```
+{ type:'text-delta',      index, text }   → 正文
+{ type:'reasoning-delta', index, text }   → 思考
+```
+durable 侧同理：`AssistantMessage.content` 是 `ContentBlock[]`，其中
+`{type:'reasoning', text}` 是思考、`{type:'text', text}` 是正文；而原来的
+`textOf` 把两者**拼成一段**，所以思考要么消失、要么混进正文。
+
+**修法**：
+- `messagesFromWindow` 同时收两类 delta，并按 `slot`（reasoning/text）分开累积
+  （否则思考与正文会混成一条）；`StreamMsg` 加 `kind:'reasoning'` 标记；
+- durable `assistant/message` 拆成两条（思考在前）：`reasoningOf()` 单独抽 reasoning 块，
+  `visibleTextOf()` 抽正文并**排除** reasoning 块（避免重复显示）；
+- `splitTurn` 只把**非思考**的最后一条 assistant 文本当最终回答——否则「只跑了思考、
+  还没出正文」的那一步会被当成回答展开，与收纳意图相反。
+
+**呈现**：思考走与「工具」完全相同的收纳（`ProcItem` + `ProcessGroup`），
+并在折叠条上直接报数：`过程 N 步 · 思考 K 段 · 工具 M 次`。
+这样消息发出去后**不必展开**就能确认模型已开工（用户的核心诉求）。
+展开后思考带紫色左边条 + 斜体 + 「思考」标签，弱化不抢正文注意力。
+
+### ② 展开后每次刷新都被拉回底部
+
+**根因**：`MsgList` 的 effect 无条件 `el.scrollTop = el.scrollHeight`，
+内容一变（流式追加/新事件）就把视图拉到底，用户往上滚看细节根本读不了。
+
+**修法（粘性跟随）**：
+- 用 `pinnedRef` 记录「用户是否在底部附近」（阈值 24px，给流式追加留余量）；
+- 只在 `pinned` 为真时才跟随新内容；用户一旦手动往上滚，**不再自动调整**；
+- 滚回底部即恢复跟随；
+- 未贴底时显示「↓ 回到最新」按钮（`position:sticky`），由用户主动决定何时回去；
+- 切换会话时重置为贴底（新会话应看最新）。
+
+### 验证
+- **投影单测**（三个场景全过）：transient 流式中「思考 delta 与正文 delta 交替」→
+  产出 `kind=reasoning` 与普通两条；durable `assistant/message` 含 reasoning+text 块 →
+  拆成两条且内容不重复；只跑了思考 → 仍产出 reasoning 行（能确认已开工）；
+- `pnpm run check` 全绿；CSS 大括号平衡 0；bundle 189,466B + `node --check` 通过；
+- 线上 rev 本地 ⊆ 线上；新符号（`reasoning-delta`/`reasoningOf`/`visibleTextOf`/
+  `ts-proc-think`/`ts-jump-latest`）均在产物中。

@@ -150,14 +150,12 @@ function useDockNativeComposer(
       for (const k of KEYS) (seat.style as any)[k] = saved[k]
       return
     }
-
-
-    // 主对话卡收起/关闭时不再停靠：让输入条回到宿主的原位置（避免悬在空格里）
-    if (!enabled) {
-      for (const k of KEYS) (seat.style as any)[k] = saved[k]
-      return
-    }
+    // 停靠前先记下原值（只记一次，避免把已停靠的值当成原值）
     for (const k of KEYS) saved[k] = (seat.style as any)[k]
+
+    // #4 输入条会遮住消息末尾：量出它的高度写回 CSS 变量，
+    // 让消息流底部预留出同样高度的留白（跟随多行输入动态变化）。
+    const root = document.documentElement
 
     let raf = 0
     const apply = () => {
@@ -177,6 +175,9 @@ function useDockNativeComposer(
         // 向下锚定：聚焦/多行输入时向上生长，不挤动网格
         seat.style.bottom = `${Math.round(window.innerHeight - r.bottom + insetY)}px`
         seat.style.zIndex = '35'
+        // 输入条实际高度（含边框）→ 消息流底部留白，末尾几行不被遮挡
+        const seatH = Math.ceil(seat.getBoundingClientRect().height) || 0
+        if (seatH > 0) root.style.setProperty('--ts-composer-h', `${seatH}px`)
       } catch {
         /* 视图切换竞态：下一次调度再试 */
       }
@@ -201,6 +202,7 @@ function useDockNativeComposer(
       window.clearInterval(timer)
       if (raf) cancelAnimationFrame(raf)
       for (const k of KEYS) (seat.style as any)[k] = saved[k]
+      document.documentElement.style.removeProperty('--ts-composer-h')
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled, ...deps])
@@ -411,7 +413,9 @@ export function HDesk({ project, sessionId, onBack }: Props) {
       {probeError && <div className="ts-hint">⚠️ {probeError}</div>}
       <ClosedCardsBar closed={closedCards} onRestore={(id) => setCard(id, { hidden: false })} />
 
-      <div className="ts-desk" style={{ gridTemplateRows: `repeat(${rows}, 1fr)` }}>
+      {/* 行轨道同样用 minmax(0, 1fr)：裸 1fr 的自动最小值是 min-content，
+          卡片里的长内容会把行撑高，把网格顶出容器（与列同款问题）。 */}
+      <div className="ts-desk" style={{ gridTemplateRows: `repeat(${rows}, minmax(0, 1fr))` }}>
         {/* 左竖：顶部协作对话（主 agent ↔ 探索者），下方探索者窗口等高均分 */}
         <div className="ts-desk-col ts-desk-left">
           {cardShell('talk', (

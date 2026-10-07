@@ -27,10 +27,11 @@ export function MainChat({ sessionId, actions }: { sessionId: string; actions?: 
 
   return (
     <div className="ts-mainchat">
+      {/* #3 标题条：标题 + 中间信息（消息条数）居中，三键固定右上角 */}
       <div className="ts-mainchat-head">
-        <span>💬 DSH 主对话</span>
+        <span className="ts-head-title">💬 DSH 主对话</span>
+        <span className="ts-head-mid ts-mainchat-sub">{messages.length} 条消息</span>
         {actions}
-        <span className="ts-mainchat-sub">{messages.length} 条消息</span>
       </div>
       <MsgList
         messages={messages}

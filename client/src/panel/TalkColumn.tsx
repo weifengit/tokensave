@@ -245,12 +245,13 @@ export function TalkColumn({
 
   return (
     <div className="ts-talk">
+      {/* #3 标题条：标题 + 中间信息居中，三键固定右上角 */}
       <div className="ts-talk-head">
-        <span>💬 协作对话</span>
+        <span className="ts-head-title">💬 协作对话</span>
+        <span className="ts-head-mid ts-card-count">{explorers.length} 位探索者 · {talkCount} 条发言</span>
         {actions}
       </div>
       <div className="ts-talk-list" ref={listRef}>
-        <div className="ts-card-count">{explorers.length} 位探索者 · {talkCount} 条发言</div>
         {lines.length === 0 && (
           <div className="ts-hint">
             暂无协作记录。主 agent 调用 <code>tokensave_delegate</code> 后，这里会实时显示派发 / 开工 / 进度 / 汇报。

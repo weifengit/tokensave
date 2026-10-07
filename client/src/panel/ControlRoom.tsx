@@ -9,6 +9,8 @@
 import React, { useEffect, useState } from 'react'
 import { injectProjectCenterStyles } from './styles'
 import { loadProjects, removeProject, recallOpenedProject, rememberOpenedProject } from './store'
+import { latestProjectSession, sessionBelongsToProject } from './sessions'
+import { getClientContext } from '../session-subscribe'
 import type { ProjectRecord } from './store'
 import { AddProjectDialog } from './AddProjectDialog'
 import { HDesk } from './HDesk'
@@ -43,6 +45,10 @@ export function ControlRoom({ sessionId }: Props) {
   // 会话重挂（切换会话/刷新页面）后恢复上次打开的工作台。
   // 记忆只是 UI 偏好；真正“看哪个会话”由 HDesk 按项目自己解析（见 #1）。
   const [bindingError, setBindingError] = useState<string | null>(null)
+  // 会话 → 工作台 自动绑定由 client/src/index.ts 的 Probe（始终挂载）负责；
+  // 这里不重复扫描（ControlRoom 只在本视图已激活时才挂载，无法自举）。
+
+  // 恢复上次打开的工作台（记忆只是 UI 偏好；会话归属由 HDesk 自己解析）
   useEffect(() => {
     if (!sessionId) return
     const remembered = recallOpenedProject(sessionId)

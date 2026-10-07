@@ -11,9 +11,42 @@ const STYLE_ID = 'tokensave-project-center-css'
 
 const CSS = `
 /* —— 基础 —— */
-.ts-cr { display:flex; flex-direction:column; height:100%; min-height:0; overflow:hidden; padding:12px; box-sizing:border-box; gap:10px; color:inherit; font-size:13px; position:relative; }
+/* 让工作台/项目中心自己控高：宿主的视图链路默认是「随内容长高」的。
+   实测宿主的规则：
+     .scrollBody { flex:1; min-height:0; overflow-y:auto }
+     root[data-phase=active] .viewArea { flex:1 0 auto; min-height:auto }  ← 元凶
+   即激活相下 viewArea 会跟着内容长高，外层 scrollBody 出现长滚动条——
+   我们卡片的 overflow:hidden 根本轮不到生效。这里把链路每一层都改成可收缩。 */
+body.ts-hdesk-open [data-conversation-scroll],
+body.ts-center-open [data-conversation-scroll] { overflow:hidden; }
+/* scrollBody 的直接子元素：会话 slot 包裹层（保留输入条座位不动） */
+body.ts-hdesk-open [data-conversation-scroll] > :not([data-conversation-region="composer"]),
+body.ts-center-open [data-conversation-scroll] > :not([data-conversation-region="composer"]) {
+  flex:1 1 0; min-height:0; overflow:hidden; display:flex; flex-direction:column;
+}
+/* viewArea（宿主类名带哈希前缀，用属性子串匹配；!important 压过宿主的 flex:1 0 auto） */
+body.ts-hdesk-open [data-conversation-scroll] [class*="viewArea"],
+body.ts-center-open [data-conversation-scroll] [class*="viewArea"] {
+  flex:1 1 0 !important; min-height:0 !important; overflow:hidden;
+}
+/* viewArea 内的 slot 包裹层 + 我们的根节点：填满且不外溢。
+   用 :has(.ts-cr) 而不是固定层级——宿主 slot 包裹层数可能变（宿主自己也在用 :has），
+   只要“里面装着我们的根节点”就统一压成可收缩的竖向 flex 容器。 */
+body.ts-hdesk-open [data-conversation-scroll] [class*="viewArea"] > *,
+body.ts-center-open [data-conversation-scroll] [class*="viewArea"] > * {
+  flex:1 1 0; min-height:0; overflow:hidden; display:flex; flex-direction:column;
+}
+/* 从 scrollBody 到 .ts-cr 之间的**每一层**都压成可收缩的竖向 flex 容器：
+   :has(.ts-cr) 匹配「所有 .ts-cr 的祖先」，不依赖具体包裹层数
+   （宿主 slot 可能有多层包裹，写死层级会漏）。 */
+body.ts-hdesk-open [data-conversation-scroll] :has(.ts-cr),
+body.ts-center-open [data-conversation-scroll] :has(.ts-cr) {
+  flex:1 1 0; min-height:0; overflow:hidden; display:flex; flex-direction:column;
+}
+
+.ts-cr { display:flex; flex-direction:column; flex:1 1 0; min-height:0; overflow:hidden; padding:12px; box-sizing:border-box; gap:10px; color:inherit; font-size:13px; position:relative; }
 .ts-cr a { color:inherit; }
-.ts-hdesk { width:100%; }
+.ts-hdesk { width:100%; min-height:0; }
 /* 工作台打开时隐藏宿主那套全局宽度把手（值写在共享父元素上、一处拖动处处生效，
    且给把手预留 176px 永远铺不满）。工作台默认铺满。 */
 body.ts-hdesk-open [data-width-handle] { display:none !important; }
@@ -51,6 +84,15 @@ body.ts-center-open [data-conversation-region="composer"] {
 .ts-btn:hover { background:rgba(127,127,127,.22); }
 .ts-btn:disabled { opacity:.45; cursor:not-allowed; }
 .ts-btn-primary { background:rgba(96,165,250,.25); border-color:rgba(96,165,250,.6); }
+
+/* —— 侧边栏「项目中心」入口（sidebar.footer.action 槽）——
+   宿主侧边栏有 56px rail / 宽栏两态，这里两态都要可用：
+   wide → 图标 + 文字一行；rail → 只有图标且居中。 */
+.ts-side-entry { display:flex; align-items:center; gap:8px; width:100%; padding:7px 10px; border:1px solid rgba(127,127,127,.32); border-radius:8px; background:rgba(127,127,127,.1); color:inherit; cursor:pointer; font:inherit; font-size:12.5px; text-align:left; transition:background .15s ease, border-color .15s ease; }
+.ts-side-entry:hover { background:rgba(127,127,127,.2); border-color:rgba(127,127,127,.5); }
+.ts-side-entry.rail { justify-content:center; padding:7px 0; }
+.ts-side-icon { flex:none; font-size:14px; line-height:1; }
+.ts-side-label { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .ts-btn-primary:hover { background:rgba(96,165,250,.4); box-shadow:0 0 12px rgba(96,165,250,.25); }
 .ts-btn-picked { background:rgba(74,222,128,.35); border-color:rgba(74,222,128,.85); font-weight:600; box-shadow:0 0 0 1px rgba(74,222,128,.35) inset; }
 .ts-btn-picked:hover { background:rgba(74,222,128,.5); }
@@ -71,7 +113,7 @@ body.ts-center-open [data-conversation-region="composer"] {
 .ts-sess-btn.active { border-color:rgba(96,165,250,.7); background:rgba(96,165,250,.18); }
 .ts-sess-cur { opacity:.7; font-size:12px; max-width:280px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .ts-sess-caret { opacity:.6; font-size:11px; }
-.ts-sess-pop { position:absolute; top:calc(100% + 6px); left:0; z-index:44; width:min(520px, 76vw); max-height:60vh; display:flex; flex-direction:column; border-radius:12px; border:1px solid rgba(127,127,127,.35); background:rgba(24,27,33,.97); color:#e6e8eb; box-shadow:0 14px 40px rgba(0,0,0,.5); backdrop-filter:blur(12px) saturate(1.2); overflow:hidden; }
+.ts-sess-pop { position:absolute; top:calc(100% + 6px); right:0; left:auto; z-index:44; width:min(520px, calc(100vw - 32px)); max-height:60vh; display:flex; flex-direction:column; border-radius:12px; border:1px solid rgba(127,127,127,.35); background:rgba(24,27,33,.97); color:#e6e8eb; box-shadow:0 14px 40px rgba(0,0,0,.5); backdrop-filter:blur(12px) saturate(1.2); overflow:hidden; }
 .ts-sess-pop-head { flex:none; padding:9px 12px; font-size:11.5px; font-weight:600; opacity:.7; border-bottom:1px solid rgba(127,127,127,.25); letter-spacing:.03em; }
 .ts-sess-list { flex:1; min-height:0; overflow:auto; padding:5px; display:flex; flex-direction:column; gap:2px; }
 .ts-sess-item { display:flex; align-items:center; gap:8px; width:100%; text-align:left; padding:7px 9px; border:none; border-radius:8px; background:transparent; color:inherit; font:inherit; font-size:12.5px; cursor:pointer; }
@@ -144,21 +186,35 @@ body.ts-center-open [data-conversation-region="composer"] {
 .ts-fs-item .ts-tag { margin-left:auto; }
 
 /* —— H 型工作台：全台共享 R 行 1fr 网格（R 由 JSX 按窗口数注入），无中横线 —— */
-.ts-desk { display:grid; grid-template-columns:minmax(190px,250px) 1fr minmax(190px,250px); gap:8px; flex:1; min-height:0; position:relative; }
+/* 中列必须用 minmax(0, 1fr)：裸 1fr 的自动最小值是 min-content，
+   一旦卡片里有长不可断内容（工具输出、长代码、长标题），中列就会被撑到
+   内容宽度，整个网格超出容器；而 .ts-cr 是 overflow:hidden，
+   右侧列（250px）连同部分中列就被**裁掉**——这就是“右边少了 40%”。
+   空项目没有长内容，所以看起来正常。 */
+.ts-desk { display:grid; grid-template-columns:minmax(190px,250px) minmax(0,1fr) minmax(190px,250px); gap:8px; flex:1; min-height:0; min-width:0; overflow:hidden; position:relative; }
+/* 网格项自身也要 min-width:0，否则仍会被内容顶宽（min-width:auto 的默认行为） */
+.ts-desk > * { min-width:0; }
 .ts-desk-col { grid-row:1 / -1; display:flex; flex-direction:column; gap:8px; min-height:0; overflow:hidden; }
 .ts-desk-left { grid-column:1; }
 .ts-desk-right { grid-column:3; }
-.ts-desk-board { grid-column:2; min-height:0; display:flex; flex-direction:column; }
-.ts-desk-chat { grid-column:2; min-height:0; display:flex; flex-direction:column; position:relative; border:1px solid rgba(127,127,127,.3); border-radius:9px; background:rgba(127,127,127,.07); padding:8px; box-sizing:border-box; }
+.ts-desk-board { grid-column:2; min-height:0; min-width:0; display:flex; flex-direction:column; }
+.ts-desk-chat { grid-column:2; min-height:0; min-width:0; display:flex; flex-direction:column; position:relative; border:1px solid rgba(127,127,127,.3); border-radius:9px; background:rgba(127,127,127,.07); padding:8px; box-sizing:border-box; }
 
 /* —— 卡片外壳（黑板 / 主对话 / 协作对话 / 协作收益 共用）——
    卡片的占位（高度/宽度）由外壳承担，内层组件一律 flex:1 填满外壳。 */
-.ts-card { display:flex; flex-direction:column; min-height:0; }
-.ts-card > * { flex:1; min-height:0; }
+.ts-card { display:flex; flex-direction:column; min-height:0; min-width:0; }
+.ts-card > * { flex:1; min-height:0; min-width:0; }
 /* 卡片自身绝不溢出：内容只能在卡片内部滚（#3） */
 .ts-card { overflow:hidden; }
 /* 卡片内部各自滚动：工作台整体不产生长滚动条 */
-.ts-card > * > .ts-chat-msgs, .ts-card > * > .ts-board-list, .ts-card > * > .ts-talk-list, .ts-card > * > .ts-save-body { min-height:0; overflow:auto; }
+.ts-card > * > .ts-chat-msgs, .ts-card > * > .ts-board-list, .ts-card > * > .ts-talk-list, .ts-card > * > .ts-save-body { min-height:0; min-width:0; overflow:auto; overflow-x:hidden; }
+/* 所有可能装长内容的容器都设 min-width:0：
+   它们的子元素有 white-space:pre 的代码块 / 长 URL / 长 token，
+   默认 min-width:auto 会被内容顶宽，从而把整条 flex/grid 链撑出容器。 */
+.ts-mainchat, .ts-board, .ts-talk, .ts-save, .ts-win, .ts-chat-msgs, .ts-win-body, .ts-board-list, .ts-talk-list, .ts-save-body { min-width:0; }
+.ts-turn, .ts-msg-assistant, .ts-msg-user, .ts-proc, .ts-proc-item, .ts-rich { min-width:0; }
+/* 代码块/表格/预览是 flex 项，min-width:auto 会让最长一行顶宽父级（即使有 overflow:auto） */
+.ts-rich-code, .ts-rich-plain, .ts-rich-table-wrap, .ts-rich-p, .ts-msg-full, .ts-msg-preview, .ts-entry-body, .ts-entry-title { min-width:0; }
 .ts-card-fill { flex:1; min-height:0; }
 /* 左右两竖顶部两栏：与探索者窗口按 40% / 剩余均分 */
 .ts-card-talk, .ts-card-save { flex:0 0 40%; min-height:104px; }
@@ -171,14 +227,24 @@ body.ts-center-open [data-conversation-region="composer"] {
 /* 主对话铺满时承载输入条停靠（含内缩边框，与中下格同款） */
 .ts-card-overlay-chat { display:flex; flex-direction:column; min-height:0; border:1px solid rgba(127,127,127,.3); border-radius:9px; background:rgba(127,127,127,.07); padding:8px; box-sizing:border-box; }
 /* 卡片右上角三键：固定在标题条最右侧，其它内容一律排在其左侧（#3） */
-.ts-card-actions { flex:none; display:inline-flex; align-items:center; gap:1px; margin-left:auto; }
+/* #3 卡片右上角三键：固定最右，其它信息（标题/中间信息）排其左侧。
+   标题条统一用 [标题][中间信息][三键] 三段式；actions 永远最后一个 →
+   这里用 order 确保三键在最右（不依赖 DOM 顺序）。 */
+.ts-card-actions { flex:none; display:inline-flex; align-items:center; gap:1px; margin-left:auto; order:9; }
+/* 标题条三段式：标题靠左、中间信息居中、三键靠右。
+   .ts-head-mid 用 margin:auto 居中——两侧 auto 让它在剩余空间里居中。 */
+.ts-head-title { flex:none; white-space:nowrap; }
+.ts-head-mid { flex:0 1 auto; min-width:0; margin:0 auto; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:10.5px; font-weight:400; opacity:.62; text-align:center; }
 /* 黑板标题条里有 tabs：让 tabs 吃掉弹性空隙，三键就落最右 */
-.ts-board-head .ts-board-tabs { margin-left:auto; }
+/* 黑板标题条里有 tabs：tabs 吃掉弹性空隙，三键仍在最右（order:9） */
+.ts-board-head .ts-board-tabs { margin-left:auto; margin-right:auto; flex-wrap:nowrap; overflow-x:auto; min-width:0; }
 .ts-board-head .ts-card-actions { margin-left:8px; }
 /* 标题条一律不换行（#4）：计数移入正文 .ts-card-count */
 .ts-talk-head, .ts-save-head, .ts-board-head, .ts-mainchat-head { flex-wrap:nowrap; }
 .ts-talk-head > span:first-child, .ts-save-head > span:first-child, .ts-board-head > span:first-child, .ts-mainchat-head > span:first-child { flex:none; white-space:nowrap; }
 .ts-card-count { flex:none; font-size:10.5px; opacity:.55; padding:0 2px 4px; }
+/* 计数现在位于标题条中间（.ts-head-mid）：去掉旧正文态的底部内边距，避免标题条被撑高 */
+.ts-head-mid.ts-card-count { padding:0; opacity:.62; }
 .ts-card-overlay { position:absolute; inset:0; z-index:40; background:rgba(12,14,18,.92); backdrop-filter:blur(8px) saturate(1.2); border-radius:10px; display:flex; flex-direction:column; padding:10px; box-sizing:border-box; }
 .ts-card-overlay-inner { flex:1; min-height:0; display:flex; flex-direction:column; }
 .ts-closed-bar { flex:none; display:flex; align-items:center; gap:6px; flex-wrap:wrap; padding:5px 8px; border:1px dashed rgba(127,127,127,.45); border-radius:9px; }
@@ -191,14 +257,19 @@ body.ts-center-open [data-conversation-region="composer"] {
 .ts-card-overlay-inner .ts-mainchat { border:1px solid rgba(127,127,127,.3); border-radius:9px; background:rgba(127,127,127,.07); }
 .ts-mainchat-head { flex:none; display:flex; align-items:center; gap:8px; padding:6px 9px; background:rgba(127,127,127,.13); font-size:12.5px; font-weight:600; }
 /* 底部留出宿主输入条的位置（输入条 fixed 停靠在卡片底部） */
-.ts-mainchat .ts-chat-msgs { padding-bottom:72px; }
-.ts-mainchat-sub { margin-left:auto; font-size:10.5px; font-weight:400; opacity:.6; }
+/* #4 输入条 fixed 停在卡片底部，会盖住消息末尾几行：
+   底部留白 = 输入条实测高度（--ts-composer-h，由 HDesk 停靠时写入）+ 余量。
+   以前写死 72px，输入条多行/换行时就不够，末尾几行被遮住。 */
+.ts-mainchat .ts-chat-msgs { padding-bottom:calc(var(--ts-composer-h, 72px) + 14px); }
+.ts-mainchat-sub { font-size:10.5px; font-weight:400; opacity:.6; }
+/* 探索者窗口标题条中间信息 */
+.ts-win-mid { flex:0 1 auto; margin:0 auto; }
 
 /* —— 探索者窗口卡 —— */
 .ts-win { border:1px solid rgba(127,127,127,.32); background:rgba(127,127,127,.09); border-radius:9px; display:flex; flex-direction:column; min-height:70px; flex:1; overflow:hidden; position:relative; }
 .ts-win-head { display:flex; align-items:center; gap:6px; padding:6px 8px; background:rgba(127,127,127,.14); cursor:default; user-select:none; }
 .ts-win-head:hover { background:rgba(127,127,127,.22); }
-.ts-win-name { font-size:12.5px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; flex:1; }
+.ts-win-name { font-size:12.5px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; flex:0 1 auto; min-width:0; }
 .ts-win-dot { width:8px; height:8px; border-radius:50%; background:#52c41a; flex:none; }
 .ts-win-dot.idle { background:rgba(127,127,127,.7); }
 .ts-win-body { flex:1; min-height:0; overflow:auto; padding:8px; display:flex; flex-direction:column; gap:6px; font-size:12px; line-height:1.55; }
@@ -213,6 +284,45 @@ body.ts-center-open [data-conversation-region="composer"] {
 .ts-msg-preview { opacity:.85; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .ts-msg-full { white-space:pre-wrap; word-break:break-word; max-height:220px; overflow:auto; margin-top:2px; }
 .ts-msg-role { font-size:10px; opacity:.6; margin-bottom:2px; }
+
+/* —— #5 按「轮」呈现（对齐宿主「对话」）：过程默认折叠，最终回答展开 —— */
+.ts-turn { display:flex; flex-direction:column; gap:6px; }
+.ts-turn + .ts-turn { margin-top:10px; padding-top:9px; border-top:1px dashed rgba(127,127,127,.22); }
+/* 过程折叠条：一行，不抢眼 */
+.ts-proc { align-self:stretch; }
+.ts-proc-head { display:flex; align-items:center; gap:7px; width:100%; text-align:left; font:inherit; font-size:11px; opacity:.66; padding:3px 8px; border:0; border-left:2px solid rgba(127,127,127,.45); background:rgba(127,127,127,.07); color:inherit; cursor:pointer; border-radius:0 6px 6px 0; }
+.ts-proc-head:hover { opacity:.9; background:rgba(127,127,127,.14); }
+.ts-proc-caret { flex:none; width:10px; }
+.ts-dim { opacity:.6; }
+.ts-proc-body { display:flex; flex-direction:column; gap:5px; margin-top:5px; padding-left:8px; }
+.ts-proc-item { border-left:2px solid rgba(127,127,127,.3); padding:2px 8px; font-size:11px; opacity:.75; }
+.ts-proc-item-head { display:flex; align-items:center; gap:6px; }
+.ts-proc-role { flex:none; font-size:10px; opacity:.7; }
+.ts-proc-item .ts-msg-preview { flex:1; min-width:0; }
+.ts-proc-item .ts-msg-full { max-height:180px; overflow:auto; }
+/* 最终回答：按正常对话正文展开（Markdown 渲染，根节点是 .ts-rich） */
+.ts-msg-assistant .ts-rich, .ts-msg-assistant .ts-rich-plain { white-space:normal; }
+/* 过程展开后的富文本：字号更小、紧凑，但同样完整渲染（不出现原始标记） */
+.ts-msg-full .ts-rich { font-size:11.5px; gap:4px; }
+.ts-msg-full .ts-rich-code { max-height:200px; }
+/* 思考（reasoning）：与工具同款收纳，但用紫色左边条 + 斜体区分，弱化不抢眼 */
+.ts-proc-think { border-left-color:rgba(192,132,252,.65) !important; font-style:italic; }
+.ts-proc-think .ts-proc-role { color:rgba(192,132,252,.95); font-style:normal; opacity:.95; }
+/* “回到最新”：粘性跟随被用户滚离底部后出现（不自动抢滚动） */
+.ts-jump-latest { position:sticky; bottom:6px; align-self:center; margin-top:-28px; z-index:2; padding:4px 12px; border-radius:99px; border:1px solid rgba(96,165,250,.6); background:rgba(24,27,33,.92); color:#e6e8eb; font:inherit; font-size:11.5px; cursor:pointer; box-shadow:0 4px 14px rgba(0,0,0,.4); backdrop-filter:blur(8px); }
+.ts-jump-latest:hover { background:rgba(96,165,250,.35); }
+/* 任务列表 */
+.ts-rich-tasks { list-style:none; padding-left:2px; }
+.ts-rich-tasks .ts-rich-check { margin-right:5px; opacity:.8; }
+.ts-rich-tasks li.done { opacity:.6; }
+.ts-rich-tasks li.done > :not(.ts-rich-check) { text-decoration:line-through; }
+/* JSONL：逐行着色，行间小间距 */
+.ts-rich-jsonl { display:flex; flex-direction:column; gap:5px; }
+.ts-rich-jsonl .ts-rich-code { margin:0; }
+/* JSON 表格：表头突出、等宽数字 */
+.ts-rich-jsontable td, .ts-rich-jsontable th { font-variant-numeric:tabular-nums; white-space:pre-wrap; word-break:break-word; }
+/* 行内删除线 */
+.ts-rich del { opacity:.65; }
 .ts-win-hidden-bar { display:flex; gap:6px; flex-wrap:wrap; }
 .ts-chip { font-size:11px; padding:3px 9px; border-radius:99px; border:1px dashed rgba(127,127,127,.5); background:transparent; color:inherit; cursor:pointer; }
 .ts-chip:hover { background:rgba(127,127,127,.18); }

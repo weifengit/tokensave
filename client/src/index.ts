@@ -15,9 +15,11 @@
 // 探索者浮窗（shell.overlay）自项目中心上线后停用：模型窗口归位到 H 台两竖；
 import type { Context } from '@deepseek-ai/cordis'
 import { useEffect } from 'react'
-import { getClientContext, setClientContext, subscribeSession } from './session-subscribe'
+import { getClientContext, setClientContext, subscribeSession, readService } from './session-subscribe'
+import { sweepProjectSessionBindings, bindSessionToItsProject, wrapSessionCreate, setCurrentSessionId } from './panel/sessions'
 import { mountBriefWindow, mountedExplorerCount } from './float/mount'
 import { ControlRoom } from './panel/ControlRoom'
+import { ControlRoomEntry } from './panel/ControlRoomEntry'
 
 export const inject = { slots: true }
 
@@ -46,6 +48,44 @@ function watchBrief(sessionId: string): () => void {
 function Probe(props: any): null {
   // 探索者计数：由 H 台自身通过 telemetry 发现，这里仅保留简报监听
   const sid = props?.sessionId
+  // 上报当前会话 id：侧边栏入口是 root 作用域、拿不到 sessionId，
+  // 由这个始终挂载的 Probe 把它写到模块级变量供其读取。
+  useEffect(() => {
+    setCurrentSessionId(sid ? String(sid) : '')
+  }, [sid])
+  // 会话 → 工作台 自动绑定（#2）：Probe 挂在会话头部的 actions 槽（**始终挂载**），
+  // 而 ControlRoom 只在本插件视图已激活时才挂载——因此扫描必须放在这里才能自举。
+  //
+  // 宿主按会话作用域从 localStorage 读视图偏好（dsh.conversation.<id>）；
+  // 预写好它，用户从左侧边栏点会话/新建会话时宿主就会激活「项目中心」视图。
+  useEffect(() => {
+    const ctx = getClientContext()
+    if (!ctx) return
+    // ① 先把**当前**会话绑到它的项目。
+    // 这是「新建会话后直接跳工作台」最关键的一步：宿主导航到新会话时
+    // sid 会变，这里立即写偏好 + 激活视图，不依赖列表快照/轮询时机。
+    if (sid) {
+      try {
+        bindSessionToItsProject(String(sid))
+      } catch (e) {
+        console.warn('[tokensave] 当前会话绑定失败', e)
+      }
+    }
+    // ② 再全量扫描，兼顾「别处新建的会话」（新会话一进目录就绑好）。
+    const run = () => {
+      try {
+        sweepProjectSessionBindings(ctx)
+      } catch (e) {
+        console.warn('[tokensave] 会话绑定扫描失败', e)
+      }
+    }
+    run()
+    // 轮询成本极低：首次之后都是 localStorage 读 + 内存比较，无网络/无建会话。
+    const timer = window.setInterval(run, 5_000)
+    return () => window.clearInterval(timer)
+  }, [sid])
+
+  // 简报监听：订阅当前会话流，捕获 tokensave-brief 标记后挂简报窗
   useEffect(() => {
     if (!sid) return
     let un: (() => void) | undefined
@@ -65,8 +105,105 @@ function Probe(props: any): null {
   return null
 }
 
+/**
+ * 包装宿主会话导航，让「任意属于已登记项目的会话」都落到该项目的工作台（#2）。
+ *
+ * 做法：在 uiWorkspace.openSession 上打一层**一次性**包装——先写该会话的视图偏好
+ * （dsh.conversation.<id>.view = tokensave-control-room），再调原函数。
+ * 宿主激活视图时会读这个偏好，因此激活的是我们的工作台而非默认纯对话窗口。
+ *
+ * 为什么不用轮询/事件：会话创建→导航之间存在竞态，而偏好必须在宿主读之前写好；
+ * 包装是同步且确定的，不依赖时序。幂等：已包装过则直接返回。
+ */
+function wrapSessionNavigation(): void {
+  const ctx: any = getClientContext()
+  if (!ctx) return
+  const attempt = () => {
+    const ui = readService<any>(ctx, 'uiWorkspace')
+    if (!ui) return false
+    // 关键：包 replaceMain 而不是 openSession。
+    //
+    // openSession 只覆盖「点会话」一条路；侧边栏「新建会话」走的是
+    // startSession → openWorkspace → replaceMain，**不经过 openSession**。
+    // replaceMain 是所有导航（openSession / openWorkspace / 默认恢复）的
+    // 唯一汇合点，且在 selection.set（即视图激活）之前调 beforeOpen ——
+    // 正是在这里把偏好写好，宿主随后激活的就是我们的工作台视图。
+    if (typeof ui.replaceMain !== 'function') {
+      // 降级：至少包住 openSession
+      return wrapOpenSession(ui)
+    }
+    if ((ui.replaceMain as any).__tokensaveWrapped) return true
+    const original = ui.replaceMain.bind(ui)
+    const wrapped = (target: any, signal: any, panel: any, beforeOpen: any) => {
+      // 宿主会在内部用 beforeOpen?.(resolvedId) 回调；我们把它包一层，
+      // 拿到**已解析**的会话 id（target 可能是 workspaceId 或会话 id）。
+      const hooked = (resolvedId: string) => {
+        try {
+          if (resolvedId) bindSessionToItsProject(String(resolvedId))
+        } catch (e) {
+          console.warn('[tokensave] 会话→工作台绑定失败', e)
+        }
+        beforeOpen?.(resolvedId)
+      }
+      return original(target, signal, panel, hooked)
+    }
+    ;(wrapped as any).__tokensaveWrapped = true
+    try {
+      ui.replaceMain = wrapped
+      console.log('[tokensave] 已接管 uiWorkspace.replaceMain（会话→工作台 自动绑定）')
+      return true
+    } catch (e) {
+      console.warn('[tokensave] 无法替换 uiWorkspace.replaceMain（只读？）', e)
+      return wrapOpenSession(ui)
+    }
+  }
+  // 先试一次（服务可能已就绪）；未就绪则用 ctx.inject 等它就绪后再包。
+  // 这样不依赖插件 apply 顺序，也不会因未就绪而永久退化为轮询。
+  if (attempt()) return
+  try {
+    ctx.inject?.(['uiWorkspace'], () => { attempt() })
+  } catch (e) {
+    console.warn('[tokensave] 等待 uiWorkspace 失败（工作台绑定退化为扫描）', e)
+  }
+}
+
+/** 降级路径：replaceMain 不可用时只包 openSession（覆盖「点会话」）。 */
+function wrapOpenSession(ui: any): boolean {
+  if (typeof ui.openSession !== 'function') return false
+  if ((ui.openSession as any).__tokensaveWrapped) return true
+  const original = ui.openSession.bind(ui)
+  const wrapped = (target: any) => {
+    try {
+      const id = typeof target === 'string'
+        ? target
+        : String(target?.sessionId ?? target?.id ?? '')
+      if (id) bindSessionToItsProject(id)
+    } catch (e) {
+      // 绑定失败不能阻断导航本身
+      console.warn('[tokensave] 会话→工作台绑定失败', e)
+    }
+    return original(target)
+  }
+  ;(wrapped as any).__tokensaveWrapped = true
+  try {
+    ui.openSession = wrapped
+    console.log('[tokensave] 已接管 uiWorkspace.openSession（降级路径）')
+    return true
+  } catch (e) {
+    console.warn('[tokensave] 无法替换 uiWorkspace.openSession', e)
+    return false
+  }
+}
+
 export function apply(ctx: Context) {
   setClientContext(ctx)
+  // #2 确定性入口：包装 uiWorkspace.replaceMain（所有导航的唯一汇合点），
+  // 在宿主激活视图前把该会话绑到它所属项目的工作台。这样左侧边栏点会话/新建会话、
+  // 工作台内切会话都自动落到工作台，而不是宿主默认的纯对话窗口。
+  wrapSessionNavigation()
+  // 同样接管 sessions.create：侧边栏新建的会话在创建时即写好视图偏好
+  // （openSession 时机可能拿不到 cwd，不能只靠那一层）。
+  wrapSessionCreate()
   try {
     const slots = (ctx as any).slots
     // 1. 会话头部动作区探测组件（简报监听）
@@ -89,6 +226,15 @@ export function apply(ctx: Context) {
           inject: (sessionId: string) => ({ sessionId }),
         },
         ControlRoom
+      )
+    )
+    // 3. sidebar.footer.action —— 侧边栏「项目中心」入口
+    // 用户要求把入口放在左侧边栏。这是 root 作用域的 list 槽，拿不到 sessionId，
+    // 当前会话由 Probe 上报（见 setCurrentSessionId）。
+    slots?.inject('sidebar.footer.action', () =>
+      slots.register(
+        { name: 'sidebar.footer.action', id: 'tokensave-control-room-entry', order: 10 },
+        ControlRoomEntry
       )
     )
   } catch (e) {

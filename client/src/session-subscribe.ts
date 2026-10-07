@@ -20,6 +20,11 @@ export interface StreamMsg {
   usage?: { inputTokens?: number; outputTokens?: number; reasoningTokens?: number }
   /** 事件类型原文（如 assistant/message、tool/result），需要精确分类时用 */
   type?: string
+  /**
+   * 细分类型：'reasoning' 表示这是模型的思考（thinking）内容。
+   * 思考与正文同为 assistant 流，但呈现上要分开（思考默认折叠，见 MsgList）。
+   */
+  kind?: 'reasoning'
 }
 
 // —— 会话指标（token 用量 / 工具耗时 / 活动时间窗）————————————
@@ -119,6 +124,53 @@ function contentOf(ev: any): string {
   return ''
 }
 
+/**
+ * 从事件里抽出**思考**（reasoning）块文本。
+ *
+ * 依据（读 dsh-llm 的 ContentBlockMap）：assistant 消息的 content 是 ContentBlock[]，
+ * 其中 `{type:'reasoning', text}` 是思考、`{type:'text', text}` 是正文。
+ * `textOf` 会把两者拼在一起，因此必须单独挑出 reasoning 才能分开呈现。
+ */
+function reasoningOf(ev: any): string {
+  if (!ev || typeof ev !== 'object') return ''
+  const data = ev.data && typeof ev.data === 'object' ? ev.data : ev
+  const cands = [data.content, data.message?.content]
+  for (const c of cands) {
+    if (!Array.isArray(c)) continue
+    const parts = c
+      .filter((b: any) => b && typeof b === 'object' && b.type === 'reasoning' && typeof b.text === 'string')
+      .map((b: any) => b.text)
+    if (parts.length > 0) return parts.join('').trim()
+  }
+  return ''
+}
+
+/**
+ * 从事件里抽出**可见正文**：把 reasoning 块排除在外。
+ * 否则思考会混进最终回答（与 reasoningOf 重复显示）。
+ */
+function visibleTextOf(ev: any): string {
+  if (!ev || typeof ev !== 'object') return ''
+  const data = ev.data && typeof ev.data === 'object' ? ev.data : ev
+  const cands = [data.content, data.message?.content, data.result?.content, ev.content]
+  for (const c of cands) {
+    if (!Array.isArray(c)) {
+      const t = textOf(c)
+      if (t) return t
+      continue
+    }
+    // 数组：只取非 reasoning 块
+    const t = c
+      .filter((b: any) => !(b && typeof b === 'object' && b.type === 'reasoning'))
+      .map((b: any) => (typeof b === 'string' ? b : typeof b?.text === 'string' ? b.text : ''))
+      .join('')
+      .trim()
+    if (t) return t
+  }
+  if (typeof data.text === 'string') return data.text
+  return ''
+}
+
 function roleOf(type: string): string {
   if (type.startsWith('user/')) return 'user'
   if (type.startsWith('assistant/')) return 'assistant'
@@ -138,16 +190,26 @@ export function messagesFromWindow(snap: any): StreamMsg[] {
   const out: StreamMsg[] = []
   let live: StreamMsg | null = null
   let liveAttempt = ''
+  let liveSlot = ''
   for (const e of entries) {
     if (e?.type === 'transient') {
       const ev = e.event
       if (ev?.type !== 'assistant/live-chunk') continue
       const chunk = ev?.data?.chunk
-      if (chunk?.type !== 'text-delta' || typeof chunk.text !== 'string' || !chunk.text) continue
+      const ct = chunk?.type
+      // 流式增量有两类，**都必须收**：
+      //   text-delta      → 正文（最终回答）
+      //   reasoning-delta → 思考（thinking）；以前只收 text-delta，
+      //                     导致“思考那步看不见”（用户反馈 #1）。
+      if ((ct !== 'text-delta' && ct !== 'reasoning-delta') || typeof chunk.text !== 'string' || !chunk.text) continue
+      const isReasoning = ct === 'reasoning-delta'
       const id = String(ev?.data?.attemptId ?? '')
-      if (!live || liveAttempt !== id) {
-        live = { role: 'assistant', content: '' }
+      // 思考与正文要分开累积（各自一条消息），否则会混成一段。
+      const slot = isReasoning ? 'reasoning' : 'text'
+      if (!live || liveAttempt !== id || liveSlot !== slot) {
+        live = { role: 'assistant', content: '', kind: isReasoning ? 'reasoning' : undefined }
         liveAttempt = id
+        liveSlot = slot
         out.push(live)
       }
       live.content += chunk.text
@@ -156,7 +218,20 @@ export function messagesFromWindow(snap: any): StreamMsg[] {
     const ev = e?.event
     if (!ev || typeof ev.type !== 'string') continue
     if (ev.type === 'system/message' || ev.type === 'tool/call') continue
-    const content = contentOf(ev)
+    // durable assistant 消息可能同时带 reasoning 与 text 块：
+    // 拆成两条（思考在前），呈现上才能分别折叠/展开（见 MsgList）。
+    if (ev.type === 'assistant/message') {
+      const think = reasoningOf(ev)
+      const text = visibleTextOf(ev)
+      const t = typeof ev.time === 'number' ? ev.time : undefined
+      const u = ev?.data?.usage
+      live = null
+      if (think) out.push({ role: 'assistant', content: think, kind: 'reasoning', time: t, type: ev.type })
+      if (text) out.push({ role: 'assistant', content: text, time: t, usage: u, type: ev.type })
+      // 思考与正文都空（例如只含 tool-call）时不产出行
+      continue
+    }
+    const content = visibleTextOf(ev)
     if (!content) continue
     live = null
     out.push({ role: roleOf(ev.type), content, time: typeof ev.time === 'number' ? ev.time : undefined, usage: ev?.data?.usage, type: ev.type })
