@@ -1,8 +1,9 @@
 /**
  * 项目中心 HTTP API 封装（宿主已挂载的只读路由）
- *  - /plugins/dsh-tokensave/fs     目录浏览（选择项目文件夹）
- *  - /plugins/dsh-tokensave/board  黑板条目（按工作区）
- *  - /plugins/dsh-tokensave/explorers  探索者快照（直读 agents，不依赖第三方）
+ *  - /plugins/dsh-tokensave/fs           目录浏览（选择项目文件夹）
+ *  - /plugins/dsh-tokensave/board        黑板条目（按工作区）
+ *  - /plugins/dsh-tokensave/explorers    探索者快照（直读 agents，不依赖第三方）
+ *  - /plugins/dsh-tokensave/project-info 项目文件最后修改时间 + 开发服务器地址
  */
 
 export interface FsEntry {
@@ -26,6 +27,37 @@ export async function fetchDirectory(path?: string): Promise<FsListing> {
   if (!res.ok) throw new Error(`目录读取失败（HTTP ${res.status}）`)
   const data = await res.json()
   return { path: String(data.path || ''), entries: (data.entries || []) as FsEntry[] }
+}
+
+export interface ProjectInfo {
+  path: string
+  /** 项目内部文件最后一次修改时间（真实 mtime，毫秒） */
+  mtimeMs: number
+  /** 推断出的开发服务器地址（无则空串） */
+  devUrl: string
+  /** 探测结果：该地址是否真的有人在监听（= 项目已启动） */
+  devRunning: boolean
+}
+
+/**
+ * 读项目信息：真实文件 mtime + 推断的开发服务器地址。
+ * 失败时返回 null（调用方退回到本地记录的 updatedAt），不抛错——
+ * 这只是展示用的附加信息，不应阻断项目列表渲染。
+ */
+export async function fetchProjectInfo(path: string): Promise<ProjectInfo | null> {
+  try {
+    const res = await fetch(`/plugins/dsh-tokensave/project-info?path=${encodeURIComponent(path)}`)
+    if (!res.ok) return null
+    const data = await res.json()
+    return {
+      path: String(data.path || path),
+      mtimeMs: Number(data.mtimeMs) || 0,
+      devUrl: typeof data.devUrl === 'string' ? data.devUrl : '',
+      devRunning: data.devRunning === true,
+    }
+  } catch {
+    return null
+  }
 }
 
 export interface BoardEntry {

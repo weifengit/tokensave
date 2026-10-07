@@ -721,3 +721,301 @@ const FENCE = /^\s*```(\w+)?\s*$/     // 旧
 - `pnpm run check` 全绿；CSS 大括号平衡 0；bundle 191,687B + `node --check` 通过；
 - 线上 bundle 核对：**是当前版本**（与本地逐字节一致，仅差服务器追加的
   `sourceMappingURL` 注释 70 字节）。
+
+## Step 30（2026-10-07）：侧边栏「项目中心」应进入**项目列表**（而非上次的工作台）
+
+### 反馈
+点侧边栏「项目中心」后，正确行为是进入含
+【添加项目文件夹 → 进入工作台：并行免费模型探索 + 共享黑板 + 协作收益】的**列表界面**，
+而不是直接回到上次的工作台。
+
+### 真因（两处叠加把界面拉进了工作台）
+1. `ControlRoom` 有「恢复上次打开的工作台」的记忆逻辑：挂载时
+   `recallOpenedProject(sessionId)` 有值就 `setOpenedId(remembered)`；
+2. 上一版按钮会**把当前会话绑到它所属项目**（`bindSessionToItsProject`），
+   而这会**重新写上工作台记忆** —— 于是两者合力，永远进工作台。
+
+### 修法
+按钮语义改为「总是先看项目列表」，**不再**绑会话到项目：
+1. 新增 `requestProjectList()` / `onRequestProjectList()` 信号；
+2. `ControlRoom` 订阅该信号 → `setOpenedId(null)` + 清掉该会话的工作台记忆；
+3. 按钮：发信号 → 清记忆 → 写视图偏好 + 激活视图 → 点宿主 tab。
+
+**为什么用订阅而不是一次性标记**：用户可能**已经**在本视图的工作台里，
+此时 `ControlRoom` 不会重挂——只在挂载时读标记的写法收不到信号，界面不动。
+订阅才能覆盖「已在工作台 → 点按钮 → 退回列表」这条路径。
+
+### 验证
+- **交互模拟**：点击前 `openedId='proj-tokensave'` → 点击后 `null` 且记忆清空 →
+  渲染项目列表；且「重挂时恢复」不会把它拉回工作台；
+- 确认列表态确实含用户描述的那行文案（`ControlRoom.tsx` 的 `ts-center-sub`：
+  「添加项目文件夹 → 进入工作台：并行免费模型探索 + 共享黑板 + 协作收益」）与
+  「添加项目」卡片；
+- `pnpm run check` 全绿；CSS 大括号平衡 0；bundle 192,289B + `node --check` 通过；
+- 线上 bundle 核对：新符号 `requestProjectList` / `onRequestProjectList` / `selectHostView`
+  均已在线上（HTTP 200，192,477B 含服务器追加的 sourceMappingURL）。
+
+## Step 31（2026-10-07）：侧边栏按钮改为**列表 ⇄ 工作台**切换
+
+### 需求
+当前在工作台时点按钮 → 进入项目列表（ControlRoom）；再点一次 → 回到原来的工作台。
+
+### 实现
+- `sessions.ts` 新增状态与双向信号：
+  - `setControlRoomScreen` / `getControlRoomScreen`：ControlRoom 上报当前屏（`'list' | 'desk'`）；
+  - `requestProjectList()` / `requestWorkbench()`：两个方向的切换信号（各自可订阅）；
+  - `isForceList()`：独立的“强制列表”标记。
+- `openControlRoom()` 改为切换：读当前屏决定方向，两方向都保证「视图被激活 + 点宿主 tab」。
+- `ControlRoom` 上报当前屏，并订阅两个信号：列表信号 → `openedId=null`；
+  工作台信号 → 恢复上次打开的项目。
+- 侧边栏按钮的文字/图标随当前屏变化（列表态显示「项目中心 🗂️」，工作台态显示
+  「回到工作台 🧭」），让“再点一次能回去”自解释。
+
+### 自己踩到并修掉的 bug（重要）
+第一版为了“切到列表”而**清掉了工作台记忆**，结果再点回来时不知道回哪个项目，
+退化成第一个项目。**用模拟测出**：从 `dsh` 工作台 → 列表 → 再点，回到了 `tokensave`（错）。
+修法：改用独立的 `forceList` 标记——它只控制“挂载时不要自动恢复工作台”，
+**工作台记忆原封不动留着**，供切回时使用。
+
+### 验证（模拟）
+- 连点 4 次正确交替：工作台 → 列表 → 工作台 → 列表；
+- 关键场景：从 dsh 工作台 → 列表（记忆仍为 p2）→ 再点 → **回到 dsh**（修复后）；
+- 重挂时不误恢复：处于列表态（forceList）时重挂仍停在列表；
+- `pnpm run check` 全绿；CSS 大括号平衡 0；bundle 194,212B + `node --check` 通过；
+- 运行时冒烟 `apply(无服务 ctx)` 不抛异常，三个槽注册正确；
+- 线上 bundle 核对：`requestWorkbench` / `isForceList` / 「回到工作台」/「查看项目列表」均在。
+
+## Step 32（2026-10-07）：项目中心 —— 展示方式 / 排序方式 / 卡片与列表两种形态
+
+### 需求
+1. 展示方式切换【卡片模式 / 列表模式】+ 排序方式切换【按名称 / 按创建时间 / 按更新时间】；
+2. 卡片模式：**点卡片直接进工作台**，去掉「进入工作台」按钮；补充
+   【上次更新时间、项目介绍（添加项目时可填）】；新增「展示」按钮 → 跳到该项目的宿主 UI；
+3. 列表模式：表格呈现【序号 / 名称 / 路径 / 创建时间 / 上次更新时间 / 项目介绍 / 操作（展示、移除）】。
+
+### 数据层（store.ts）
+- `ProjectRecord` 增加 `description`、`updatedAt`；
+- **旧数据兼容**：`loadProjects` 里 `updatedAt` 缺失时回退到 `createdAt`，
+  `description` 缺失时为空串（实测验证）；
+- `addProject(name, path, description)`；同路径去重时**空介绍不覆盖已有介绍**
+  （否则重添项目会把填好的介绍清掉——已用测试固定这个行为）；
+- `touchProject(id)`：进入工作台 / 点「展示」时刷新 `updatedAt`（“使用过”的语义）；
+- `ViewPrefs`（`mode` + `sort`）单独持久化到 `tokensave:project-view.v1`——
+  纯 UI 偏好，与项目数据分开，清掉不影响项目列表；
+- `sortProjects()`：按名称用 `localeCompare(..., 'zh-Hans-CN')`（中文排序正确）；
+  时间类**倒序**（最近的在最前，符合使用直觉）。返回新数组，不改原数组。
+
+### 「展示」= 跳到宿主的原生 UI（sessions.ts 的 `revealProject`）
+三级降级保证一定有反应：
+1. 该项目已有会话 → `openSession` 打开，并先 `clearViewPreference`（把 `view` 置 null），
+   让宿主回落**它自己的**默认对话视图（而不是我们的工作台）；
+2. 已有工作区登记 → `uiWorkspace.openWorkspace(workspaceId)`；
+3. 都没有 → `workspaces.create({ path })` 登记后再 `openWorkspace`。
+
+### 界面（ControlRoom.tsx）
+- 工具条：两组分段控件（`ts-seg`）——展示方式 + 排序方式，右侧显示项目数；
+- **卡片模式**：整卡 `role="button"` + `tabIndex=0` + Enter/Space 键支持；
+  悬停右上角淡入「进入 →」；显示项目介绍（两行截断）与「更新于 N 分钟前」；
+  操作区改为【展示 / 移除】；`stopPropagation` 防止点按钮时误触进工作台；
+- **列表模式**：`<table>` 表头 sticky，7 列齐全；路径/介绍单行省略号 + `title` 全量；
+- 无会话上下文时卡片置灰且不可进入（`disabled` 类 + 拦截点击）。
+
+### 验证
+- **store 单测**：添加带介绍、去重不覆盖介绍、三种排序结果、偏好持久化、
+  **旧数据兼容**（无 description/updatedAt）、移除 —— 全部符合预期；
+- `pnpm run check` 全绿；CSS 大括号平衡 0 且无未转义反引号；
+  bundle 211,486B + `node --check` 通过；
+- 线上 bundle 核对：`ts-plist` / `revealProject` / 「按创建时间」/「项目介绍」/「展示」均在。
+
+## Step 33（2026-10-07）：工具条/表格美化 + 移除确认 + 真实 mtime + 展示语义修正
+
+### 1. 工具条与表格美化（“挤在左边一点点太难看了，希望一行控制”）
+- 工具条改为**撑满一行的玻璃条**（`.ts-center-toolbar`）：左侧两组分段控件、
+  右侧「N 个项目」用 `margin-left:auto` 推到最右；带边框/渐变/阴影，窄屏自动换行；
+- 表格：行高与内边距加大（`12px 16px`）、圆角 14px、表头 sticky + 毛玻璃、
+  行悬停高亮、操作列右对齐；
+- **列宽分配**：名称/路径/介绍设 `min-width` 给足空间，时间列固定 150px，
+  不再全部挤在左边。
+
+### 2. 移除前弹确认弹窗
+新增 `client/src/panel/ConfirmDialog.tsx`（`role="alertdialog"`）：
+- 沿用项目中心玻璃视觉，danger 变体用红色标题 + 实心红确认按钮；
+- **默认焦点在「取消」**——破坏性操作不该让回车直接生效；
+- Esc 取消、点遮罩取消；
+- 内容给出项目名 + 路径 + 明确说明「仅从项目中心移除，**不会删除磁盘上的任何文件**」。
+
+### 3. 「上次更新」= 项目内部文件最后一次修改时间（用户纠正）
+之前用的是「我在 DSH 里用过它的时间」，**不符合要求**。改为真实文件 mtime：
+- 宿主新增路由 `PROJECT_INFO_ROUTE_PATH = /plugins/dsh-tokensave/project-info`；
+- `latestMtimeMs()` 递归扫描，取最大 `mtimeMs`；忽略
+  `node_modules/.git/dist/build/target/.next/...` 等噪声目录，不跟随符号链接，
+  带 20000 项上限防大目录卡死；
+- 客户端 `fetchProjectInfo()`（失败返回 null，不阻断列表）；排序也改用真实 mtime，
+  拿不到时回退到本地记录。
+
+### 4. 「展示」= 打开项目自身启动后的 UI（用户纠正）
+之前是跳到宿主原生 DSH 界面，**理解错了**。改为：
+- 从 `package.json` 的 `dev/start/serve/preview` 脚本推断**显式**端口
+  （`--port 3000` / `-p 5173` / `PORT=8080`）；不猜默认端口，避免打开无关地址；
+- 用 `net.connect` **真实探测**端口是否在监听（超时 400ms），得到 `devRunning`；
+- 前端：`devUrl && devRunning` → `window.open(url)`；否则**无响应**
+  （用户明确说“暂时无响应即可”），仅在控制台留一条日志；
+- 卡片上对已启动的项目显示绿色「● 已启动」标记。
+
+### 验证
+- **路由已在线并实测**（宿主热加载生效）：
+  - mtime 与真实文件对照**完全一致**（`styles.ts` = 1791361697 → 路由返回 1791361697740.523）；
+  - 起一个真实监听端口 + 写 `dev` 脚本 → `devRunning:true`；服务器停掉后 → `false`；
+  - 边界：不存在路径 → 404「目录不存在」；缺 path → 400「缺少 path」；
+- `devUrl` 推断单测：`vite --port 5173` / `next dev -p 3000` / `PORT=8080` /
+  `vite preview --port 4173` 全部正确；无端口或无 package.json → 空串；
+- `pnpm run check` 全绿；CSS 大括号平衡 0 且无未转义反引号；
+  bundle 217,890B + `node --check` 通过；线上已含 `ConfirmDialog` / `devRunning` /
+  「确认移除」/「不会删除磁盘上的任何文件」等。
+
+## Step 34（2026-10-07）：添加项目弹窗 —— 介绍输入框与名称输入框等宽
+
+### 问题
+「项目介绍」的多行输入框比上方「项目名称」输入框窄。
+
+### 真因
+名称输入框带**内联** `style={{ width:'100%' }}`，而 textarea 没有；
+且项目里根本没有 `.ts-textarea` 的 CSS 规则——`<textarea>` 因此退回
+`cols` 属性的默认宽度（约 20 字符），自然比 input 窄。
+
+### 修法（用共享规则，避免以后又只有一边有宽度）
+```css
+.ts-modal-body .ts-input, .ts-modal-body .ts-select, .ts-modal-body .ts-textarea { width:100%; }
+.ts-textarea { min-height:74px; resize:vertical; font:inherit; font-size:13px; line-height:1.55; }
+```
+同时**删掉**名称输入框上的内联 `width:100%` —— 宽度改由这一条共享规则统一负责，
+两个控件必然一致（不再依赖“两处都记得写”）。
+顺带给 textarea 补上：允许纵向拖拽、继承字体（否则 textarea 默认等宽字体，与 input 不一致）、
+行高放松、最小高度。
+
+### 验证
+`pnpm run check` 全绿；CSS 大括号平衡 0；bundle 218,491B + `node --check` 通过；
+线上已含 `ts-textarea` / `.ts-modal-body .ts-input` / `resize:vertical`。
+
+## Step 35（2026-10-07）：探索者窗口最大化看不清 + 窄列标题条/过程条换行
+
+### ① 最大化后透明度太高、看不清
+**根因**：`.ts-win-overlay` 只加了 `box-shadow`，**没有自己的背景**；而 `.ts-win`
+的底色是 `rgba(127,127,127,.09)`（9% 透度，玻璃效果）。全屏铺开后，文字直接压在
+底下的内容上 → 看不清。
+
+**修法**：最大化态补一层近实底：
+```css
+.ts-win-overlay { background:rgba(14,16,21,.97); color:#e6e8eb; border:1px solid …;
+  backdrop-filter:blur(8px) saturate(1.1); }
+.ts-win-overlay .ts-win-head { background:rgba(255,255,255,.07); }      /* 标题条分层 */
+.ts-win-overlay .ts-win-head:hover { background:rgba(255,255,255,.13); } /* 悬停仍有效 */
+```
+注意：`head:hover` 必须单独写——`.ts-win-overlay .ts-win-head` 在 `.ts-win-head:hover`
+**之后**，同权时后者被覆盖，悬停效果会失效（已实测核对线上产物含该规则）。
+
+### ② 窄列标题条溢出换行
+两处，都是 flex 子项内部的文字换行（flex 层并未 wrap）：
+
+**探索者窗口标题条**（`ts-win-head`）：
+- 尾部按钮组原本是普通 `<span>`（`flex:0 1 auto`）→ 被挤压时**按钮内部换行**、
+  标题条变高。改 `flex:none + inline-flex`，永不被压缩；
+- 整条补 `flex-wrap:nowrap; overflow:hidden`；名称/中间信息本来就有省略号（沿用）。
+
+**「过程 N 步 · 思考 K 段 · 工具 M 次」**（`ts-proc-head`）：
+- 子 span 没有 nowrap → 数量多时文字在 span 内换行。补：
+  `flex-wrap:nowrap; overflow:hidden; white-space:nowrap` + 子 span
+  `min-width:0; overflow:hidden; text-overflow:ellipsis`；
+- **裁剪顺序**：`过程 N 步` 设 `flex:none` 优先保留，「思考/工具」`flex:0 1 auto`
+  先缩、先省略（用户允许省略、不允许换行）；
+- 整条加 `title` —— 被截断后悬停仍可看到完整计数。
+
+**协作对话/协作收益的中间计数**（`ts-head-mid.ts-card-count`）：
+- 原 `flex:none`（不可缩）→ 补 `flex:0 1 auto; min-width:0; overflow:hidden;
+  text-overflow:ellipsis; white-space:nowrap`，同样改省略号。
+
+### 验证
+`pnpm run check` 全绿；CSS 大括号平衡 0、无未转义反引号；
+bundle 220,347B + `node --check` 通过；线上产物核对含
+`rgba(14,16,21,.97)` / `ts-proc-lead` / `ts-win-head > span:last-child` /
+`.ts-win-overlay .ts-win-head:hover`。
+
+## Step 36（2026-10-07）：DSH 工作区点任意会话 → 直接进入对应项目工作台
+
+### 反馈
+在 DSH 自带工作区（侧边栏会话列表）点击任意对话时，没有跳到
+【项目中心 → 该项目 → 工作台 → 相匹配会话】。
+
+### 真因（导航链路本身是通的，卡在两个“状态”问题上）
+
+链路回顾：侧边栏点会话 → `openSession`/`openWorkspace` → **`replaceMain`（已包装）**
+→ `bindSessionToItsProject` → 写偏好 + 工作台记忆 + 激活视图。这条链早就在。
+
+卡点 1 —— **`forceList` 是粘性的**：
+`requestProjectList()` 把 `forceList=true` 置位后，只有侧边栏按钮自己再切回工作台时才清。
+用户只要点过一次「项目中心」按钮（停在列表态），之后**点任何会话**，
+ControlRoom 的恢复逻辑第一行 `if (isForceList()) return` 就短路 → 永远停在列表。
+
+卡点 2 —— **点“当前已在列表态的同一个会话”时 effect 不重跑**：
+恢复逻辑挂在 `useEffect(..., [sessionId])` 上，点同一个会话 sessionId 不变 → 不触发。
+
+### 修法
+1. **绑定即清标记**（`bindToProject`）：绑定发生在真实导航（replaceMain 包装 /
+   Probe 随会话切换），此时用户意图就是看工作台 → 清 `forceList` 并发工作台信号。
+   注：`sweep`（5s 轮询）**不走** bindToProject，因此不会误清——否则轮询会和“停在列表”打架。
+2. **信号带目标会话 id**（`emitDesk(sessionId)` → `onRequestWorkbench((targetSid)=>…)`）：
+   - 目标 == 当前 prop → ControlRoom 立即恢复（覆盖“点同一个会话”）；
+   - 目标 != 当前 prop → 忽略，等 `[sessionId]` 恢复 effect 接手（避免用旧会话的记忆去恢复）。
+   两条路互为兜底：`bindToProject` 先于 React 更新清了 `forceList`，所以 prop 到位后的
+   恢复 effect 一定能通过 `isForceList()` 检查。
+
+### 验证（模拟 4 场景全过）
+- 点过按钮停在列表 → 点 sB 会话 → **工作台(s2)**、forceList 已清 ✓
+- 列表态点**同一个**会话（prop 不变）→ 信号直接恢复到 s1 工作台 ✓
+- 无记忆时点会话 → 绑定写入新记忆后恢复 ✓
+- 非项目会话 → 不绑、forceList 不动（不影响列表态）✓
+
+`pnpm run check` 全绿；bundle 220,714B + `node --check` 通过；
+运行时冒烟 OK（三个槽注册正常）；线上产物已含 `emitDesk` / `targetSid && sessionId`。
+
+## Step 37（2026-10-07）：列表模式全左对齐 + 未唤醒时单窗口模式
+
+### ① 列表模式：表头与记录全部左对齐；`#` → `序号`
+- `<th className="ts-plist-idx">#</th>` → `序号`（列头语义化）；
+- `.ts-plist td` 显式 `text-align:left`；`.ts-plist-idx`（原右对齐）、
+  `.ts-plist-ops`（操作列原右对齐）都改为左对齐；
+- idx 列宽 52px → 64px（容纳两字表头）。
+- 表头 `.ts-plist th` 本来就是 `text-align:left`，无需改。
+
+### ② 未唤醒 tokensave → 单窗口模式（只留 DSH 主对话并铺满）
+**判定**：`idle = explorers.length === 0`（该项目没有任何 tokensave-* 探索者会话）。
+
+**关键设计：idle 是纯派生态，不写入任何卡片状态**：
+- 若把 `hidden/maximized` 写进 cards，探索者出现时要回滚，会与用户手动操作打架；
+- 派生分支直接决定渲染形态，探索者一出现（8s 轮询或首探）立即还原 H 台，零残留。
+
+渲染分支：
+```
+{idle ? (
+  单列单行网格：ts-desk-chat 铺满 → MainChat（actions=null，三键无意义）
+) : (
+  原 H 台（左竖/黑板/主对话/右竖 + 浮层）
+)}
+```
+
+配套派生（避免双实例/空台面）：
+- `maximizedCard = idle ? null : rawMax` —— idle 下主对话已在网格里铺满，
+  浮层一律不上（否则同一 MainChat 双实例、双订阅消息流）；
+- `chatMaximized = !idle && …`、`chatDocked = idle || …` —— 输入条停靠到网格里的
+  chat cell（即使此前 chat 被 hidden/collapsed，idle 也必须停靠）；
+- `{!idle && <ClosedCardsBar/>}` —— 恢复 chip 在单窗口模式下点了也无效，隐藏；
+- **不走 cardShell**：idle 分支直接渲染。cardShell 对 `hidden|maximized` 返回 null，
+  会让台面空掉；三键在只剩一个窗口时也无意义（`actions={null}`）。
+
+### 验证
+- 派生逻辑 6 场景模拟 **6/6**：未唤醒时无论卡片此前被最大化/隐藏/收起 →
+  一律单窗口+铺满+停靠开+无浮层+无恢复条；有探索者时 H 台正常（含 chat 最大化/关闭）；
+- `pnpm run check` 全绿；CSS 平衡 0；bundle 221,489B + `node --check`；
+- 线上产物已核对含 `序号` / `text-align:left` / `gridTemplateColumns:"minmax(0,1fr)"`。
+- 已知取舍：进入工作台首次探测返回前（~100ms）会先显示单窗口再展开 H 台
+  —— 对“从不唤醒”的项目零闪烁（idle 即首帧），对有探索者的项目有一瞬切换。

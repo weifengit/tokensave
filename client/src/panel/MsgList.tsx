@@ -71,9 +71,14 @@ function ProcessGroup({ items }: { items: StreamMsg[] }) {
   const thinks = items.filter((m) => m.kind === 'reasoning').length
   return (
     <div className="ts-proc">
-      <button className="ts-proc-head" onClick={() => setOpen((v) => !v)}>
+      {/* title 保留完整信息：宽度不足时视觉上会被省略号截断，悬停仍能看到全量计数 */}
+      <button
+        className="ts-proc-head"
+        title={`过程 ${items.length} 步${thinks > 0 ? ` · 思考 ${thinks} 段` : ''}${tools > 0 ? ` · 工具 ${tools} 次` : ''}`}
+        onClick={() => setOpen((v) => !v)}
+      >
         <span className="ts-proc-caret">{open ? '▾' : '▸'}</span>
-        <span>过程 {items.length} 步</span>
+        <span className="ts-proc-lead">过程 {items.length} 步</span>
         {thinks > 0 && <span className="ts-dim">思考 {thinks} 段</span>}
         {tools > 0 && <span className="ts-dim">工具 {tools} 次</span>}
       </button>

@@ -9,6 +9,7 @@
  * GET-only：两个路由都是纯只读观测面，不暴露写通道。
  */
 import fs from 'node:fs'
+import net from 'node:net'
 import path from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 
@@ -16,6 +17,7 @@ export const BOARD_ROUTE_PATH = '/plugins/dsh-tokensave/board'
 export const FS_ROUTE_PATH = '/plugins/dsh-tokensave/fs'
 export const EXPLORERS_ROUTE_PATH = '/plugins/dsh-tokensave/explorers'
 export const SCOPE_ROUTE_PATH = '/plugins/dsh-tokensave/scope'
+export const PROJECT_INFO_ROUTE_PATH = '/plugins/dsh-tokensave/project-info'
 
 // —— 当前「打开的工作台项目」（探索者归属的真相）————————————
 //
@@ -268,6 +270,169 @@ function handleFs(req: any, res: any): void {
   }
 }
 
+// —— 项目信息：文件修改时间（真实 mtime）+ 开发服务器地址 —————
+//
+// 「上次更新」用户要求以**内部文件最后一次修改**为准（不是我们记的使用时间）。
+// 这里递归扫一遍项目目录，取最大 mtime；忽略 node_modules/.git/dist 等噪声目录，
+// 也不跟随符号链接（避免大目录卡死）。
+//
+// 同时尝试从 package.json 的 scripts 里推断开发服务器端口，给出「展示」用的 URL。
+
+/** 扫描时忽略的目录（体积大、与“项目代码改动”无关）。 */
+const IGNORE_DIRS = new Set([
+  'node_modules', '.git', 'dist', 'build', 'out', 'target', '.next', '.nuxt',
+  '.cache', 'coverage', '.venv', 'venv', '__pycache__', '.idea', '.vscode',
+  'vendor', '.turbo', '.parcel-cache', 'tmp', 'logs',
+])
+
+/**
+ * 取项目目录下**最近一次文件修改时间**。
+ * @param root - 项目根目录
+ * @returns mtimeMs（毫秒）；扫不到时返回 0
+ */
+function latestMtimeMs(root: string): number {
+  let newest = 0
+  const stack: string[] = [root]
+  let guard = 0
+  while (stack.length > 0 && guard < 20000) {
+    const dir = stack.pop() as string
+    let items: fs.Dirent[]
+    try {
+      items = fs.readdirSync(dir, { withFileTypes: true })
+    } catch {
+      continue
+    }
+    for (const it of items) {
+      guard++
+      if (guard > 20000) break
+      const name = it.name
+      if (name.startsWith('.')) continue
+      if (IGNORE_DIRS.has(name)) continue
+      const full = path.join(dir, name)
+      if (it.isSymbolicLink()) continue
+      if (it.isDirectory()) {
+        stack.push(full)
+        continue
+      }
+      try {
+        const st = fs.statSync(full)
+        if (st.mtimeMs > newest) newest = st.mtimeMs
+      } catch {
+        /* 单个文件读不到：跳过 */
+      }
+    }
+  }
+  return newest
+}
+
+/**
+ * 从 package.json 推断开发服务器端口（有则给出本机 URL）。
+ *
+ * 只认**显式**端口（`--port 3000` / `-p 5173` / `PORT=3000`）——
+ * 不猜默认端口：猜错会让「展示」打开一个不相干的地址。
+ */
+function guessDevUrl(root: string): string {
+  try {
+    const pkgPath = path.join(root, 'package.json')
+    if (!fs.existsSync(pkgPath)) return ''
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'))
+    const scripts = pkg && typeof pkg.scripts === 'object' ? pkg.scripts : {}
+    const text = ['dev', 'start', 'serve', 'preview']
+      .map((k) => (typeof scripts[k] === 'string' ? scripts[k] : ''))
+      .join(' ')
+    const m = /(?:--port[= ]|-p\s+|PORT=)(\d{2,5})/.exec(text)
+    if (!m) return ''
+    return `http://localhost:${m[1]}`
+  } catch {
+    return ''
+  }
+}
+
+/**
+ * 探测该 URL 是否真的有人在监听（“项目已启动”的诚实判定）。
+ * 用 net.connect 而不是 fetch：只关心端口通不通，不等 HTTP 响应；
+ * 超时 400ms，避免列表渲染被拖慢。
+ */
+function probeUrl(url: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    if (!url) {
+      resolve(false)
+      return
+    }
+    let host = '127.0.0.1'
+    let port = 0
+    try {
+      const u = new URL(url)
+      host = u.hostname || host
+      port = Number(u.port) || (u.protocol === 'https:' ? 443 : 80)
+    } catch {
+      resolve(false)
+      return
+    }
+    if (!port) {
+      resolve(false)
+      return
+    }
+    const socket = new net.Socket()
+    let done = false
+    const finish = (ok: boolean) => {
+      if (done) return
+      done = true
+      try { socket.destroy() } catch { /* noop */ }
+      resolve(ok)
+    }
+    socket.setTimeout(400)
+    socket.once('connect', () => finish(true))
+    socket.once('timeout', () => finish(false))
+    socket.once('error', () => finish(false))
+    try {
+      socket.connect(port, host)
+    } catch {
+      finish(false)
+    }
+  })
+}
+
+async function handleProjectInfo(req: any, res: any): Promise<void> {
+  let params: URLSearchParams
+  try {
+    params = new URL(req.url ?? '/', 'http://localhost').searchParams
+  } catch {
+    params = new URLSearchParams()
+  }
+  const target = normalizeWorkspace(params.get('path'))
+  if (!target) {
+    writeJson(res, 400, { error: '缺少 path' })
+    return
+  }
+  try {
+    const st = fs.statSync(target)
+    if (!st.isDirectory()) {
+      writeJson(res, 400, { error: '不是目录' })
+      return
+    }
+  } catch {
+    writeJson(res, 404, { error: '目录不存在' })
+    return
+  }
+  try {
+    const devUrl = guessDevUrl(target)
+    // 真实探测端口是否有人在听：这才是「项目已启动」的诚实判定。
+    // 未启动时 devUrl 仍返回（供 UI 提示“地址是 X，但当前未启动”）。
+    const devRunning = await probeUrl(devUrl)
+    writeJson(res, 200, {
+      timestamp: Date.now(),
+      path: target,
+      mtimeMs: latestMtimeMs(target),
+      devUrl,
+      devRunning,
+    })
+  } catch (error) {
+    console.error('[dsh-tokensave] project-info 失败:', error)
+    writeJson(res, 500, { error: '读取项目信息失败' })
+  }
+}
+
 // —— 探索者探测（直读 agents 服务，不依赖第三方 telemetry 路由）———————
 
 /** 解析 agents 服务（与 dsh-call-session 同款降级链） */
@@ -408,6 +573,7 @@ export function mountTokensaveWebRoutes(ctx: Context): void {
       [BOARD_ROUTE_PATH, (req, res) => handleBoard(ctx, req, res)],
       [FS_ROUTE_PATH, (req, res) => handleFs(req, res)],
       [EXPLORERS_ROUTE_PATH, (req, res) => handleExplorers(ctx, req, res)],
+      [PROJECT_INFO_ROUTE_PATH, (req, res) => { void handleProjectInfo(req, res) }],
       [SCOPE_ROUTE_PATH, scopeGuard]
     ]
     const offs: Array<(() => void) | undefined> = []
@@ -420,7 +586,7 @@ export function mountTokensaveWebRoutes(ctx: Context): void {
         console.warn(`[dsh-tokensave] 路由已存在，跳过重复注册: ${path}`)
       }
     }
-    console.log(`[dsh-tokensave] 路由已挂载: ${BOARD_ROUTE_PATH}, ${FS_ROUTE_PATH}, ${EXPLORERS_ROUTE_PATH}`)
+    console.log(`[dsh-tokensave] 路由已挂载: ${BOARD_ROUTE_PATH}, ${FS_ROUTE_PATH}, ${EXPLORERS_ROUTE_PATH}, ${PROJECT_INFO_ROUTE_PATH}`)
     const registration = {
       server,
       dispose: () => {

@@ -112,6 +112,11 @@ body.ts-center-open [data-conversation-region="composer"] {
 .ts-icon-btn { cursor:pointer; border:none; background:transparent; color:inherit; opacity:.6; border-radius:6px; padding:2px 7px; font-size:14px; line-height:1.3; }
 .ts-icon-btn:hover { opacity:1; background:rgba(127,127,127,.22); }
 .ts-input, .ts-select { border:1px solid rgba(127,127,127,.35); background:rgba(127,127,127,.08); color:inherit; border-radius:6px; padding:6px 9px; font-size:13px; box-sizing:border-box; }
+/* 弹窗里的表单控件一律撑满整行（否则 textarea 会退回 cols 默认宽度，
+   比同行的 input 窄——用户反馈两者宽度不一致）。 */
+.ts-modal-body .ts-input, .ts-modal-body .ts-select, .ts-modal-body .ts-textarea { width:100%; }
+/* 多行文本框：允许纵向拖拽、继承字体、行高放松 */
+.ts-textarea { min-height:74px; resize:vertical; font:inherit; font-size:13px; line-height:1.55; }
 .ts-input:focus, .ts-select:focus { outline:1px solid rgba(96,165,250,.7); }
 .ts-tag { font-size:11px; padding:2px 8px; border-radius:99px; background:rgba(96,165,250,.22); border:1px solid rgba(96,165,250,.45); }
 .ts-tag-warn { background:rgba(251,191,36,.2); border-color:rgba(251,191,36,.5); }
@@ -169,6 +174,63 @@ body.ts-center-open [data-conversation-region="composer"] {
 .ts-center-meta { flex:none; display:flex; gap:6px; flex-wrap:wrap; }
 .ts-center-actions { display:flex; gap:8px; margin-top:auto; padding-top:6px; }
 .ts-center-enter { flex:1; }
+/* 卡片可点击：整卡进工作台（不再有「进入工作台」按钮） */
+.ts-center-card-click { cursor:pointer; }
+.ts-center-card-click:focus-visible { outline:2px solid rgba(96,165,250,.8); outline-offset:2px; }
+.ts-center-card-click.disabled { cursor:not-allowed; opacity:.55; }
+/* 卡片右上角“进入 →”提示：只在悬停时明显，不抢标题 */
+.ts-center-enterhint { flex:none; font-size:11.5px; opacity:0; transform:translateX(-3px); transition:opacity .14s ease, transform .14s ease; color:#60a5fa; white-space:nowrap; }
+.ts-center-card-click:hover .ts-center-enterhint { opacity:1; transform:translateX(0); }
+/* 项目介绍：两行截断，保持卡片等高 */
+.ts-center-desc { flex:1 1 auto; min-height:0; font-size:12px; line-height:1.55; opacity:.72; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; word-break:break-word; }
+.ts-btn-sm { padding:3px 11px; font-size:12px; }
+
+/* —— 工具条：展示方式 / 排序方式 ——
+   用户反馈：原来“挤在左边一点点”很难看，希望“一行控制”。
+   所以做成**撑满一行的玻璃条**：左侧两组分段控件，右侧项目数；
+   窄屏自动换行。 */
+.ts-center-toolbar { flex:none; display:flex; align-items:center; gap:14px; flex-wrap:wrap; padding:8px 12px; border:1px solid rgba(127,127,127,.26); border-radius:12px; background:linear-gradient(135deg,rgba(255,255,255,.07),rgba(255,255,255,.02)),rgba(127,127,127,.06); box-shadow:0 4px 14px rgba(0,0,0,.14); }
+.ts-seg { display:inline-flex; align-items:center; gap:2px; padding:3px; border:1px solid rgba(127,127,127,.3); border-radius:10px; background:rgba(0,0,0,.14); }
+.ts-seg-label { font-size:11.5px; opacity:.55; padding:0 8px 0 9px; white-space:nowrap; }
+.ts-seg-btn { border:none; background:transparent; color:inherit; font:inherit; font-size:12.5px; padding:5px 13px; border-radius:8px; cursor:pointer; opacity:.75; white-space:nowrap; transition:background .13s ease, opacity .13s ease, color .13s ease; }
+.ts-seg-btn:hover { background:rgba(127,127,127,.22); opacity:1; }
+.ts-seg-btn.active { background:linear-gradient(180deg,rgba(96,165,250,.38),rgba(96,165,250,.22)); opacity:1; font-weight:600; box-shadow:inset 0 0 0 1px rgba(96,165,250,.5), 0 2px 8px rgba(96,165,250,.18); }
+.ts-center-count { margin-left:auto; font-size:12px; opacity:.55; white-space:nowrap; padding-left:8px; }
+
+/* —— 列表模式：表格（宽裕、不拥挤）—— */
+.ts-plist-wrap { flex:1; min-height:0; overflow:auto; border:1px solid rgba(127,127,127,.26); border-radius:14px; background:linear-gradient(180deg,rgba(255,255,255,.05),rgba(255,255,255,.01)),rgba(127,127,127,.05); box-shadow:0 6px 20px rgba(0,0,0,.16); }
+.ts-plist { width:100%; border-collapse:separate; border-spacing:0; font-size:13px; }
+.ts-plist th { position:sticky; top:0; z-index:1; text-align:left; font-weight:600; font-size:11.5px; letter-spacing:.04em; padding:12px 16px; background:rgba(20,23,29,.94); color:inherit; border-bottom:1px solid rgba(127,127,127,.32); backdrop-filter:blur(10px); white-space:nowrap; }
+.ts-plist td { padding:12px 16px; border-bottom:1px solid rgba(127,127,127,.14); vertical-align:middle; text-align:left; }
+.ts-plist tbody tr { transition:background .12s ease; }
+.ts-plist tbody tr:hover { background:rgba(127,127,127,.11); }
+.ts-plist tbody tr:last-child td { border-bottom:none; }
+.ts-plist-idx { width:64px; text-align:left; opacity:.45; font-variant-numeric:tabular-nums; }
+.ts-plist-time { width:150px; white-space:nowrap; opacity:.82; font-variant-numeric:tabular-nums; }
+.ts-plist-ops { width:150px; white-space:nowrap; text-align:left; }
+.ts-plist-ops .ts-btn + .ts-btn { margin-left:8px; }
+.ts-plist-name { font-weight:600; display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ts-plist-path { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:.55; font-family:var(--dsh-font-mono, monospace); font-size:11.5px; }
+.ts-plist-desc { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:.75; }
+/* 列宽分配：名称/路径/介绍给足空间，时间与操作固定 */
+.ts-plist th:nth-child(2), .ts-plist td:nth-child(2) { min-width:150px; }
+.ts-plist th:nth-child(3), .ts-plist td:nth-child(3) { min-width:220px; }
+.ts-plist th:nth-child(6), .ts-plist td:nth-child(6) { min-width:200px; }
+
+/* 已启动徒标（卡片上） */
+.ts-tag-live { background:rgba(74,222,128,.22); border-color:rgba(74,222,128,.55); color:#86efac; }
+
+/* —— 确认弹窗 —— */
+.ts-confirm { max-width:520px; }
+.ts-confirm-danger .ts-modal-head { color:#fca5a5; }
+.ts-confirm-msg { font-size:13px; line-height:1.7; }
+.ts-confirm-lead { margin-bottom:10px; }
+.ts-confirm-target { display:flex; flex-direction:column; gap:3px; padding:10px 12px; margin-bottom:10px; border-radius:10px; border:1px solid rgba(127,127,127,.3); background:rgba(0,0,0,.16); }
+.ts-confirm-name { font-weight:600; }
+.ts-confirm-path { font-size:11.5px; opacity:.6; word-break:break-all; font-family:var(--dsh-font-mono, monospace); }
+.ts-confirm-note { font-size:12px; opacity:.7; line-height:1.65; }
+.ts-btn-danger-solid { background:rgba(248,113,113,.9); border-color:rgba(248,113,113,1); color:#fff; font-weight:600; }
+.ts-btn-danger-solid:hover { background:rgba(248,113,113,1); box-shadow:0 0 14px rgba(248,113,113,.4); }
 /* 新建卡：虚线玻璃底 + 居中加号 */
 .ts-center-addcard { justify-content:center; align-items:center; gap:8px; cursor:pointer; color:inherit; font:inherit; background:radial-gradient(circle at 50% 42%,rgba(255,255,255,.08),rgba(255,255,255,0) 65%),rgba(127,127,127,.06); border:1.5px dashed rgba(127,127,127,.5); box-shadow:none; }
 .ts-center-addcard::after { display:none; }
@@ -256,7 +318,7 @@ body.ts-center-open [data-conversation-region="composer"] {
 .ts-talk-head > span:first-child, .ts-save-head > span:first-child, .ts-board-head > span:first-child, .ts-mainchat-head > span:first-child { flex:none; white-space:nowrap; }
 .ts-card-count { flex:none; font-size:10.5px; opacity:.55; padding:0 2px 4px; }
 /* 计数现在位于标题条中间（.ts-head-mid）：去掉旧正文态的底部内边距，避免标题条被撑高 */
-.ts-head-mid.ts-card-count { padding:0; opacity:.62; }
+.ts-head-mid.ts-card-count { padding:0; opacity:.62; flex:0 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .ts-card-overlay { position:absolute; inset:0; z-index:40; background:rgba(12,14,18,.92); backdrop-filter:blur(8px) saturate(1.2); border-radius:10px; display:flex; flex-direction:column; padding:10px; box-sizing:border-box; }
 .ts-card-overlay-inner { flex:1; min-height:0; display:flex; flex-direction:column; }
 .ts-closed-bar { flex:none; display:flex; align-items:center; gap:6px; flex-wrap:wrap; padding:5px 8px; border:1px dashed rgba(127,127,127,.45); border-radius:9px; }
@@ -279,15 +341,20 @@ body.ts-center-open [data-conversation-region="composer"] {
 
 /* —— 探索者窗口卡 —— */
 .ts-win { border:1px solid rgba(127,127,127,.32); background:rgba(127,127,127,.09); border-radius:9px; display:flex; flex-direction:column; min-height:70px; flex:1; overflow:hidden; position:relative; }
-.ts-win-head { display:flex; align-items:center; gap:6px; padding:6px 8px; background:rgba(127,127,127,.14); cursor:default; user-select:none; }
+.ts-win-head { display:flex; align-items:center; gap:6px; padding:6px 8px; background:rgba(127,127,127,.14); cursor:default; user-select:none; flex-wrap:nowrap; overflow:hidden; }
 .ts-win-head:hover { background:rgba(127,127,127,.22); }
+/* 按钮组永不压缩：否则窄列里按钮会被压到换行、标题条变高溢出 */
+.ts-win-head > span:last-child { flex:none; display:inline-flex; align-items:center; gap:1px; }
 .ts-win-name { font-size:12.5px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; flex:0 1 auto; min-width:0; }
 .ts-win-dot { width:8px; height:8px; border-radius:50%; background:#52c41a; flex:none; }
 .ts-win-dot.idle { background:rgba(127,127,127,.7); }
 .ts-win-body { flex:1; min-height:0; overflow:auto; padding:8px; display:flex; flex-direction:column; gap:6px; font-size:12px; line-height:1.55; }
 .ts-win.collapsed { flex:none; }
 .ts-win.collapsed .ts-win-body { display:none; }
-.ts-win-overlay { position:absolute; inset:0; z-index:40; flex:none; box-shadow:0 8px 32px rgba(0,0,0,.45); }
+/* 最大化：补不透明底（原仅 shadow，父级 .ts-win 底色 9% 透度，全屏后看不清） */
+.ts-win-overlay { position:absolute; inset:0; z-index:40; flex:none; background:rgba(14,16,21,.97); color:#e6e8eb; border:1px solid rgba(127,127,127,.35); box-shadow:0 8px 32px rgba(0,0,0,.45); backdrop-filter:blur(8px) saturate(1.1); }
+.ts-win-overlay .ts-win-head { background:rgba(255,255,255,.07); }
+.ts-win-overlay .ts-win-head:hover { background:rgba(255,255,255,.13); }
 .ts-msg-user { align-self:flex-end; background:rgba(96,165,250,.22); border:1px solid rgba(96,165,250,.4); border-radius:8px 8px 2px 8px; padding:5px 9px; max-width:88%; white-space:pre-wrap; word-break:break-word; }
 .ts-msg-assistant { align-self:flex-start; background:rgba(127,127,127,.14); border-radius:8px 8px 8px 2px; padding:5px 9px; max-width:94%; white-space:pre-wrap; word-break:break-word; }
 .ts-msg-tool, .ts-msg-system { align-self:stretch; opacity:.62; font-size:11px; border-left:2px solid rgba(127,127,127,.5); padding:2px 8px; }
@@ -302,9 +369,14 @@ body.ts-center-open [data-conversation-region="composer"] {
 .ts-turn + .ts-turn { margin-top:10px; padding-top:9px; border-top:1px dashed rgba(127,127,127,.22); }
 /* 过程折叠条：一行，不抢眼 */
 .ts-proc { align-self:stretch; }
-.ts-proc-head { display:flex; align-items:center; gap:7px; width:100%; text-align:left; font:inherit; font-size:11px; opacity:.66; padding:3px 8px; border:0; border-left:2px solid rgba(127,127,127,.45); background:rgba(127,127,127,.07); color:inherit; cursor:pointer; border-radius:0 6px 6px 0; }
+/* 窄列不换行：子项 nowrap + 省略号截断（文字换行发生在 flex 子项内部，不是 flex 层） */
+.ts-proc-head { display:flex; align-items:center; gap:7px; width:100%; text-align:left; font:inherit; font-size:11px; opacity:.66; padding:3px 8px; border:0; border-left:2px solid rgba(127,127,127,.45); background:rgba(127,127,127,.07); color:inherit; cursor:pointer; border-radius:0 6px 6px 0; flex-wrap:nowrap; overflow:hidden; white-space:nowrap; }
+.ts-proc-head > span { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+/* 「过程 N 步」优先保留，先缩「思考/工具」两段（用户：不想看到换行，允许省略） */
+.ts-proc-head .ts-proc-lead { flex:none; }
+.ts-proc-head .ts-dim { flex:0 1 auto; }
+.ts-proc-head .ts-proc-caret { flex:none; width:10px; }
 .ts-proc-head:hover { opacity:.9; background:rgba(127,127,127,.14); }
-.ts-proc-caret { flex:none; width:10px; }
 .ts-dim { opacity:.6; }
 .ts-proc-body { display:flex; flex-direction:column; gap:5px; margin-top:5px; padding-left:8px; }
 .ts-proc-item { border-left:2px solid rgba(127,127,127,.3); padding:2px 8px; font-size:11px; opacity:.75; }

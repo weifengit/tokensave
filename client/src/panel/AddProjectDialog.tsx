@@ -20,7 +20,7 @@ export function AddProjectDialog({ onClose, onCreated }: Props) {
   const [fsError, setFsError] = useState<string | null>(null)
   const [selectedPath, setSelectedPath] = useState<string | null>(null)
   const [name, setName] = useState('')
-
+  const [description, setDescription] = useState('')
   const load = useCallback(async (path?: string) => {
     setLoading(true)
     setFsError(null)
@@ -61,7 +61,7 @@ export function AddProjectDialog({ onClose, onCreated }: Props) {
 
   const confirm = () => {
     if (!selectedPath) return
-    const record = addProject(name.trim(), selectedPath)
+    const record = addProject(name.trim(), selectedPath, description)
     onCreated(record)
   }
 
@@ -126,10 +126,21 @@ export function AddProjectDialog({ onClose, onCreated }: Props) {
             <label className="ts-field-label">项目名称（可选，默认取文件夹名）</label>
             <input
               className="ts-input"
-              style={{ width: '100%' }}
               value={name}
               placeholder="例如：我的网站"
               onChange={(e) => setName(e.target.value)}
+            />
+          </div>
+
+          {/* 项目介绍（卡片/列表上作为说明性内容展示） */}
+          <div>
+            <label className="ts-field-label">项目介绍（可选，展示在项目卡片与列表里）</label>
+            <textarea
+              className="ts-input ts-textarea"
+              value={description}
+              placeholder="例如：个人博客，Next.js + MDX，部署在 Vercel"
+              rows={3}
+              onChange={(e) => setDescription(e.target.value)}
             />
           </div>
         </div>

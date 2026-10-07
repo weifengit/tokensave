@@ -316,17 +316,24 @@ export function HDesk({ project, sessionId, onBack }: Props) {
   const left = visible.filter((_, i) => i % 2 === 0)
   const right = visible.filter((_, i) => i % 2 === 1)
   const overlaid = overlayId ? explorers.find((s) => s.id === overlayId) : undefined
-  const maximizedCard = CARD_LABELS.find((c) => cardOf(c.id).maximized)?.id ?? null
+  // 未唤醒 tokensave（本项目还没有任何探索者会话）：按用户要求只保留一个
+  // DSH 主对话窗口并铺满整个工作台；探索者一出现（tokensave_delegate 跑起来）
+  // 即自动还原 H 台——idle 是派生态，不写入任何卡片状态。
+  const idle = explorers.length === 0
+  const rawMax = CARD_LABELS.find((c) => cardOf(c.id).maximized)?.id ?? null
+  // idle 时只允许 chat 最大化（其他卡不渲染，放行只会弹出孤立浮层）
+  // idle 下主对话已在网格里铺满（本身就是最大化），浮层一律不上，否则双实例双订阅
+  const maximizedCard = idle ? null : rawMax
 
   // 网格行数：黑板占 1..R-1，中下占 R；左右两竖跨满 —— 探索者增多即均分
   const rows = Math.max(left.length, right.length, 2)
   // 中下格随窗口数/布局变化 → 停靠持续跟随（deps 覆盖重排）
-  const chatMaximized = cardOf('chat').maximized
-  const chatDocked = !cardOf('chat').collapsed && !cardOf('chat').hidden
+  const chatMaximized = !idle && cardOf('chat').maximized
+  const chatDocked = idle || (!cardOf('chat').collapsed && !cardOf('chat').hidden)
   useDockNativeComposer(
     chatMaximized ? overlayChatRef : chatCellRef,
     chatDocked,
-    [rows, sessionId, visible.length, chatMaximized],
+    [rows, idle, sessionId, visible.length, chatMaximized],
   )
 
   /** 卡片三键：构造后交给各卡片渲染进自己的标题条 */
@@ -411,11 +418,25 @@ export function HDesk({ project, sessionId, onBack }: Props) {
       </div>
 
       {probeError && <div className="ts-hint">⚠️ {probeError}</div>}
-      <ClosedCardsBar closed={closedCards} onRestore={(id) => setCard(id, { hidden: false })} />
+      {/* idle 下其它卡都不渲染，恢复 chip 点了也没意义（且会与“只保留一个窗口”矛盾） */}
+      {!idle && <ClosedCardsBar closed={closedCards} onRestore={(id) => setCard(id, { hidden: false })} />}
 
       {/* 行轨道同样用 minmax(0, 1fr)：裸 1fr 的自动最小值是 min-content，
           卡片里的长内容会把行撑高，把网格顶出容器（与列同款问题）。 */}
-      <div className="ts-desk" style={{ gridTemplateRows: `repeat(${rows}, minmax(0, 1fr))` }}>
+      {idle ? (
+        /* —— 未唤醒 tokensave：单窗口 —— 其它窗口全部隐藏，DSH 主对话铺满整个工作台
+           （派生态：不改任何卡片状态；探索者一出现就回到 H 台） */
+        <div className="ts-desk" style={{ gridTemplateRows: 'minmax(0,1fr)', gridTemplateColumns: 'minmax(0,1fr)' }}>
+          <div className="ts-desk-chat" style={{ gridRow: '1', gridColumn: '1' }} ref={chatCellRef}>
+            {/* 不走 cardShell：idle 下主对话必须无条件渲染（此前的 hidden/collapsed/maximized
+                状态在单窗口模式下会让台面空掉或缩成一条；三键在只有一个窗口时也无意义 */}
+            <div className="ts-card ts-card-fill">
+              <MainChat sessionId={sessionId} actions={null} />
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div className="ts-desk" style={{ gridTemplateRows: `repeat(${rows}, minmax(0, 1fr))` }}>
         {/* 左竖：顶部协作对话（主 agent ↔ 探索者），下方探索者窗口等高均分 */}
         <div className="ts-desk-col ts-desk-left">
           {cardShell('talk', (
@@ -469,7 +490,8 @@ export function HDesk({ project, sessionId, onBack }: Props) {
             onHide={() => {}}
           />
         )}
-      </div>
+        </div>
+      )}
 
       {/* 卡片铺满浮层：覆盖整个工作台 */}
       {maximizedCard && (

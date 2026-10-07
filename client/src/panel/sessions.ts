@@ -152,6 +152,60 @@ export function openSession(sessionId: string): boolean {
 }
 
 /**
+ * 「展示」：跳到该项目的**宿主 UI 界面**（DSH 默认对话窗口，带左侧工作区）。
+ *
+ * 与「进入工作台」的区别：工作台是本插件视图；展示是把宿主拉回它自己的界面，
+ * 用于“我就想看看这个项目的原生 DSH 界面”。
+ *
+ * 做法（三级降级，保证一定有反应）：
+ *   1. 若该项目已有会话 → 直接 openSession 打开它（并清掉本插件的视图偏好，
+ *      使宿主回落默认 chat 视图）；
+ *   2. 否则若已有工作区登记 → openWorkspace（宿主会复用/新建空白会话）；
+ *   3. 都没有 → 先 workspaces.create({path}) 登记工作区，再 openWorkspace。
+ * @returns 是否成功发起导航
+ */
+export async function revealProject(projectPath: string): Promise<boolean> {
+  const ctx: any = getClientContext()
+  if (!ctx || !projectPath) return false
+  const ui = svc(ctx, 'uiWorkspace')
+  if (!ui) return false
+  // ① 已有会话：直接打开
+  const existing = latestProjectSession(ctx, projectPath)
+  if (existing) {
+    // 清掉本插件视图偏好，让宿主回落它自己的默认对话视图
+    clearViewPreference(existing.id)
+    if (typeof ui.openSession === 'function') {
+      try {
+        ui.openSession(existing.id)
+        return true
+      } catch (e) {
+        console.warn('[tokensave] 展示：openSession 失败', e)
+      }
+    }
+  }
+  // ② 已有工作区登记：直接打开工作区
+  let workspaceId = readProjectWorkspaceId(ctx, projectPath)
+  // ③ 没有则先登记
+  if (!workspaceId) {
+    try {
+      const ws = await svc(ctx, 'workspaces')?.create?.({ path: projectPath })
+      workspaceId = ws && ws.workspaceId ? String(ws.workspaceId) : ''
+    } catch (e) {
+      console.warn('[tokensave] 展示：登记工作区失败', e)
+    }
+  }
+  if (workspaceId && typeof ui.openWorkspace === 'function') {
+    try {
+      await ui.openWorkspace(workspaceId)
+      return true
+    } catch (e) {
+      console.warn('[tokensave] 展示：openWorkspace 失败', e)
+    }
+  }
+  return false
+}
+
+/**
  * 为该项目开一个新对话。
  *
  * 与宿主 uiWorkspace.startSession 同款语义：先复用该项目下已有的空白会话，
@@ -200,6 +254,26 @@ export function recallViewPreference(sessionId: string): string | null {
       : null
   } catch {
     return null
+  }
+}
+
+/**
+ * 清除某个会话的视图偏好，让宿主回落它自己的默认视图（chat）。
+ *
+ * 用于「展示」：我们想让宿主显示**它自己的**界面，而不是本插件的工作台。
+ * 只把 view 置为 null（保留 draft 等其它字段）。
+ */
+export function clearViewPreference(sessionId: string): void {
+  if (!sessionId || typeof localStorage === 'undefined') return
+  try {
+    const key = `${CONVERSATION_STORE_KEY}.${sessionId}`
+    const raw = localStorage.getItem(key)
+    if (!raw) return
+    const parsed = JSON.parse(raw)
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return
+    localStorage.setItem(key, JSON.stringify({ ...parsed, view: null, viewRequest: null }))
+  } catch {
+    /* 隐私模式：忽略 */
   }
 }
 
@@ -326,6 +400,85 @@ export function getCurrentSessionId(): string {
   return currentSessionId
 }
 
+// —— 「项目中心」当前处于哪一屏（列表 / 工作台）+ 切换信号 ————
+//
+// 侧边栏按钮是**切换**语义（用户要求）：
+//   当前在工作台 → 点一下回项目列表；
+//   当前在项目列表 → 点一下回**上次那个**工作台。
+//
+// 关键设计：切到列表时**不能清掉“上次打开的项目”记忆**，否则再点回来就不知道
+// 回哪个项目（会退化成第一个项目——已用模拟测出这个 bug）。
+// 因此用独立的 `forceList` 标记：它只控制“挂载时不要自动恢复工作台”，
+// 而工作台记忆原封不动地留着，供切回时使用。
+//
+// 为何用订阅而非一次性标记：用户可能**已经**在本视图内（不会重挂），
+// 只在挂载时读标记的写法收不到信号，界面不动。
+type Screen = 'list' | 'desk'
+let controlRoomScreen: Screen = 'list'
+let forceList = false
+
+/** ControlRoom 上报当前屏（供侧边栏按钮决定切换方向）。 */
+export function setControlRoomScreen(s: Screen): void {
+  controlRoomScreen = s
+}
+
+/** 当前屏（未上报过时视为列表）。 */
+export function getControlRoomScreen(): Screen {
+  return controlRoomScreen
+}
+
+/** 是否处于“强制列表”态（挂载时不要自动恢复工作台）。 */
+export function isForceList(): boolean {
+  return forceList
+}
+
+const listListeners = new Set<() => void>()
+/** 工作台恢复监听；可带目标会话 id（跨会话切换时 ControlRoom 会忽略，等 prop 更新后自己恢复）。 */
+const deskListeners = new Set<(sessionId?: string) => void>()
+
+function emit(set: Set<() => void>, what: string): void {
+  for (const fn of Array.from(set)) {
+    try {
+      fn()
+    } catch (e) {
+      console.warn(`[tokensave] ${what}信号回调失败`, e)
+    }
+  }
+}
+
+function emitDesk(sessionId?: string): void {
+  for (const fn of Array.from(deskListeners)) {
+    try {
+      fn(sessionId)
+    } catch (e) {
+      console.warn('[tokensave] 工作台信号回调失败', e)
+    }
+  }
+}
+
+/** 请求「项目中心」显示项目列表（而非工作台）。保留工作台记忆，供切回时用。 */
+export function requestProjectList(): void {
+  forceList = true
+  emit(listListeners, '项目列表')
+}
+
+/** 请求「项目中心」回到**上次那个**工作台。可带目标会话 id（导航中已知）。 */
+export function requestWorkbench(sessionId?: string): void {
+  forceList = false
+  emitDesk(sessionId)
+}
+/** 订阅「显示项目列表」信号；返回取消订阅函数。 */
+export function onRequestProjectList(fn: () => void): () => void {
+  listListeners.add(fn)
+  return () => { listListeners.delete(fn) }
+}
+
+/** 订阅「回到工作台」信号；回调可拿到导航的目标会话 id。 */
+export function onRequestWorkbench(fn: (sessionId?: string) => void): () => void {
+  deskListeners.add(fn)
+  return () => { deskListeners.delete(fn) }
+}
+
 
 /**
  * 让宿主把当前会话的**视图**切到「项目中心」。
@@ -361,56 +514,68 @@ function selectHostView(): boolean {
   }
 }
 /**
- * 打开「项目中心」（侧边栏按钮的入口）。
+ * 侧边栏「项目中心」按钮：在**项目列表**与**工作台**之间切换。
  *
- * 三级降级，保证点下去一定有反应：
- *   1. 当前会话属于某已登记项目 → 绑到该项目（落工作台）；
- *   2. 当前会话不属于任何项目 → 仍然激活本插件视图（落项目列表）；
- *   3. 没有当前会话（如刚开应用）→ 打开第一个项目的最新会话。
+ * 语义（用户要求）：
+ *   当前在工作台 → 点一下回到项目列表（含「添加项目文件夹」与项目卡片）；
+ *   当前在项目列表 → 点一下回到上次的工作台。
+ *
+ * 实现：读 `getControlRoomScreen()` 判断当前在哪一屏，发对应信号。
+ * 两个方向都要保证：
+ *   - 本插件视图被激活（空白会话也要能渲染）；
+ *   - 点宿主 tab 真正切过去（宿主只渲染 store.view 指向的视图）。
  * @returns 是否成功发起导航
  */
 export function openControlRoom(): boolean {
   const ctx: any = getClientContext()
   if (!ctx) return false
+  const toDesk = getControlRoomScreen() === 'list'
   const current = getCurrentSessionId()
   if (current) {
-    // ① 属于某项目 → 绑到它（写偏好 + 激活）；不属于也没关系。
-    const bound = bindSessionToItsProject(current)
-    if (!bound) {
-      // 非项目会话：写偏好 + 激活，落到项目列表态
-      primeViewPreference(current)
-      scheduleActivate(current)
+    if (toDesk) {
+      // 列表 → 工作台：交给 ControlRoom 自己恢复（它有“上次打开的项目”记忆）
+      requestWorkbench()
+    } else {
+      // 工作台 → 列表：**保留**工作台记忆（切回来要知道回哪个项目），
+      // 只置“强制列表”标记（由 requestProjectList 内部完成）。
+      requestProjectList()
     }
-    // ② 关键：不论哪种情况，都点一下宿主自己的「项目中心」tab。
-    //
-    // 为何必须这样做：宿主渲染的是**持久化 store 的 view 字段**
-    // （`useStore(s => s.view)` → `resolveActiveView`），而 localStorage 偏好
-    // 只在**会话首次绑定**时读一次。用户已经身处某个会话时，
-    // 光写偏好 + binding.activate()（数据激活）都不会改 store.view，
-    // 所以上一版按钮“点了没反应”。点它自己的 tab 才会真正切界面。
-    selectHostView()
+    primeViewPreference(current)
+    scheduleActivate(current)
     return true
   }
-  // 没有当前会话：挑第一个项目的最新会话打开
+  // 没有当前会话：挑第一个项目的最新会话打开（打开后 ControlRoom 会显示列表）
   for (const p of loadProjects()) {
     const s = latestProjectSession(ctx, p.path)
     if (!s) continue
-    bindToProject(s.id, p.id)
+    primeViewPreference(s.id)
     const ok = openSession(s.id)
-    // 切过去之后再点 tab（会话切换后宿主才渲染出 tab 列表）
     if (typeof window !== 'undefined') {
-      window.setTimeout(() => selectHostView(), 120)
+      window.setTimeout(() => { requestProjectList(); selectHostView() }, 150)
     }
     return ok
   }
   return false
 }
 
-/** 把会话绑到指定项目（写偏好 + 项目记忆 + 已物化 binding 的视图切换）。 */
+/**
+ * 把会话绑到指定项目（写偏好 + 项目记忆 + 已物化 binding 的视图切换）。
+ *
+ * 副作用：清掉「强制列表」标记并发工作台信号。
+ * 绑定发生在真实导航（侧边栏点会话 → replaceMain 包装 / Probe 随会话切换）时，
+ * 此时用户的意图就是看该项目的工作台——若不清 forceList，用户点过一次侧边栏
+ * 「项目中心」后它会永久为 true，之后点任何会话都会被恢复逻辑短路停在列表。
+ */
 export function bindToProject(sessionId: string, projectId: string): boolean {
   if (!sessionId || !projectId) return false
   primeViewPreference(sessionId)
   rememberOpenedProject(sessionId, projectId)
+  // 清粘性标记 + 通知已挂载的 ControlRoom（跨会话时它会跳过，
+  // 等 sessionId prop 更新后由 [sessionId] 恢复 effect 接手——两条路互为兼底）
+  if (forceList) {
+    forceList = false
+    emitDesk(sessionId)
+  }
   // 关键：若该会话的 binding 已经物化（例如复用了已存在的空白会话，其视图已按
   // 偏好定成 chat），只写 localStorage 不会重激活——必须显式把视图切回来。
   // 延后多次尝试激活（见 scheduleActivate 注释：新建的空白会话 binding 尚未物化）。
