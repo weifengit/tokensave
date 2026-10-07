@@ -13,14 +13,20 @@
  * user/message，但 `injected` 为真——它们不是用户发的，既不能当用户气泡，
  * 也不能参与轮次切分（否则会把一轮拆成两轮）。
  *
- * 另外：只渲染最近 MAX_TURNS 轮，更早的折成提示（避免 DOM 爆炸）。
+ * DOM 只渲染最近 MAX_TURNS 轮（避免 DOM 爆炸）；更早的历史靠「瀑布式回翻」：
+ * 滚到顶部（或点「加载更早」）时先放大本地轮数窗口，本地没得放了就请宿主
+ * 拉一页更早的历史（见 MainChat 的 onLoadOlder），并在内容变高后把视口钉回原处。
  */
-import React, { useEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { StreamMsg } from '../session-subscribe'
 import { RichText, stripMarkdown } from './RichText'
 
 /** 最多渲染的轮数（超出只显示最近这些） */
 const MAX_TURNS = 40
+/** 回翻一页的轮数步长 */
+const TURNS_PER_PAGE = 20
+/** 距顶部多少像素内算「到顶」，触发回翻 */
+const TOP_LOAD_THRESHOLD = 32
 /** 折叠行单行预览长度 */
 const PREVIEW = 120
 
@@ -181,8 +187,27 @@ function splitTurn(turn: StreamMsg[]): Turn {
   return { users, injects, proc, answer }
 }
 
-export function MsgList({ messages, emptyText }: { messages: StreamMsg[]; emptyText?: string }) {
+interface MsgListProps {
+  messages: StreamMsg[]
+  emptyText?: string
+  /** 宿主是否还有更早的历史可分页（session 快照的 hasMore） */
+  hasMore?: boolean
+  /** 是否正在从宿主拉取更早的一页 */
+  loadingOlder?: boolean
+  /** 请求拉取更早一页（由 MainChat 转发到 session face 的 loadOlder） */
+  onLoadOlder?: () => void | Promise<void>
+}
+
+export function MsgList({
+  messages,
+  emptyText,
+  hasMore = false,
+  loadingOlder = false,
+  onLoadOlder,
+}: MsgListProps) {
   const ref = useRef<HTMLDivElement>(null)
+  // 当前展示的轮数窗口：瀑布式回翻时逐步放大（只放大，不缩回去）
+  const [windowTurns, setWindowTurns] = useState(MAX_TURNS)
 
   const turns = useMemo(() => {
     const out: StreamMsg[][] = []
@@ -195,9 +220,12 @@ export function MsgList({ messages, emptyText }: { messages: StreamMsg[]; emptyT
     return out
   }, [messages])
 
-  const shownTurns = turns.length > MAX_TURNS ? turns.slice(-MAX_TURNS) : turns
+  const shownTurns = turns.length > windowTurns ? turns.slice(-windowTurns) : turns
   const hiddenTurns = turns.length - shownTurns.length
   const parsed = useMemo(() => shownTurns.map(splitTurn), [shownTurns])
+  /** DOM 里还有被窗口裁掉的更早轮（无需请求宿主，直接放大窗口即可） */
+  const hasHiddenInDom = hiddenTurns > 0
+  const canLoadOlder = hasHiddenInDom || (hasMore && !!onLoadOlder)
 
   // —— 滚动跟随（反馈 #2）——
   //
@@ -208,8 +236,31 @@ export function MsgList({ messages, emptyText }: { messages: StreamMsg[]; emptyT
   // 一旦手动往上滚，就不再自动调整，直到他自己滚回底部。
   const pinnedRef = useRef(true)
   const [pinned, setPinned] = useState(true)
+  /** 回翻前的滚动锚点：内容变高后用它把视口钉回原处 */
+  const anchorRef = useRef<{ height: number; top: number } | null>(null)
   /** 距底部多少像素内仍算“在底部”（给流式追加留余量）。 */
   const NEAR_BOTTOM = 24
+
+  /**
+   * 回翻一页更早的历史（瀑布式）。
+   *
+   * 两个来源，优先本地：
+   *   ① DOM 里还有被窗口裁掉的轮 → 直接放大窗口（瞬时，不发请求）；
+   *   ② 宿主还有更早的历史 → 拉一页（loadOlder），窗口扩大后消息会自己多出来。
+   * 无论哪种，都先记下当前滚动位置，内容变高后把视口钉回原处，避免「跳」。
+   */
+  const requestOlder = useCallback(() => {
+    const el = ref.current
+    if (!el) return
+    if (hasHiddenInDom) {
+      anchorRef.current = { height: el.scrollHeight, top: el.scrollTop }
+      setWindowTurns((v) => v + TURNS_PER_PAGE)
+      return
+    }
+    if (!hasMore || loadingOlder || !onLoadOlder) return
+    anchorRef.current = { height: el.scrollHeight, top: el.scrollTop }
+    void onLoadOlder()
+  }, [hasHiddenInDom, hasMore, loadingOlder, onLoadOlder])
 
   const onScroll = () => {
     const el = ref.current
@@ -219,6 +270,8 @@ export function MsgList({ messages, emptyText }: { messages: StreamMsg[]; emptyT
       pinnedRef.current = atBottom
       setPinned(atBottom)
     }
+    // 滚到顶部就往下回翻（滚轮/拖到顶都会命中）
+    if (el.scrollTop <= TOP_LOAD_THRESHOLD) requestOlder()
   }
 
   const jumpToBottom = () => {
@@ -237,20 +290,41 @@ export function MsgList({ messages, emptyText }: { messages: StreamMsg[]; emptyT
     if (el) el.scrollTop = el.scrollHeight
   }, [messages.length, tailLen, shownTurns.length])
 
+  // 回翻后恢复视口：新增内容在**顶部**，因此把 scrollTop 加上「长高的那部分」，
+  // 用户眼前的旧内容原地不动（典型瀑布流锚定）。无锚点时 no-op。
+  useEffect(() => {
+    const a = anchorRef.current
+    const el = ref.current
+    if (!a || !el) return
+    anchorRef.current = null
+    el.scrollTop = el.scrollHeight - a.height + a.top
+  })
+
   // 切换会话时重新贴底（新会话应从头看最新）
   useEffect(() => {
     pinnedRef.current = true
     setPinned(true)
+    setWindowTurns(MAX_TURNS)
     const el = ref.current
     if (el) el.scrollTop = el.scrollHeight
   }, [emptyText])
+
   return (
     <div className="ts-chat-msgs" ref={ref} onScroll={onScroll}>
       {messages.length === 0 && (
         <div className="ts-hint">{emptyText ?? '等待会话消息…'}</div>
       )}
-      {hiddenTurns > 0 && (
-        <div className="ts-hint">更早的 {hiddenTurns} 轮已折叠（仅显示最近 {MAX_TURNS} 轮）</div>
+      {(canLoadOlder || loadingOlder) && (
+        <div className="ts-msgs-topbar">
+          {loadingOlder ? (
+            <span className="ts-dim">载入更早的历史…</span>
+          ) : (
+            <button className="ts-btn ts-btn-sm" onClick={requestOlder} title="向回加载更早的聊天记录">
+              加载更早
+            </button>
+          )}
+          {hasHiddenInDom && <span className="ts-dim">已折叠更早 {hiddenTurns} 轮</span>}
+        </div>
       )}
       {parsed.map((t, ti) => (
         <div className="ts-turn" key={ti}>

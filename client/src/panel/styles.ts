@@ -216,9 +216,36 @@ body.ts-center-open [data-conversation-region="composer"] {
 .ts-plist th:nth-child(2), .ts-plist td:nth-child(2) { min-width:150px; }
 .ts-plist th:nth-child(3), .ts-plist td:nth-child(3) { min-width:220px; }
 .ts-plist th:nth-child(6), .ts-plist td:nth-child(6) { min-width:200px; }
+/* 活跃对话列：序号点固定窄列（没有活跃对话时整格为空） */
+.ts-plist th:nth-child(7), .ts-plist td:nth-child(7) { width:120px; }
+/* 列表记录行可点：整行进工作台（与卡片模式同效） */
+.ts-plist-row-click { cursor:pointer; }
+.ts-plist-row-click:focus-visible { outline:2px solid rgba(96,165,250,.8); outline-offset:-2px; }
+/* 项目介绍行内编辑：平时看上去像可点的文本，悬停提示可改 */
+.ts-desc-editable { cursor:text; border-bottom:1px dashed rgba(127,127,127,.45); }
+.ts-desc-editable:hover { opacity:1; border-bottom-color:rgba(96,165,250,.75); }
+.ts-desc-input { width:100%; font-size:12.5px; padding:4px 6px; }
+/* 活跃序号点：绿=活跃，黄=待用户确认；点一下直达那条对话的工作台 */
+.ts-dots { display:inline-flex; align-items:center; gap:2px; flex:none; }
+.ts-dot { border:0; background:0 0; cursor:pointer; font-size:14px; line-height:1; padding:0 1px; font-family:inherit; }
+.ts-dot:hover { transform:scale(1.15); }
+.ts-dot:focus-visible { outline:2px solid rgba(96,165,250,.8); outline-offset:1px; border-radius:4px; }
+.ts-dot-active { color:#4ade80; }
+/* 卡片标题行里序号点靠右（名字之后、进入提示之前） */
+.ts-center-cardhead .ts-dots { margin-left:auto; }
+.ts-dot-pending { color:#fbbf24; }
 
 /* 已启动徒标（卡片上） */
 .ts-tag-live { background:rgba(74,222,128,.22); border-color:rgba(74,222,128,.55); color:#86efac; }
+
+/* 工作台顶部预览面板：在标题行之下、其它窗口之上；iframe 高度封顶不挤网格 */
+.ts-preview-panel { flex:none; display:flex; flex-direction:column; gap:8px; }
+.ts-preview-panel .ts-preview-bar > .ts-preview-url { flex:1 1 auto; }
+.ts-preview-panel .ts-preview-frame { flex:0 0 auto; height:clamp(180px, 34vh, 420px); max-height:42vh; }
+/* 工作台未选项目 / 项目中心空态 */
+.ts-center-empty { display:flex; flex-direction:column; align-items:center; gap:12px; text-align:center; padding:28px 20px; max-width:560px; }
+.ts-center-empty-title { font-size:20px; font-weight:700; }
+.ts-center-empty-sub { opacity:.78; font-size:13px; line-height:1.65; }
 
 /* —— 确认弹窗 —— */
 .ts-confirm { max-width:520px; }
@@ -335,6 +362,10 @@ body.ts-center-open [data-conversation-region="composer"] {
    底部留白 = 输入条实测高度（--ts-composer-h，由 HDesk 停靠时写入）+ 余量。
    以前写死 72px，输入条多行/换行时就不够，末尾几行被遮住。 */
 .ts-mainchat .ts-chat-msgs { padding-bottom:calc(var(--ts-composer-h, 72px) + 14px); }
+/* 主对话内容跟随宿主横向拖拽的宽度（--ts-chat-content-w 由 HDesk 停靠逻辑写入）：
+   与停靠的输入条同宽并居中；变量未写入时铺满卡片。
+   修复「拖拽只改输入框、对话内容纹丝不动」的不一致。 */
+.ts-mainchat .ts-chat-msgs { width:100%; max-width:var(--ts-chat-content-w, none); margin-inline:auto; }
 .ts-mainchat-sub { font-size:10.5px; font-weight:400; opacity:.6; }
 /* 探索者窗口标题条中间信息 */
 .ts-win-mid { flex:0 1 auto; margin:0 auto; }

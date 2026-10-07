@@ -104,6 +104,8 @@ interface Channel {
   metrics: SessionMetrics
   metricSubs: Set<MetricsListener>
   close?: Unsub
+  /** 本会话的 retain 绑定（openStream 成功后写入；历史分页需要它的 session face） */
+  binding?: any
 }
 
 const channels = new Map<string, Channel>()
@@ -429,6 +431,84 @@ export function subscribeSessionMetrics(sessionId: string, onMetrics: MetricsLis
   }
 }
 
+// —— 历史分页（「滚动到顶部加载更早」）——————————————
+
+/**
+ * 拉取一页更早的历史（宿主 session face 的 loadOlder）。
+ *
+ * 契约（0.2.0-rc.2）：`binding.session` 是 `ISession & ObservableSnapshot<SessionSnapshot>`，
+ * 其 `loadOlder()` 至少扩 50 条消息 / 两个 Turn，上限 500 条；快照的
+ * `hasMore` / `loadingOlder` 是「还有更早 / 正在载入」的信号。窗口扩大后照常触发
+ * eventSource 的失效通知，messagesFromWindow 因而重建出更长的消息列表。
+ * @param sessionId - 目标会话
+ * @returns 是否成功发起并完成一次加载
+ */
+export async function loadOlderHistory(sessionId: string): Promise<boolean> {
+  const face: any = channels.get(sessionId)?.binding?.session
+  if (!face || typeof face.loadOlder !== 'function') return false
+  try {
+    await face.loadOlder()
+    return true
+  } catch (e) {
+    console.warn('[tokensave] 加载更早历史失败', e)
+    return false
+  }
+}
+
+/** 读某会话的历史分页状态（会话流尚未建立时视为「没有更早」）。 */
+export function readHistoryState(sessionId: string): { hasMore: boolean; loadingOlder: boolean } {
+  try {
+    const snap = channels.get(sessionId)?.binding?.session?.getSnapshot?.()
+    return { hasMore: snap?.hasMore === true, loadingOlder: snap?.loadingOlder === true }
+  } catch {
+    return { hasMore: false, loadingOlder: false }
+  }
+}
+
+/**
+ * 订阅历史分页状态（hasMore / loadingOlder）。
+ *
+ * session face 要等 openStream 异步拿到 binding 后才存在，而订阅方（主对话）
+ * 在挂载时就会订阅——因此先尝试附加，未就绪则短暂重试（最多到附加成功）。
+ * @param sessionId - 目标会话
+ * @param fn - 状态回调（附加成功时立即推一次）
+ * @returns 取消订阅函数
+ */
+export function subscribeHistoryState(
+  sessionId: string,
+  fn: (state: { hasMore: boolean; loadingOlder: boolean }) => void,
+): Unsub {
+  let stopped = false
+  let un: (() => void) | null = null
+  const emit = () => { if (!stopped) fn(readHistoryState(sessionId)) }
+  const attach = () => {
+    if (stopped || un) return
+    const face: any = channels.get(sessionId)?.binding?.session
+    if (!face || typeof face.subscribe !== 'function') return
+    try {
+      un = face.subscribe(emit)
+      emit()
+    } catch {
+      un = null
+    }
+  }
+  attach()
+  emit()
+  const timer = window.setInterval(() => {
+    attach()
+    if (un) window.clearInterval(timer)
+  }, 500)
+  return () => {
+    stopped = true
+    window.clearInterval(timer)
+    try {
+      un?.()
+    } catch {
+      /* noop */
+    }
+  }
+}
+
 async function openStream(sessionId: string, ch: Channel): Promise<void> {
   const ctx = clientCtx as any
   // 服务一律经 ctx.get()（reflect 层，不经 inject 闸门）取得：
@@ -448,6 +528,7 @@ async function openStream(sessionId: string, ch: Channel): Promise<void> {
       try {
         ref = sessions.retain(sessionId, { source })
         const binding = await ref?.ready
+        if (binding) ch.binding = binding
         const src: any = binding?.eventSource
         if (src && typeof src.subscribe === 'function') {
           const emit = () => {

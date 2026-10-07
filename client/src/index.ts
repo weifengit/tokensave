@@ -6,9 +6,12 @@
 //  1. conversation.session.header.actions —— Probe 探测组件：
 //     发现 tokensave-* 探索者会话计数（供简报窗展示）；订阅当前会话流，
 //     捕获含 tokensave-brief 标记的内容挂简报浮窗。
-//  2. conversation.view —— 「项目中心」tab（order 20，位于看板之后）：
-//     项目卡片列表 + 添加项目弹窗（仅选项目文件夹，布局固定 H 型 1 种无选择项），
-//     进入后为 H 型工作台（左右两竖免费模型窗，中上共享黑板，中下宿主原生输入条停靠）。
+//  2. conversation.view —— 「项目中心」tab（order 19）：项目列表本身
+//     （卡片/列表两种展示 + 活跃对话序号点）；点卡片/记录行/「进入工作台」/序号点
+//     都进入对应工作台。
+//  3. conversation.view —— 「工作台」tab（order 20，id 保留 tokensave-control-room）：
+//     某个已登记项目的 H 型工作台（左右两竖免费模型窗，中上共享黑板，中下宿主原生
+//     输入条停靠，顶部一行项目预览 + 历史会话/新建会话）。
 //
 // 设计偏离 doc（Step 11 遗留）：不做 ctx.on('tool/result') 监听——0.2.0-rc.2 中
 // tool/result 是会话事件而非 Cordis 事件（KB events.md 注明）。
@@ -16,9 +19,13 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { useEffect } from 'react'
 import { getClientContext, setClientContext, subscribeSession, readService } from './session-subscribe'
-import { sweepProjectSessionBindings, bindSessionToItsProject, wrapSessionCreate, setCurrentSessionId } from './panel/sessions'
+import {
+  sweepProjectSessionBindings, bindSessionToItsProject, wrapSessionCreate, setCurrentSessionId,
+  VIEW_ID, WORKBENCH_LABEL, PROJECT_CENTER_VIEW_ID, PROJECT_CENTER_LABEL,
+} from './panel/sessions'
 import { mountBriefWindow, mountedExplorerCount } from './float/mount'
 import { ControlRoom } from './panel/ControlRoom'
+import { ProjectCenter } from './panel/ProjectCenter'
 import { ControlRoomEntry } from './panel/ControlRoomEntry'
 
 export const inject = { slots: true }
@@ -213,22 +220,36 @@ export function apply(ctx: Context) {
         Probe
       )
     )
-    // 2. conversation.view —— 「项目中心」tab
+    // 2. conversation.view —— 「项目中心」tab（真正的项目列表：卡片/列表 + 活跃序号点）
     slots?.inject('conversation.view', () =>
       slots.register(
         {
           name: 'conversation.view',
-          // id 保留（宿主每会话视图偏好存 localStorage，改 id 会让旧偏好悬空回落）
-          id: 'tokensave-control-room',
-          order: 20,
-          label: '项目中心',
+          id: PROJECT_CENTER_VIEW_ID,
+          order: 19,
+          label: PROJECT_CENTER_LABEL,
           // 宿主按会话作用域注入 sessionId；slot 级 props（openView 等）合并进组件入参
+          inject: (sessionId: string) => ({ sessionId }),
+        },
+        ProjectCenter
+      )
+    )
+    // 3. conversation.view —— 「工作台」tab（原「项目中心」）
+    //    id 保留不变量：宿主按 id 存每会话视图偏好，改 id 会让旧偏好悬空回落；
+    //    只把 label 改成「工作台」（会话→工作台自动绑定仍然指向这个 tab）。
+    slots?.inject('conversation.view', () =>
+      slots.register(
+        {
+          name: 'conversation.view',
+          id: VIEW_ID,
+          order: 20,
+          label: WORKBENCH_LABEL,
           inject: (sessionId: string) => ({ sessionId }),
         },
         ControlRoom
       )
     )
-    // 3. sidebar.footer.action —— 侧边栏「项目中心」入口
+    // 4. sidebar.footer.action —— 侧边栏「项目中心」入口
     // 用户要求把入口放在左侧边栏。这是 root 作用域的 list 槽，拿不到 sessionId，
     // 当前会话由 Probe 上报（见 setCurrentSessionId）。
     slots?.inject('sidebar.footer.action', () =>

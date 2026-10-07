@@ -581,27 +581,50 @@ export function enterProjectWorkbench(projectId: string, targetSessionId?: strin
 }
 
 /**
- * 侧边栏「项目中心」入口：把视图切到**项目列表** tab。
+ * 侧边栏「项目中心」入口：在**项目列表**与**工作台**两个 tab 之间切换。
  *
- * 没有当前会话时，先打开第一个项目的最新会话（打开后会自动落到工作台），
- * 再切到项目中心——保证点下去一定有反应。
+ * 语义（用户要求保留切换）：
+ *   当前在「项目中心」（项目列表）→ 点一下回「工作台」；
+ *   当前在「工作台」→ 点一下回「项目中心」。
+ *
+ * 当前在哪一屏由 getControlRoomScreen() 给出：ControlRoom（工作台）上报 'desk'，
+ * ProjectCenter（项目列表）上报 'list'。两个方向都要保证：
+ *   - 本插件视图被激活（空白会话也要能渲染）；
+ *   - 点宿主 tab 真正切过去（宿主只渲染 store.view 指向的视图）。
  * @returns 是否成功发起导航
  */
 export function openControlRoom(): boolean {
   const ctx: any = getClientContext()
   if (!ctx) return false
-  if (getCurrentSessionId()) {
-    switchToView(PROJECT_CENTER_VIEW_ID, PROJECT_CENTER_LABEL)
+  const toDesk = getControlRoomScreen() === 'list'
+  const current = getCurrentSessionId()
+  if (current) {
+    if (toDesk) {
+      // 回工作台：先发信号让已挂载的 ControlRoom 恢复「上次打开的项目」，
+      // 再切 tab（未挂载时 ControlRoom 挂载后自己从记忆恢复）
+      requestWorkbench()
+      switchToView(VIEW_ID, WORKBENCH_LABEL)
+    } else {
+      // 回项目列表：保留工作台记忆（切回来要知道回哪个项目），只置强制列表标记
+      requestProjectList()
+      switchToView(PROJECT_CENTER_VIEW_ID, PROJECT_CENTER_LABEL)
+    }
     return true
   }
-  // 没有当前会话：挑第一个项目的最新会话打开（打开后 ControlRoom 显示工作台/引导页）
+  // 没有当前会话：挑第一个项目的最新会话打开（打开后 ControlRoom 会显示工作台/引导页）
   for (const p of loadProjects()) {
     const s = latestProjectSession(ctx, p.path)
     if (!s) continue
     primeViewPreference(s.id)
     const ok = openSession(s.id)
     if (typeof window !== 'undefined') {
-      window.setTimeout(() => switchToView(PROJECT_CENTER_VIEW_ID, PROJECT_CENTER_LABEL), 150)
+      window.setTimeout(() => {
+        const back = getControlRoomScreen() === 'list'
+        switchToView(
+          back ? VIEW_ID : PROJECT_CENTER_VIEW_ID,
+          back ? WORKBENCH_LABEL : PROJECT_CENTER_LABEL,
+        )
+      }, 150)
     }
     return ok
   }

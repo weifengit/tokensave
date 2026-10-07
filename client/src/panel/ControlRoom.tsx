@@ -14,7 +14,7 @@ import { injectProjectCenterStyles } from './styles'
 import { loadProjects, recallOpenedProject, rememberOpenedProject } from './store'
 import type { ProjectRecord } from './store'
 import {
-  onRequestWorkbench, switchToView,
+  onRequestWorkbench, requestWorkbench, switchToView, setControlRoomScreen,
   PROJECT_CENTER_VIEW_ID, PROJECT_CENTER_LABEL,
 } from './sessions'
 import { HDesk } from './HDesk'
@@ -25,6 +25,13 @@ interface Props {
 
 export function ControlRoom({ sessionId }: Props) {
   useEffect(() => { injectProjectCenterStyles() }, [])
+
+  // 上报“当前在工作台”（侧边栏按钮据此决定切换方向）；进入本 tab 也意味着
+  // 用户要看工作台，因此清掉「强制列表」标记（由 requestWorkbench 完成）。
+  useEffect(() => {
+    setControlRoomScreen('desk')
+    requestWorkbench()
+  }, [])
 
   const [projects, setProjects] = useState<ProjectRecord[]>(() => loadProjects())
   const [openedId, setOpenedId] = useState<string | null>(null)

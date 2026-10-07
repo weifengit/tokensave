@@ -22,7 +22,7 @@ import {
   updateProjectDescription,
 } from './store'
 import type { ProjectRecord, ViewMode, SortMode } from './store'
-import { enterProjectWorkbench, getCurrentSessionId } from './sessions'
+import { enterProjectWorkbench, getCurrentSessionId, setControlRoomScreen } from './sessions'
 import { useProjectsActivity } from './activity'
 import type { SessionActivity } from './activity'
 import { fetchProjectInfo } from './api'
@@ -187,8 +187,10 @@ export function ProjectCenter({ sessionId }: Props) {
   const refresh = () => setProjects(loadProjects())
   useEffect(() => { refresh() }, [])
 
-  // 列表态的流光玻璃背景要覆盖到宿主的输入条座位（与视图是兄弟节点，见 styles.ts）
+  // 列表态的流光玻璃背景要覆盖到宿主的输入条座位（与视图是兄弟节点，见 styles.ts）；
+  // 同时上报“当前在项目中心”，供侧边栏按钮决定切换方向。
   useEffect(() => {
+    setControlRoomScreen('list')
     document.body.classList.add('ts-center-open')
     return () => document.body.classList.remove('ts-center-open')
   }, [])
