@@ -2,6 +2,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { brandString } from '@deepseek-ai/dsh-brand'
 import { createUserMessage, type ToolCallId } from '@deepseek-ai/dsh-llm'
 import type { Agent } from '@deepseek-ai/dsh-agent'
+import { readProjectScope } from '../board-web-route.ts'
 import type { ExplorerConfig } from '../types.ts'
 import { EXPLORER_PRESETS } from '../types.ts'
 
@@ -64,11 +65,55 @@ function dispatchExplorerMessage(ctx: Context, sessionId: string, text: string):
   else agent.followup(message)
 }
 
+// —— 探索者工作区强制跟随「当前打开的工作台项目」————————————
+//
+// session_create 没有 cwd 参数：它的工作区取自 exec.agent 的 session.header.cwd
+// （call-session resolveCwd）。所以默认是「在哪个项目的会话里发起，探索者就落在哪个项目」。
+// 用户要求改为**强制跟随当前打开的工作台项目**，于是在传给 session_create 的 agent 上
+// 用 Proxy 只改写 cwd 读取路径——id/title/ctx/options/preset/requestHeader 等一律透传，
+// 因此 session_create 的标题去重、配额、预设装配全部照常生效，只有工作区被替换。
+function withProjectCwd<T extends object>(agent: T, cwd: string): T {
+  return new Proxy(agent, {
+    get(target, prop, receiver) {
+      if (prop === 'session') {
+        const sess = (target as any).session
+        if (!sess) return sess
+        return new Proxy(sess, {
+          get(st, sp, sr) {
+            if (sp === 'header') {
+              const header = st.header
+              if (!header) return { cwd }
+              return new Proxy(header, {
+                get(ht, hp, hr) { return hp === 'cwd' ? cwd : Reflect.get(ht, hp, hr) },
+                has(ht, hp) { return hp === 'cwd' ? true : Reflect.has(ht, hp) }
+              })
+            }
+            // 兑底：有些路径直接读 session.cwd
+            if (sp === 'cwd') return cwd
+            return Reflect.get(st, sp, sr)
+          }
+        })
+      }
+      return Reflect.get(target, prop, receiver)
+    }
+  })
+}
+
 export async function parallelExplore(
   ctx: Context, taskDescription: string,
   codeContext: string | null, explorerCount: number, agent?: Agent
 ): Promise<Array<{ sessionId: string; label: string }>> {
   const presets = EXPLORER_PRESETS.slice(0, explorerCount)
+
+  // 探索者强制跟随「当前打开的工作台项目」：把 cwd 注入传给 session_create 的 agent。
+  // 无作用域（未发布/已清除）时保持原行为（跟随发起会话），不静默改到未知目录。
+  const scope = readProjectScope()
+  const scopedAgent = scope.workspace && agent ? withProjectCwd(agent, scope.workspace) : agent
+  if (scope.workspace) {
+    console.log(`[dsh-tokensave] 探索者工作区跟随当前工作台项目: ${scope.workspace}`)
+  } else {
+    console.log('[dsh-tokensave] 无工作台项目作用域，探索者工作区跟随发起会话')
+  }
 
   // 1. 并行创建探索者会话（真实 schema：title/model，返回 sessionId；不带 initial_message——
   //    dsh-call-session 会用 kind='plugin' 构造初始消息被 v4 拒，消息改由步骤 2 合法直投）
@@ -77,7 +122,7 @@ export async function parallelExplore(
       const value = await callTool(ctx, 'session_create', {
         title: `tokensave-${p.label}`,
         model: p.model,
-      }, agent) as SessionCreateValue
+      }, scopedAgent) as SessionCreateValue
       if (!value?.success || !value.sessionId) {
         throw new Error(`tokensave: session_create(${p.label}) failed: ${value?.error ?? 'unknown error'}`)
       }

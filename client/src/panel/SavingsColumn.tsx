@@ -139,13 +139,11 @@ export function SavingsColumn({
     <div className="ts-save">
       <div className="ts-save-head">
         <span>📊 协作收益</span>
-        <span className="ts-save-sub">
-          {stat.calls} 次派发 · {explorers.length} 位
-        </span>
         {actions}
       </div>
 
       <div className="ts-save-body">
+        <div className="ts-card-count">{stat.calls} 次派发 · {explorers.length} 位探索者</div>
         {/* —— 优势 —— */}
         <div className="ts-save-block good">
           <div className="ts-save-title" title={PRICE_TIP}>

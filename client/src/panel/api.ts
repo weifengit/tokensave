@@ -62,24 +62,45 @@ export interface TelemetrySession {
 }
 
 /**
- * 探索者探测：tokensave 自有路由。
- * @param workspace 当前项目路径；传入后只取该工作区的探索者（与黑板同口径）。
- *   若按工作区过滤后为空，则回退为全量——宁可多显示，也不能让窗口凭空消失
- *   （工作区字符串归一化差异、跨项目复用探索者等情况下仍可见）。
+ * 探索者探测：tokensave 自有路由（严格按项目隔离）。
+ *
+ * @param workspace 当前项目路径。传入后只取该项目工作区的探索者——**不再回退全量**：
+ *   回退会把别的项目的探索者（乃至陈旧会话）显示到当前工作台，既破坏隔离，
+ *   又让窗口看似“有内容却永不更新”。路径匹配的容差由宿主侧路由负责
+ *   （规范化 + 尾部路径段比较），客户端只做严格收敛。
+ *   不传 workspace 时返回全量（仅调试用）。
  */
 export async function fetchExplorers(workspace?: string): Promise<TelemetrySession[]> {
   const pick = (data: any): TelemetrySession[] =>
     (Array.isArray(data?.sessions) ? data.sessions : []).filter(
       (s: any) => typeof s?.title === 'string' && s.title.startsWith('tokensave-')
     )
-  const load = async (url: string): Promise<TelemetrySession[]> => {
-    const res = await fetch(url)
-    if (!res.ok) throw new Error(`探索者快照加载失败（HTTP ${res.status}）`)
-    return pick(await res.json())
-  }
   const base = '/plugins/dsh-tokensave/explorers'
-  if (!workspace) return load(base)
-  const scoped = await load(`${base}?workspace=${encodeURIComponent(workspace)}`)
-  if (scoped.length > 0) return scoped
-  return load(base)
+  const url = workspace ? `${base}?workspace=${encodeURIComponent(workspace)}` : base
+  const res = await fetch(url)
+  if (!res.ok) throw new Error(`探索者快照加载失败（HTTP ${res.status}）`)
+  return pick(await res.json())
+}
+
+/**
+ * 发布「当前打开的工作台项目」（探索者归属的真相）。
+ *
+ * 宿主侧 session_create 没有 cwd 参数，工作区取自调用方 agent；因此探索者默认跟随
+ * **发起会话**而非**当前打开的项目**。这里把当前项目告知宿主，探索者创建时读它作为
+ * cwd，使探索者强制跟随当前工作台项目。传空串清除（退回项目列表时调用）。
+ *
+ * 失败不抛：作用域只是「归属优化」，不应阻断 UI；清除失败时宿主侧会保留旧值，
+ * 下次进入项目会重新发布。
+ */
+export async function publishProjectScope(workspace: string): Promise<void> {
+  try {
+    const res = await fetch('/plugins/dsh-tokensave/scope', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ workspace: workspace || '' }),
+    })
+    if (!res.ok) console.warn(`[tokensave] 项目作用域发布失败（HTTP ${res.status}）`)
+  } catch (e) {
+    console.warn('[tokensave] 项目作用域发布失败', e)
+  }
 }

@@ -18,7 +18,7 @@
  * - 左右两竖按奇偶均分探索者；被隐藏的窗口以 chip 形式留在列底部可恢复
  */
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { fetchExplorers } from './api'
+import { fetchExplorers, publishProjectScope } from './api'
 import type { TelemetrySession } from './api'
 import { Blackboard } from './Blackboard'
 import { ExplorerWindow } from './ExplorerWindow'
@@ -224,6 +224,13 @@ export function HDesk({ project, sessionId, onBack }: Props) {
 
   const sessions = useProjectSessions(project.path)
 
+  // 进入/切换工作台即发布「当前打开的项目」：宿主据此把探索者强制归属到本项目。
+  // 离开（卸载/返回列表）时清除，避免把陈旧的归属继续用在新探索者上。
+  useEffect(() => {
+    void publishProjectScope(project.path)
+    return () => { void publishProjectScope('') }
+  }, [project.path])
+
   const cardOf = (id: string): CardState => cards[id] || CARD_DEFAULT
   const setCard = (id: string, patch: Partial<CardState>) =>
     setCards((prev) => ({ ...prev, [id]: { ...(prev[id] || CARD_DEFAULT), ...patch } }))
@@ -344,32 +351,28 @@ export function HDesk({ project, sessionId, onBack }: Props) {
       <div className="ts-bar">
         <button className="ts-btn" onClick={onBack}>← 项目中心</button>
         <span className="ts-title">{project.name}</span>
-        <span className="ts-sub" title={project.path}>{project.path}</span>
-        <span className="ts-sub ts-bar-right">
-          模型窗口 {visible.length}{hidden.length > 0 ? `（隐藏 ${hidden.length}）` : ''}
+        <span className="ts-sub ts-bar-path" title={project.path}>{project.path}</span>
+        {/* 会话操作固定靠右，不换行（#8） */}
+        <span className="ts-bar-right ts-bar-sessions">
+          <SessionPicker
+            sessions={sessions}
+            currentId={sessionId}
+            onPick={(id) => {
+              if (id !== sessionId && !openSession(id)) {
+                setProbeError('切换会话失败：会话导航服务不可用')
+              }
+            }}
+            onNew={async () => {
+              const res = await startProjectSession(project.path, project.id)
+              if (res.ok) {
+                // 新会话也记住同一个项目：发出第一条消息后直接回到本工作台
+                rememberOpenedProject(res.id, project.id)
+              } else {
+                setProbeError(`新建会话失败：${res.error}`)
+              }
+            }}
+          />
         </span>
-      </div>
-
-      {/* 顶部第二行：该项目历史会话 + 新建会话 */}
-      <div className="ts-bar ts-bar-sessions">
-        <SessionPicker
-          sessions={sessions}
-          currentId={sessionId}
-          onPick={(id) => {
-            if (id !== sessionId && !openSession(id)) {
-              setProbeError('切换会话失败：会话导航服务不可用')
-            }
-          }}
-          onNew={async () => {
-            const res = await startProjectSession(project.path)
-            if (res.ok) {
-              // 新会话也记住同一个项目：发出第一条消息后直接回到本工作台
-              rememberOpenedProject(res.id, project.id)
-            } else {
-              setProbeError(`新建会话失败：${res.error}`)
-            }
-          }}
-        />
       </div>
 
       {probeError && <div className="ts-hint">⚠️ {probeError}</div>}

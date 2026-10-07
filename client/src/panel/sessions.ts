@@ -10,7 +10,8 @@
  * 属性代理会抛错（与 src/board-web-route.ts 的 boardStore 同款处理）。
  */
 import { useEffect, useState } from 'react'
-import { getClientContext } from '../session-subscribe'
+import { getClientContext, readService } from '../session-subscribe'
+import { rememberOpenedProject } from './store'
 
 /** 「项目中心」tab 的 conversation.view 条目 id（宿主按 id 存视图偏好，不可改） */
 export const VIEW_ID = 'tokensave-control-room'
@@ -28,14 +29,9 @@ export interface ProjectSession {
   explorer: boolean
 }
 
-/** 取一个宿主服务：优先 ctx.get（reflect 层，无需 inject），失败一律当不可用。 */
+/** 取一个宿主服务：统一走 session-subscribe 的 readService（reflect 层）。 */
 function svc(ctx: any, name: string): any {
-  if (!ctx) return undefined
-  try {
-    return typeof ctx.get === 'function' ? ctx.get(name) : ctx[name]
-  } catch {
-    return undefined
-  }
+  return readService(ctx, name)
 }
 
 /** 路径规范化：统一正斜杠、去尾斜杠、盘符小写（与黑板路由同口径）。 */
@@ -166,6 +162,7 @@ export function openSession(sessionId: string): boolean {
  */
 export async function startProjectSession(
   projectPath: string,
+  projectId?: string,
 ): Promise<{ ok: true; id: string } | { ok: false; error: string }> {
   const ctx: any = getClientContext()
   if (!ctx) return { ok: false, error: '客户端上下文不可用' }
@@ -179,7 +176,11 @@ export async function startProjectSession(
     const reuse = readProjectSessions(ctx, projectPath).find((s) => s.blank)
     const id = reuse?.id
       ?? String(await sessions.create(workspaceId ? { workspaceId } : { cwd: projectPath }))
+    // 顺序很关键：先写好「视图偏好 + 项目记忆」，再导航。
+    // 导航会让宿主动用新会话的 binding，ControlRoom 随之重挂并立即读这两项；
+    // 若先导航后写，重挂时读到的还是空值 → 落到项目列表（即用户看到的「脱离工作台」）。
     primeViewPreference(id)
+    if (projectId) rememberOpenedProject(id, projectId)
     if (ui && typeof ui.openSession === 'function') ui.openSession(id)
     else if (workspaceId && typeof ui?.openWorkspace === 'function') await ui.openWorkspace(workspaceId)
     return { ok: true, id }
@@ -187,7 +188,6 @@ export async function startProjectSession(
     return { ok: false, error: e instanceof Error ? e.message : '新建会话失败' }
   }
 }
-
 /** 预写某个会话的视图偏好（保留其它字段，隐私模式下静默忽略）。 */
 export function primeViewPreference(sessionId: string): void {
   if (!sessionId || typeof localStorage === 'undefined') return
@@ -202,6 +202,34 @@ export function primeViewPreference(sessionId: string): void {
   } catch {
     /* 隐私模式等：忽略，仅影响新会话首次落点 */
   }
+}
+
+// —— 会话 ↔ 项目绑定（隔离）——————————————
+// 隔离的唯一真相是**工作区路径**，不是 localStorage 里的记忆（那只是 UI 偏好，
+// 可能因切会话/换设备/手改而变陈旧）。凡要拿某个会话去驱动某个项目的视图，
+// 一律先用这两个函数校验归属，不一致就不展示该项目的视图。
+
+/** 读某个会话的工作目录（无此会话/无 cwd 时返回空串）。 */
+export function sessionCwd(ctx: any, sessionId: string): string {
+  if (!sessionId) return ''
+  try {
+    const list = svc(ctx, 'sessions')?.list?.getSnapshot?.()
+    const row = list?.byId?.[sessionId]
+    return String(row?.cwd || '')
+  } catch {
+    return ''
+  }
+}
+
+/**
+ * 会话是否属于该项目（同一工作区目录）。
+ * 用与列表同口径的 sameDir（含尾部路径段容差），避免 /tmp/x 与 /private/tmp/x 误判。
+ * 读不到 cwd 时返回 false——宁可退回项目列表，也不把会话错配到无关项目。
+ */
+export function sessionBelongsToProject(ctx: any, sessionId: string, projectPath: string): boolean {
+  const cwd = sessionCwd(ctx, sessionId)
+  if (!cwd) return false
+  return sameDir(cwd, projectPath)
 }
 
 /**

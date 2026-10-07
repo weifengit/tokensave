@@ -15,6 +15,30 @@ import type { Context } from '@deepseek-ai/cordis'
 export const BOARD_ROUTE_PATH = '/plugins/dsh-tokensave/board'
 export const FS_ROUTE_PATH = '/plugins/dsh-tokensave/fs'
 export const EXPLORERS_ROUTE_PATH = '/plugins/dsh-tokensave/explorers'
+export const SCOPE_ROUTE_PATH = '/plugins/dsh-tokensave/scope'
+
+// —— 当前「打开的工作台项目」（探索者归属的真相）————————————
+//
+// 背景：session_create 没有 cwd 参数，它的工作区取自「调用方 agent 的
+// session.header.cwd」。所以探索者默认落在**发起会话所在的项目**——若在一个项目里
+// 发起却期望探索者归属另一个项目，就会错位（黑板/探索者路由按工作区过滤，于是
+// 两边互相看不见）。
+//
+// 这里维护一份进程内的「当前打开的工作台项目」，由客户端在进入/切换项目时 POST 发布；
+// 探索者创建时读它作为 cwd，使探索者**强制跟随当前打开的工作台项目**。
+// 进程内即可：它表达的是「此刻 UI 在看哪个项目」，重启后由客户端重新发布。
+let projectScope: { workspace: string; updatedAt: number } = { workspace: '', updatedAt: 0 }
+
+/** 读当前项目作用域（探索者创建时消费）。 */
+export function readProjectScope(): { workspace: string; updatedAt: number } {
+  return projectScope
+}
+
+/** 写当前项目作用域（客户端发布）。传空串表示清除。 */
+export function writeProjectScope(workspace: string): { workspace: string; updatedAt: number } {
+  projectScope = { workspace: normalizeWorkspace(workspace), updatedAt: Date.now() }
+  return projectScope
+}
 const JSON_HEADERS = Object.freeze({
   'content-type': 'application/json; charset=utf-8',
   'cache-control': 'no-store'
@@ -345,11 +369,46 @@ export function mountTokensaveWebRoutes(ctx: Context): void {
     handler(req, res)
   }
 
+  // 项目作用域路由：GET 读、POST 写（客户端发布当前打开的工作台项目）。
+  // 其余路由仍走 GET-only 闸门；这里单独开写通道，但同样过鉴权。
+  const scopeGuard = (req: any, res: any) => {
+    const rejection = rejectionFor(ctx, req)
+    if (rejection !== undefined) {
+      writeJson(res, rejection, {
+        error: rejection === 503 ? 'authentication unavailable' : 'unauthorized'
+      })
+      return
+    }
+    if (req.method === 'GET') {
+      writeJson(res, 200, { timestamp: Date.now(), ...readProjectScope() })
+      return
+    }
+    if (req.method !== 'POST') return methodNotAllowed(res)
+    // 防挂死：拿不到请求流就明确报错，而不是既不读也不回应
+    if (typeof req.on !== 'function') {
+      writeJson(res, 501, { error: 'request stream unavailable' })
+      return
+    }
+    let body = ''
+    req.on?.('data', (c: any) => { body += String(c) })
+    req.on?.('end', () => {
+      try {
+        const parsed = body ? JSON.parse(body) : {}
+        const next = writeProjectScope(String(parsed?.workspace ?? ''))
+        console.log(`[dsh-tokensave] 项目作用域已发布: ${next.workspace || '(清除)'}`)
+        writeJson(res, 200, { timestamp: Date.now(), ...next })
+      } catch (error) {
+        writeJson(res, 400, { error: 'invalid scope payload' })
+      }
+    })
+  }
+
   const mount = (server: any): { server: any; dispose: () => void } => {
     const routes: Array<[string, (req: any, res: any) => void]> = [
       [BOARD_ROUTE_PATH, (req, res) => handleBoard(ctx, req, res)],
       [FS_ROUTE_PATH, (req, res) => handleFs(req, res)],
-      [EXPLORERS_ROUTE_PATH, (req, res) => handleExplorers(ctx, req, res)]
+      [EXPLORERS_ROUTE_PATH, (req, res) => handleExplorers(ctx, req, res)],
+      [SCOPE_ROUTE_PATH, scopeGuard]
     ]
     const offs: Array<(() => void) | undefined> = []
     for (const [path, handler] of routes) {

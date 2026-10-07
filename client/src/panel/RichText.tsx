@@ -217,7 +217,10 @@ function renderMarkdown(src: string): React.ReactNode[] {
     // 引用
     if (QUOTE.test(line)) {
       const buf: string[] = []
-      while (i < lines.length && QUOTE.test(lines[i])) buf.push(QUOTE.exec(lines[i])![1])
+      while (i < lines.length && QUOTE.test(lines[i])) {
+        buf.push(QUOTE.exec(lines[i])![1])
+        i++
+      }
       push(
         <blockquote className="ts-rich-quote">
           {buf.map((b, bi) => (
@@ -231,7 +234,10 @@ function renderMarkdown(src: string): React.ReactNode[] {
     // 无序列表
     if (UL.test(line)) {
       const items: string[] = []
-      while (i < lines.length && UL.test(lines[i])) items.push(UL.exec(lines[i])![1])
+      while (i < lines.length && UL.test(lines[i])) {
+        items.push(UL.exec(lines[i])![1])
+        i++
+      }
       push(
         <ul className="ts-rich-ul">
           {items.map((it, ii) => (
@@ -245,7 +251,10 @@ function renderMarkdown(src: string): React.ReactNode[] {
     // 有序列表
     if (OL.test(line)) {
       const items: string[] = []
-      while (i < lines.length && OL.test(lines[i])) items.push(OL.exec(lines[i])![2])
+      while (i < lines.length && OL.test(lines[i])) {
+        items.push(OL.exec(lines[i])![2])
+        i++
+      }
       push(
         <ol className="ts-rich-ol">
           {items.map((it, ii) => (

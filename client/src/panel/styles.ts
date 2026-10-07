@@ -20,7 +20,11 @@ body.ts-hdesk-open [data-width-handle] { display:none !important; }
 
 /* —— 通用条/按钮 —— */
 .ts-bar { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
-.ts-bar-right { margin-left:auto; }
+.ts-bar-right { margin-left:auto; flex:none; }
+/* 顶部路径可截断，但不把右侧会话操作挤换行（#8） */
+.ts-bar-path { flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+/* 会话操作固定单行，不换行 */
+.ts-bar-sessions { flex:none; flex-wrap:nowrap; }
 .ts-title { font-size:16px; font-weight:600; }
 .ts-sub { opacity:.65; font-size:12px; }
 .ts-btn { cursor:pointer; border:1px solid rgba(127,127,127,.35); background:rgba(127,127,127,.12); color:inherit; border-radius:8px; padding:5px 12px; font-size:13px; line-height:1.4; transition:background .15s ease, border-color .15s ease, box-shadow .15s ease; }
@@ -38,6 +42,7 @@ body.ts-hdesk-open [data-width-handle] { display:none !important; }
 .ts-tag { font-size:11px; padding:2px 8px; border-radius:99px; background:rgba(96,165,250,.22); border:1px solid rgba(96,165,250,.45); }
 .ts-tag-warn { background:rgba(251,191,36,.2); border-color:rgba(251,191,36,.5); }
 .ts-hint { opacity:.6; font-size:12px; text-align:center; padding:4px; }
+.ts-hint-warn { opacity:1; color:#fbbf24; background:rgba(251,191,36,.12); border:1px solid rgba(251,191,36,.4); border-radius:8px; padding:6px 10px; }
 
 /* —— 会话选择条（工作台顶部第二行） —— */
 .ts-bar-sessions { gap:8px; }
@@ -141,7 +146,15 @@ body.ts-hdesk-open [data-width-handle] { display:none !important; }
 .ts-card-overlay-inner > * { flex:1; min-height:0; }
 /* 主对话铺满时承载输入条停靠（含内缩边框，与中下格同款） */
 .ts-card-overlay-chat { display:flex; flex-direction:column; min-height:0; border:1px solid rgba(127,127,127,.3); border-radius:9px; background:rgba(127,127,127,.07); padding:8px; box-sizing:border-box; }
+/* 卡片右上角三键：固定在标题条最右侧，其它内容一律排在其左侧（#3） */
 .ts-card-actions { flex:none; display:inline-flex; align-items:center; gap:1px; margin-left:auto; }
+/* 黑板标题条里有 tabs：让 tabs 吃掉弹性空隙，三键就落最右 */
+.ts-board-head .ts-board-tabs { margin-left:auto; }
+.ts-board-head .ts-card-actions { margin-left:8px; }
+/* 标题条一律不换行（#4）：计数移入正文 .ts-card-count */
+.ts-talk-head, .ts-save-head, .ts-board-head, .ts-mainchat-head { flex-wrap:nowrap; }
+.ts-talk-head > span:first-child, .ts-save-head > span:first-child, .ts-board-head > span:first-child, .ts-mainchat-head > span:first-child { flex:none; white-space:nowrap; }
+.ts-card-count { flex:none; font-size:10.5px; opacity:.55; padding:0 2px 4px; }
 .ts-card-overlay { position:absolute; inset:0; z-index:40; background:rgba(12,14,18,.92); backdrop-filter:blur(8px) saturate(1.2); border-radius:10px; display:flex; flex-direction:column; padding:10px; box-sizing:border-box; }
 .ts-card-overlay-inner { flex:1; min-height:0; display:flex; flex-direction:column; }
 .ts-closed-bar { flex:none; display:flex; align-items:center; gap:6px; flex-wrap:wrap; padding:5px 8px; border:1px dashed rgba(127,127,127,.45); border-radius:9px; }

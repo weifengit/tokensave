@@ -7,11 +7,13 @@
  * 彩光光晕，配色全部走半透明中性色，深浅主题都自适应（不依赖宿主主题探测）。
  */
 import React, { useEffect, useState } from 'react'
+import { getClientContext } from '../session-subscribe'
 import { injectProjectCenterStyles } from './styles'
 import { loadProjects, removeProject, recallOpenedProject, rememberOpenedProject } from './store'
 import type { ProjectRecord } from './store'
 import { AddProjectDialog } from './AddProjectDialog'
 import { HDesk } from './HDesk'
+import { sessionBelongsToProject, VIEW_ID } from './sessions'
 
 interface Props {
   sessionId?: string
@@ -39,26 +41,39 @@ export function ControlRoom({ sessionId }: Props) {
   const refresh = () => setProjects(loadProjects())
   useEffect(() => { refresh() }, [])
 
-  // 会话重挂（切换会话/刷新页面）后恢复上次打开的工作台：按会话 id 记忆
+  // 会话重挂（切换会话/刷新页面）后恢复上次打开的工作台。
+  // 记忆只是 UI 偏好；真正的绑定校验看会话 cwd 是否属于该项目（隔离，见 #7）。
+  const [bindingError, setBindingError] = useState<string | null>(null)
   useEffect(() => {
     if (!sessionId) return
+    const ctx = getClientContext()
+    const all = loadProjects()
     const remembered = recallOpenedProject(sessionId)
     setOpenedId((current) => {
-      if (current && loadProjects().some((p) => p.id === current)) return current
-      if (remembered && loadProjects().some((p) => p.id === remembered)) return remembered
-      return current
+      const want = current ?? remembered
+      if (!want) return current
+      const proj = all.find((p) => p.id === want)
+      if (!proj) return current
+      // 会话不属于该项目：不展示其工作台，并清除陈旧记忆
+      if (ctx && !sessionBelongsToProject(ctx, sessionId, proj.path)) {
+        if (remembered === want) rememberOpenedProject(sessionId, null)
+        setBindingError(`当前会话不属于「${proj.name}」，已退回项目列表`)
+        return null
+      }
+      return current ?? want
     })
   }, [sessionId])
 
   const openDesk = (id: string | null) => {
     setOpenedId(id)
+    setBindingError(null)
     // 记忆/清除「该会话打开的工作台」—— 切会话后仍停在同一个项目
     if (sessionId) rememberOpenedProject(sessionId, id)
   }
 
   const opened = openedId ? projects.find((p) => p.id === openedId) : undefined
 
-  // —— H 型工作台 ——
+  // —— H 型工作台 ——（仅在会话确实属于该项目时展示）
   if (opened && sessionId) {
     return (
       <HDesk
@@ -68,7 +83,6 @@ export function ControlRoom({ sessionId }: Props) {
       />
     )
   }
-
   // —— 项目列表 ——
   return (
     <div className="ts-cr ts-center">
@@ -90,6 +104,9 @@ export function ControlRoom({ sessionId }: Props) {
           >＋ 添加项目</button>
         </div>
 
+        {bindingError && (
+          <div className="ts-hint ts-hint-warn">⚠️ {bindingError}</div>
+        )}
         {!sessionId && (
           <div className="ts-hint">当前会话上下文不可用，无法进入工作台（仍可管理项目列表）。</div>
         )}

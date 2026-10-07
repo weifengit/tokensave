@@ -197,3 +197,86 @@ DSH 读取全局系统提示词段（tokensave-delegation）→ 调用 tokensave
 **验证（2026-10-07）**：`pnpm run check`（tsc --noEmit）全绿；`pnpm run build:client` 产出 `dist/client.js` 146,367B；`node --check dist/client.js` 经典脚本解析通过；模拟 `__ModuleLoader__.load` 注册 + `factory(require)` 物化通过（`id=dsh-tokensave`、`exports={apply,inject}`、`inject={slots:true}`、`apply` 为函数、外部依赖仅 react 系列）；3080 线上 bundle 经批量 URL（`/plugins/??dsh-tokensave/client.js&rev=...`）下发 146,479B（本地 146,367 + 平台 sourcemap 尾巴），HTTP 200。
 
 **浏览器目检项**：中下卡片出现「💬 DSH 主对话」并实时显示消息（发送后不再空白）；顶部「🕘 历史会话（N）」下拉可切换、切换后仍停在同一项目、「＋ 新建会话」开启新对话并同样留在本项目；工作台无宽度滑块且默认铺满；项目卡片与工作台顶部均无「H 型工作台」字样；项目中心为流光玻璃背景 + 玻璃卡；协作收益两卡铺满无留白、悬停「优势 · 省 token · 省费用」出现计价口径提示；四张卡的 —/⛶/✕ 三键生效（含关闭后的台顶恢复 chip、铺满时输入条跟随）。
+
+## Step 19（2026-10-07）：第二轮反馈修复 —— 订阅根因 / 会话绑定隔离 / 卡片三键位置
+
+**任务来源**：用户第二轮反馈 8 条。其中 #1/#6 是**同一个根因**，#2/#7 同属会话绑定。
+
+### 根因一（#1 #6）：客户端服务访问被 cordis inject 闸门挡住
+
+`client/src/session-subscribe.ts` 的 `openStream` 原本直接读 `ctx.sessions`（写成 `ctx.sessions` + `if (!ctx?.sessions)`）。但本插件只声明 `inject = { slots: true }`，而 cordis 的 context 代理对**未声明的服务**会直接 `throw new Error('cannot get property "sessions" without inject')`（源码 cordis/lib/index.js:676）——**可选链拦不住 throw**，于是 `openStream` 一进入就抛，`subscribeSession` 的流永远打不开：
+
+- 表现 #1：中下「DSH 主对话」永远空白；
+- 表现 #6：探索者窗口与协作对话永远停在「等待该探索者响应…」「暂无协作记录」（它们共用同一条流）。
+
+修法：新增并导出 `readService(ctx, name)`（`ctx.get()` reflect 层 + try/catch，与 `src/board-web-route.ts` 的 boardStore 同款处理），`session-subscribe.ts` 与 `panel/sessions.ts` 一律经它取服务。这是**真 bug 修复**，不是兜底。
+
+### 根因二（#5）：RichText 列表/引用解析死循环
+
+`panel/RichText.tsx` 的三处 `while` 只 push、**从不推进 `i`**：
+
+```ts
+while (i < lines.length && UL.test(lines[i])) items.push(UL.exec(lines[i])![1])   // i 永不增
+```
+
+只要黑板条目正文含 `- ` / `1. ` / `> ` 行（简报几乎必然含），点开该条目即浏览器主线程死循环 → **页面卡死**。已核实线上简报正文确有这些行。修法：改为显式块并在块内 `i++`；附回归验证（UL 2 项后停在 i=2、OL/QUOTE 各正确前进）。
+
+### 根因三（#2 #7）：会话 ↔ 项目绑定顺序错误 + 无归属校验
+
+- **#2（点「新建会话」脱离工作台）**：`startProjectSession` 原本**先导航、后写记忆**。导航会让宿主动用新会话 binding、`ControlRoom` 随之重挂并立即读记忆，此时记忆还是空的 → 落到项目列表。修法：调整顺序为 **先写 `primeViewPreference` + `rememberOpenedProject`，再导航**；并把 `projectId` 作为参数传入。
+- **#7（隔离）**：新增 `sessionCwd` / `sessionBelongsToProject`（`panel/sessions.ts`），用与列表同口径的 `sameDir`（含尾部路径段容差）校验会话 cwd 是否属于该项目。`ControlRoom` 恢复工作台前先校验，**不一致就不展示该项目的视图**并退回列表（带提示），同时清除陈旧记忆。隔离的真相是**工作区路径**，不是 localStorage 记忆。
+- **探索者跨项目污染**：`panel/api.ts` 的 `fetchExplorers` 原本在按工作区过滤后为空时**回退全量**，把别的项目的探索者显示到当前工作台。已删除该回退，改为严格按项目收敛。实测：`?workspace=<tokensave>` → 0 个、`?workspace=<dsh>` → 3 个（隔离生效）。
+- **探索者 cwd 落错**：`session_create` 无 cwd 参数，工作区取自 `exec.agent` 的 `session.header.cwd`（call-session `resolveCwd`）。主 agent 在哪个项目调用，探索者就落在哪个项目——这与黑板/探索者路由的工作区过滤是同一条链，已一并收敛。
+
+### 表现层（#3 #4 #8）
+
+- **#3 卡片三键位置**：三键本就渲染在标题条里且 `.ts-card-actions { margin-left:auto }`，但黑板标题条里 `tabs` 也是 `margin-left:auto`，两个 auto 竞争导致三键被挤到中间。修法：`.ts-board-head .ts-board-tabs { margin-left:auto }`（tabs 吃掉弹性空隙）+ `.ts-board-head .ts-card-actions { margin-left:8px }`，三键稳定落在最右，其余内容一律在其左侧。
+- **#4 标题换行**：把「N 位探索者 · M 条发言」「N 次派发 · M 位」从标题条移出，改为正文首行的 `.ts-card-count`；标题条统一 `flex-wrap:nowrap` 且首个子元素 `white-space:nowrap`。
+- **#8 顶部标题行**：删除「模型窗口 N」文字；「历史会话 / 新建会话」移入顶部标题行右侧（`.ts-bar-right.ts-bar-sessions`，`flex-wrap:nowrap`）；路径改为可截断的 `.ts-bar-path`，不再把右侧操作挤换行。
+
+**改动文件**：`client/src/session-subscribe.ts`、`client/src/panel/sessions.ts`、`client/src/panel/RichText.tsx`、`client/src/panel/api.ts`、`client/src/panel/ControlRoom.tsx`、`client/src/panel/HDesk.tsx`、`client/src/panel/TalkColumn.tsx`、`client/src/panel/SavingsColumn.tsx`、`client/src/panel/styles.ts`。
+
+**验证（2026-10-07）**：`pnpm run check` 全绿；bundle 148,696B，`node --check` 通过；解码核验新符号（readService / sessionBelongsToProject / sessionCwd / 不属于 / ts-card-count / ts-bar-sessions）全部在位；探索者隔离实测 0 vs 3；RichText 三处循环终止回归通过。
+
+**浏览器目检项**：中下「DSH 主对话」发送后实时出内容；探索者窗口与协作对话跑一次 delegate 后出派发/开工/汇报；点开黑板条目不再卡死；「新建会话」后仍在本项目工作台；把某会话切到不属于它的项目时退回列表并提示；四张卡三键在各自标题条最右、标题不换行；顶部无「模型窗口 N」且会话操作在标题行右侧不换行。
+
+## Step 20（2026-10-07）：探索者强制跟随「当前打开的工作台项目」
+
+**用户指令**：探索者应强制跟随**当前打开的工作台项目**，而非**发起会话所在的项目**。
+
+### 机制确认（读源码得出，非推测）
+
+`dsh-call-session` 的 `session_create` **没有 cwd 参数**，工作区完全取自**调用方 agent**：
+
+```
+session-create.mjs:232  const callerCwd = directory.resolveCwd(callerAgent) || process.cwd()
+session-directory.mjs:99  resolveSessionCwd(agent) = agent?.session?.header?.cwd || agent?.session?.cwd || ''
+dsh-host-gateway.mjs:449/466/479  cwd → createRootAgent({ cwd }) → agents.create({ cwd, meta:{cwd} })
+```
+
+所以默认行为是「在哪个项目的会话里发起 delegate，探索者就落在哪个项目」。若在 A 项目发起、却期待探索者归属 B 项目，就会错位——黑板与探索者路由都按工作区过滤，两边互相看不见（这正是上一轮实测到的 `tokensave` 项目 0 个 / `dsh` 项目 3 个）。
+
+### 实现：宿主侧项目作用域 + Proxy 注入 cwd
+
+**宿主侧**（`src/board-web-route.ts`）：
+- 新增 `SCOPE_ROUTE_PATH = '/plugins/dsh-tokensave/scope'`，GET 读 / POST 写；
+- 进程内 `projectScope = { workspace, updatedAt }` + `readProjectScope()` / `writeProjectScope()`；
+- 该路由**单独开 POST 写通道**（其余路由仍走 GET-only 闸门），但同样过 `rejectionFor` 鉴权；`req.on` 不可用时明确回 501 而非挂死。
+- 进程内即可：它表达的是「此刻 UI 在看哪个项目」，重启后由客户端重新发布。
+
+**探索者侧**（`src/orchestration/parallel-explorer.ts`）：
+- 新增 `withProjectCwd(agent, cwd)`：用 `Proxy` **只改写 cwd 读取路径**（`agent.session.header.cwd` 与 `session.cwd`），`id`/`title`/`ctx`/`options`/`session.title`/`requestHeader` 等一律 `Reflect.get` 透传。
+- `parallelExplore` 读 `readProjectScope()`；有作用域时把 `scopedAgent` 传给 `session_create`，无作用域时保持原行为（跟随发起会话）并打日志。
+- 选择 Proxy 而非新造假 agent 的理由：`session_create` 除了 cwd，还要读 `callerAgent` 的 **title**（标题去重）、**options/preset**（模型与预设装配）、**session.requestHeader**（模型回落）、**ctx.root**（解析 agents 服务）以及 `safeguard.admit` 的 callerSessionId。新造假 agent 会把这些一起弄丢；Proxy 只改一个字段，其余全部保真。
+
+**客户端侧**（`client/src/panel/api.ts` + `HDesk.tsx`）：
+- 新增 `publishProjectScope(workspace)`（POST；失败只告警不抛，不阻断 UI）；
+- `HDesk` 挂载/切换项目时发布 `project.path`，卸载时清除（避免陈旧归属被新探索者复用）。
+
+**Proxy 取值链实测**（复刻 `resolveSessionCwd`/`resolveSessionTitle` 真实验证）：原始 cwd `/Users/sonoma/code/dsh` → 作用域后 `/Users/sonoma/code/tokensave`；标题、id、options、header 其它字段、`'cwd' in header` 全部正确透传。
+
+**验证**：`pnpm run check` 全绿；宿主模块经 `--experimental-strip-types` 直接加载成功，`readProjectScope`/`writeProjectScope` 读写往返正确；bundle 149,522B + `node --check` 通过。
+
+**⚠️ 需要重启 DSH**：本轮改了**宿主侧**（`src/board-web-route.ts`、`src/orchestration/parallel-explorer.ts`）。client bundle 会热重载，但宿主代码只在进程启动时加载——实测线上 `/plugins/dsh-tokensave/scope` 目前仍 404（客户端新代码已下发，但宿主没这个路由）。**重启后**该路由才生效，探索者才会强制跟随当前工作台项目。
+
+**浏览器目检项**：重启后进入项目 A 的工作台 → 在该工作台里发起 `tokensave_delegate`（即使发起会话属于项目 B）→ 探索者窗口应出现在 A、黑板写入 A、`?workspace=<A>` 能查到；退出工作台（回项目列表）后再发起 → 探索者跟随发起会话。

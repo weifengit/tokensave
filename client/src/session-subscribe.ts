@@ -65,6 +65,23 @@ export function getClientContext(): Context | null {
   return clientCtx
 }
 
+/**
+ * 取一个宿主客户端服务。
+ *
+ * 必须走 ctx.get()（reflect 层）：cordis 的 context 代理在读取未声明的服务时
+ * 会直接抛 'cannot get property "X" without inject'，而可选链拦不住 throw。
+ * 本插件只 inject 了 slots，所以 sessions / workspaces / uiWorkspace / boardStore
+ * 等一律用这个函数取（与 src/board-web-route.ts 同款处理）。
+ */
+export function readService<T = any>(ctx: any, name: string): T | undefined {
+  if (!ctx) return undefined
+  try {
+    return typeof ctx.get === 'function' ? ctx.get(name) : ctx[name]
+  } catch {
+    return undefined
+  }
+}
+
 interface Channel {
   /** 当前消息列表（从事件窗口全量重建，非增量追加） */
   msgs: StreamMsg[]
@@ -293,17 +310,22 @@ export function subscribeSessionMetrics(sessionId: string, onMetrics: MetricsLis
 
 async function openStream(sessionId: string, ch: Channel): Promise<void> {
   const ctx = clientCtx as any
-  if (!ctx?.sessions) {
+  // 服务一律经 ctx.get()（reflect 层，不经 inject 闸门）取得：
+  // 本插件只声明了 inject={slots:true}，直接读 ctx.sessions 会被 cordis 代理
+  // 以 'cannot get property "sessions" without inject' 抛错（可选链也拦不住），
+  // 导致 openStream 静默死亡、所有窗口永远不更新。
+  const sessions = readService(ctx, 'sessions')
+  if (!sessions) {
     console.warn('[tokensave] client ctx.sessions 不可用，浮窗进入等待态')
     return
   }
 
   // 路径 A：KB/类型契约路径 retain → ready → binding.eventSource（ObservableSnapshot）
-  if (typeof ctx.sessions.retain === 'function') {
+  if (typeof sessions.retain === 'function') {
     for (const source of ['navigation', 'tokensave', 'completion']) {
       let ref: any = null
       try {
-        ref = ctx.sessions.retain(sessionId, { source })
+        ref = sessions.retain(sessionId, { source })
         const binding = await ref?.ready
         const src: any = binding?.eventSource
         if (src && typeof src.subscribe === 'function') {
@@ -349,7 +371,7 @@ async function openStream(sessionId: string, ch: Channel): Promise<void> {
 
   // 路径 B：会话对象自带逐事件订阅面
   try {
-    const s: any = typeof ctx.sessions.get === 'function' ? ctx.sessions.get(sessionId) : null
+    const s: any = typeof sessions.get === 'function' ? sessions.get(sessionId) : null
     if (s && typeof s.subscribe === 'function') {
       const u = s.subscribe((x: any) => emitEvent(ch, x?.event ?? x))
       ch.close = () => u?.()
