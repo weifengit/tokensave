@@ -1,0 +1,25 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "strict": true,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "forceConsistentCasingInFileNames": true,
+    "jsx": "react-jsx",
+    "paths": {
+      "dsh-float-window": ["./types/dsh-float-window.d.ts"]
+    },
+  },
+  "include": [
+    "src/**/*.ts",
+    "client/src/**/*.ts",
+    "client/src/**/*.tsx",
+    "tests/**/*.ts"
+  ]
+}

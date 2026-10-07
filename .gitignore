@@ -1,0 +1,8 @@
+# 依赖
+node_modules/
+
+# 构建产物（scripts/build-client.mjs 生成 dist/client.js）
+dist/
+
+# macOS
+.DS_Store

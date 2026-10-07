@@ -1,0 +1,6 @@
+# dsh-tokensave bundle patch: 挂载宿主端入口（Step 12 起按平台约定用包名形态，
+# 经 `dsh plugin --profile <name> add` 安装后由 dsh.profile.bundles 自动加载；
+# 开发调试不再需要 --patch 重起。name 解析指向 package.json main（src/index.ts）。
+- insert:
+    - id: dsh-tokensave
+      name: dsh-tokensave
