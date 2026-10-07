@@ -668,3 +668,56 @@ durable 侧同理：`AssistantMessage.content` 是 `ContentBlock[]`，其中
 - `pnpm run check` 全绿；CSS 大括号平衡 0；bundle 189,466B + `node --check` 通过；
 - 线上 rev 本地 ⊆ 线上；新符号（`reasoning-delta`/`reasoningOf`/`visibleTextOf`/
   `ts-proc-think`/`ts-jump-latest`）均在产物中。
+
+## Step 29（2026-10-07）：侧边栏位置/响应 + 渲染修复没生效的真因
+
+### 用真实会话数据定位（不再靠猜）
+从 `~/.dsh/sessions/` 取出真实会话（`session.v4.jsonl.zstd`，用 `zstd -dc` 解压），
+抽 420 条 assistant 正文做回归样本，写探针跑 `RichText` 并展开 React 树检查残留标记。
+这一步直接暴露了两个此前靠读代码没发现的问题。
+
+### ③ Markdown/JSON 渲染「没生效」的真因（最关键）
+
+**真因：围栏正则拒绝带连字符的语言标识。**
+```js
+const FENCE = /^\s*```(\w+)?\s*$/     // 旧
+```
+`\w+` 不匹配 `dsh-ui`（含连字符）、`c++`（含加号）。于是
+` ```dsh-ui ` 这类围栏**不被识别为代码块**，整段（含围栏本身与 JSON）被当普通段落渲染，
+标记原样裸露。实测 420 条样本里 **12 条**都是这个原因——而且都是本插件自己的输出格式
+（` ```dsh-ui `），所以“改了渲染却看不到效果”。
+
+**修法**：`/^\s*```([^\s`]*)\s*$/` —— 语言标识允许任意非空白非反引号字符。
+修复后同一批样本：残留标记从 **12 → 1**（剩下 1 条是英文正文里讨论正则字面量的假阳性）。
+
+**验证方法**：`zstd -dc session.v4.jsonl.zstd > sess.jsonl`，抽 `assistant/message` 的
+`data.message.content` 里 `type==='text'` 的块，喂给 `RichText` 并检查输出。
+
+### ① 侧边栏位置 + 点击无响应
+
+**位置**：用户要放在 worktable 的【工作台 / 控制室 / 子项目】**上方**，不是左侧。
+读宿主 `ui-sidebar` 的 `footerActions` CSS 确认它是 `display:flex`（横向），
+而 `dsh-worktable` 与我们都注册在 `sidebar.footer.action` —— 所以默认并排。
+修法：`[class*="footerActions"]:has(.ts-side-entry) { flex-direction:column }`，
+我们的入口（order 10，先渲染）即落在 worktable 那一组之上。
+
+**点击无响应（真因）**：宿主渲染的是**持久化 store 的 `view` 字段**
+（`useStore(s => s.view)` → `resolveActiveView`），而 localStorage 偏好
+**只在会话首次绑定时读一次**。用户已经身处某个会话时，写偏好 + `binding.activate()`
+（数据层激活）都**不会**改 `store.view` → 界面不动。
+修法：新增 `selectHostView()`，点宿主自己的 tab
+（DOM 为 `[data-conversation-tabs] button[role=tab]`，按文案匹配「项目中心」，
+已选中则不重复点）。已核对宿主确实渲染 `data-conversation-tabs` / `role="tab"` / `aria-selected`。
+`scheduleActivate` 也一并多次调用它，兼顾新会话切换后 tab 才渲染的时序。
+
+### ② 顶部 tab 保留
+按用户要求不动：`conversation.view` 注册保留，tab 仍可点。
+
+### 验证
+- **真实数据回归**：420 条样本 → 渲染 420 / 回退 0 / 残留标记 1（假阳性）；
+- **端到端投影**：1705 条消息、**380 条 reasoning**、27 轮；最后一轮 proc 10 项
+  （reasoning/assistant/tool 混合）、answer 正常；
+- 函数唯一性核对：`selectHostView` / `openControlRoom` / `activateView` / `scheduleActivate` 各 1 处；
+- `pnpm run check` 全绿；CSS 大括号平衡 0；bundle 191,687B + `node --check` 通过；
+- 线上 bundle 核对：**是当前版本**（与本地逐字节一致，仅差服务器追加的
+  `sourceMappingURL` 注释 70 字节）。

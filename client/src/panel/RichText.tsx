@@ -260,7 +260,14 @@ function inline(text: string, keyBase: string): React.ReactNode[] {
 
 // —— Markdown 块级 ——
 
-const FENCE = /^\s*```(\w+)?\s*$/
+/*
+ * 围栏行：``` 后可跟语言标识。
+ *
+ * 用 [^\s`]* 而不是 \w+：语言标识允许连字符与其他符号，
+ * 实测会话里出现 ```dsh-ui / ```c++ —— 旧的 \w+ 不匹配，
+ * 导致这类围栏**不被当代码块**，整段连同 ``` 原样裸露（渲染修复没生效的真正原因）。
+ */
+const FENCE = /^\s*```([^\s`]*)\s*$/
 const HEADING = /^(#{1,6})\s+(.*)$/
 const UL = /^\s*[-*+]\s+(.*)$/
 const OL = /^\s*(\d+)[.)]\s+(.*)$/

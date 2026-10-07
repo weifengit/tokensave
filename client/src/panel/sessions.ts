@@ -326,6 +326,40 @@ export function getCurrentSessionId(): string {
   return currentSessionId
 }
 
+
+/**
+ * 让宿主把当前会话的**视图**切到「项目中心」。
+ *
+ * 宿主只在会话首次绑定时读 localStorage 偏好；已在会话中时，
+ * 必须通过它自己的 store action 改 `view`，否则界面不会切。
+ * 宿主没有导出这个 action，因此从 DOM 上**点它自己的 tab 按钮**：
+ * tab 渲染为 `[data-conversation-tabs] button[role=tab]`，文案就是视图 label。
+ * 这是能保证“点下去一定有反应”的做法（不依赖未导出的内部 API）。
+ * @returns 是否找到并点击了对应 tab
+ */
+function selectHostView(): boolean {
+  if (typeof document === 'undefined') return false
+  const tabs = document.querySelectorAll<HTMLElement>(
+    '[data-conversation-tabs] button[role="tab"]'
+  )
+  if (tabs.length === 0) return false
+  // 按文案匹配「项目中心」这个 tab（宿主的 tab 文案就是注册时的 label）
+  let target: HTMLElement | null = null
+  for (const el of Array.from(tabs)) {
+    const text = (el.textContent || '').trim()
+    if (text.includes('项目中心')) { target = el; break }
+  }
+  if (!target) return false
+  // 已经在这个视图上就不重复点（aria-selected 由宿主维护）
+  if (target.getAttribute('aria-selected') === 'true') return true
+  try {
+    target.click()
+    return true
+  } catch (e) {
+    console.warn('[tokensave] 切换视图 tab 失败', e)
+    return false
+  }
+}
 /**
  * 打开「项目中心」（侧边栏按钮的入口）。
  *
@@ -340,10 +374,21 @@ export function openControlRoom(): boolean {
   if (!ctx) return false
   const current = getCurrentSessionId()
   if (current) {
-    if (bindSessionToItsProject(current)) return true
-    // 非项目会话：写偏好 + 激活，落到项目列表态
-    primeViewPreference(current)
-    scheduleActivate(current)
+    // ① 属于某项目 → 绑到它（写偏好 + 激活）；不属于也没关系。
+    const bound = bindSessionToItsProject(current)
+    if (!bound) {
+      // 非项目会话：写偏好 + 激活，落到项目列表态
+      primeViewPreference(current)
+      scheduleActivate(current)
+    }
+    // ② 关键：不论哪种情况，都点一下宿主自己的「项目中心」tab。
+    //
+    // 为何必须这样做：宿主渲染的是**持久化 store 的 view 字段**
+    // （`useStore(s => s.view)` → `resolveActiveView`），而 localStorage 偏好
+    // 只在**会话首次绑定**时读一次。用户已经身处某个会话时，
+    // 光写偏好 + binding.activate()（数据激活）都不会改 store.view，
+    // 所以上一版按钮“点了没反应”。点它自己的 tab 才会真正切界面。
+    selectHostView()
     return true
   }
   // 没有当前会话：挑第一个项目的最新会话打开
@@ -351,7 +396,12 @@ export function openControlRoom(): boolean {
     const s = latestProjectSession(ctx, p.path)
     if (!s) continue
     bindToProject(s.id, p.id)
-    return openSession(s.id)
+    const ok = openSession(s.id)
+    // 切过去之后再点 tab（会话切换后宿主才渲染出 tab 列表）
+    if (typeof window !== 'undefined') {
+      window.setTimeout(() => selectHostView(), 120)
+    }
+    return ok
   }
   return false
 }
@@ -399,11 +449,20 @@ function activateView(sessionId: string): void {
 const ACTIVATE_DELAYS = [0, 60, 200, 600, 1500]
 function scheduleActivate(sessionId: string): void {
   if (!sessionId) return
+  // 数据层激活（让 view 参与组装，空白会话才会渲染出我们的视图）
   for (const d of ACTIVATE_DELAYS) {
     if (d === 0) {
       activateView(sessionId)
     } else if (typeof window !== 'undefined') {
       window.setTimeout(() => activateView(sessionId), d)
+    }
+  }
+  // UI 层激活：宿主只渲染 store.view 指向的那个视图，而 store.view 只在
+  // 会话首次绑定时从偏好读一次。因此**必须点它自己的 tab**才能真把界面切过去。
+  // 延迟几次是因为新会话切过去后 tab 列表才渲染出来。
+  if (typeof window !== 'undefined') {
+    for (const d of [0, 120, 400, 900]) {
+      window.setTimeout(() => selectHostView(), d)
     }
   }
 }

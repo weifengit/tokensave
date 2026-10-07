@@ -88,8 +88,20 @@ body.ts-center-open [data-conversation-region="composer"] {
 /* —— 侧边栏「项目中心」入口（sidebar.footer.action 槽）——
    宿主侧边栏有 56px rail / 宽栏两态，这里两态都要可用：
    wide → 图标 + 文字一行；rail → 只有图标且居中。 */
+/*
+ * 位置：用户要求放在 worktable 的【工作台 / 控制室 / 子项目】**上方**，而不是左侧。
+ *
+ * 宿主的 footerActions 是横向 flex（display:flex），而 dsh-worktable 与我们都注册在
+ * sidebar.footer.action 里——所以默认会并排。这里在该容器**包含我们的入口时**改成纵向，
+ * 我们的入口（order 10，先渲染）就自然落在 worktable 那一组之上。
+ * 用 :has() 而不是改宿主类名（宿主自己也在用 :has）。
+ */
+[class*="footerActions"]:has(.ts-side-entry) { flex-direction:column; align-items:stretch; gap:6px; }
+/* rail（收起）时宿主居中排列，纵向同样成立 */
+[class*="collapsed"] [class*="footerActions"]:has(.ts-side-entry) { align-items:center; }
 .ts-side-entry { display:flex; align-items:center; gap:8px; width:100%; padding:7px 10px; border:1px solid rgba(127,127,127,.32); border-radius:8px; background:rgba(127,127,127,.1); color:inherit; cursor:pointer; font:inherit; font-size:12.5px; text-align:left; transition:background .15s ease, border-color .15s ease; }
 .ts-side-entry:hover { background:rgba(127,127,127,.2); border-color:rgba(127,127,127,.5); }
+.ts-side-entry:active { transform:translateY(1px); }
 .ts-side-entry.rail { justify-content:center; padding:7px 0; }
 .ts-side-icon { flex:none; font-size:14px; line-height:1; }
 .ts-side-label { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
