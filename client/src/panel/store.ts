@@ -105,6 +105,23 @@ export function touchProject(id: string): void {
   saveProjects(list)
 }
 
+/**
+ * 更新某个项目的「项目介绍」（列表模式行内编辑专用）。
+ *
+ * 与 addProject / removeProject 同一份存储（localStorage `tokensave:projects.v1`），
+ * 不碰其它字段；传入空串表示清空介绍。
+ * @returns 是否命中了该项目（未命中时不动存储）
+ */
+export function updateProjectDescription(id: string, description: string): boolean {
+  if (!id) return false
+  const list = loadProjects()
+  const hit = list.find((p) => p.id === id)
+  if (!hit) return false
+  hit.description = String(description ?? '').trim()
+  saveProjects(list)
+  return true
+}
+
 export function removeProject(id: string): void {
   saveProjects(loadProjects().filter((p) => p.id !== id))
 }

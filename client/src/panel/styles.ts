@@ -286,7 +286,7 @@ body.ts-center-open [data-conversation-region="composer"] {
    它们的子元素有 white-space:pre 的代码块 / 长 URL / 长 token，
    默认 min-width:auto 会被内容顶宽，从而把整条 flex/grid 链撑出容器。 */
 .ts-mainchat, .ts-board, .ts-talk, .ts-save, .ts-win, .ts-chat-msgs, .ts-win-body, .ts-board-list, .ts-talk-list, .ts-save-body { min-width:0; }
-.ts-turn, .ts-msg-assistant, .ts-msg-user, .ts-proc, .ts-proc-item, .ts-rich { min-width:0; }
+.ts-turn, .ts-msg-assistant, .ts-msg-user, .ts-proc, .ts-proc-item, .ts-inject, .ts-rich { min-width:0; }
 /* 代码块/表格/预览是 flex 项，min-width:auto 会让最长一行顶宽父级（即使有 overflow:auto） */
 .ts-rich-code, .ts-rich-plain, .ts-rich-table-wrap, .ts-rich-p, .ts-msg-full, .ts-msg-preview, .ts-entry-body, .ts-entry-title { min-width:0; }
 .ts-card-fill { flex:1; min-height:0; }
@@ -392,6 +392,13 @@ body.ts-center-open [data-conversation-region="composer"] {
 /* 思考（reasoning）：与工具同款收纳，但用紫色左边条 + 斜体区分，弱化不抢眼 */
 .ts-proc-think { border-left-color:rgba(192,132,252,.65) !important; font-style:italic; }
 .ts-proc-think .ts-proc-role { color:rgba(192,132,252,.95); font-style:normal; opacity:.95; }
+/* 上下文注入（宿主自动带入的运行时快照/技能目录）：与「过程」同款单行折叠，
+   用绿色左边条区分——它不是用户发的，也不是模型过程，点开才看正文 */
+.ts-inject { align-self:stretch; }
+.ts-inject .ts-proc-head { border-left-color:rgba(52,211,153,.55); background:rgba(52,211,153,.08); }
+.ts-inject .ts-proc-head:hover { background:rgba(52,211,153,.16); }
+.ts-inject-item { border-left-color:rgba(52,211,153,.45); }
+.ts-inject-item .ts-proc-role { color:rgba(52,211,153,.95); opacity:.9; }
 /* “回到最新”：粘性跟随被用户滚离底部后出现（不自动抢滚动） */
 .ts-jump-latest { position:sticky; bottom:6px; align-self:center; margin-top:-28px; z-index:2; padding:4px 12px; border-radius:99px; border:1px solid rgba(96,165,250,.6); background:rgba(24,27,33,.92); color:#e6e8eb; font:inherit; font-size:11.5px; cursor:pointer; box-shadow:0 4px 14px rgba(0,0,0,.4); backdrop-filter:blur(8px); }
 .ts-jump-latest:hover { background:rgba(96,165,250,.35); }
@@ -490,6 +497,12 @@ body.ts-center-open [data-conversation-region="composer"] {
 .ts-rich-hr { margin:4px 0; border:none; border-top:1px solid rgba(127,127,127,.35); }
 .ts-rich-inline-code { padding:1px 5px; border-radius:4px; background:rgba(127,127,127,.22); font-family:var(--dsh-font-mono, monospace); font-size:11px; }
 .ts-rich a { color:#60a5fa; text-decoration:underline; }
+/* —— GenUI 围栏槽位（交 @changfenhuang/dsh-genui 渲染）——
+   标签仅用于插件的**结构识别**（叶子元素文本恰为 dsh-ui + 同级 <pre>），
+   必须不可见；接管后插件会把整个槽位 display:none，并在其后插入自己的 React 根。 */
+.ts-genui-lang { display:none; }
+/* 接管后紧随的插件容器：与消息体保持同一列宽，不溢出 */
+.genui-dom-fence { max-width:100%; min-width:0; }
 .ts-rich-table-wrap { overflow:auto; }
 .ts-rich-table { border-collapse:collapse; font-size:11.5px; width:100%; }
 .ts-rich-table th, .ts-rich-table td { border:1px solid rgba(127,127,127,.3); padding:3px 7px; text-align:left; vertical-align:top; }
@@ -499,6 +512,16 @@ body.ts-center-open [data-conversation-region="composer"] {
 .ts-json-num { color:#fbbf24; }
 .ts-json-bool { color:#c084fc; }
 .ts-json-null { color:#f87171; }
+
+/* —— 项目中心：「展示」内嵌视图（项目 UI 直接在 DSH 内渲染） ——
+   根节点复用 .ts-cr：宿主那条「从 scrollBody 一路压成可收缩 flex」的链路
+   用 :has(.ts-cr) 选中，带这个类才不会被宿主的「随内容长高」规则撑破。 */
+.ts-preview { gap:8px; }
+.ts-preview-bar { display:flex; align-items:center; gap:10px; padding:7px 10px; border:1px solid rgba(127,127,127,.3); border-radius:10px; background:rgba(127,127,127,.1); flex:none; }
+.ts-preview-title { font-weight:600; font-size:13px; white-space:nowrap; }
+.ts-preview-url { flex:1 1 auto; min-width:0; font-size:11px; opacity:.65; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ts-preview-ops { display:flex; gap:6px; flex:none; }
+.ts-preview-frame { flex:1 1 0; min-height:0; width:100%; border:1px solid rgba(127,127,127,.3); border-radius:10px; background:#fff; }
 `
 
 export function injectProjectCenterStyles(): void {

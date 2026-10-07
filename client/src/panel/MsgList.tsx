@@ -4,9 +4,14 @@
  * 对齐宿主「对话」tab 的呈现语义（工具/过程默认折叠，最终回答才展开）：
  *   按 user 消息把消息切成「轮」；每轮里
  *     - user 消息        → 气泡
+ *     - 上下文注入       → 折叠成一行「上下文注入 ▸」，点开才看正文（见 InjectionRow）
  *     - 其余（中间过程） → 折叠成一行「过程 N 步 · 工具 M 次」，点开才看细节
  *     - 该轮**最后一条** assistant 文本 → 视为最终回答，Markdown 渲染并展开
  *   这样工具调用与中间过程不再一股脑铺满界面，与「对话」里的观感一致。
+ *
+ * 注入消息（运行时上下文快照 / 技能目录 system-reminder 等）事件类型同为
+ * user/message，但 `injected` 为真——它们不是用户发的，既不能当用户气泡，
+ * 也不能参与轮次切分（否则会把一轮拆成两轮）。
  *
  * 另外：只渲染最近 MAX_TURNS 轮，更早的折成提示（避免 DOM 爆炸）。
  */
@@ -24,6 +29,15 @@ const ROLE_LABELS: Record<string, string> = {
   assistant: '模型',
   tool: '工具',
   system: '系统',
+}
+
+/** 注入来源 → 人话标签（未收录的 kind 回退为「上下文注入」）；浮窗同款复用 */
+export const INJECT_LABELS: Record<string, string> = {
+  'runtime-context': '运行时上下文',
+  'skill-catalog': '技能目录',
+  'agent-instructions': '工作区指令',
+  'skill-invocation': '技能内容',
+  'session-reference': '跨会话召回',
 }
 
 /** 折叠预览：先去掉 Markdown 标记再截断（预览行里不再出现 ** / ``` / # 等原始标记）。 */
@@ -55,6 +69,44 @@ function ProcItem({ msg }: { msg: StreamMsg }) {
       {open
         ? <div className="ts-msg-full"><RichText text={msg.content} /></div>
         : <div className="ts-msg-preview">{oneLine(msg.content)}</div>}
+    </div>
+  )
+}
+
+/**
+ * 一轮里的「上下文注入」：单独一行「上下文注入 ▸」，点开才看正文。
+ *
+ * 这些是宿主自动带进会话的运行时上下文快照、技能目录 system-reminder 等，
+ * 事件类型是 user/message 但并非用户所发。收纳后它们不再冒充「我」的气泡，
+ * 也不干扰轮次切分；形态与「过程」折叠行一致。
+ */
+function InjectionRow({ items }: { items: StreamMsg[] }) {
+  const [open, setOpen] = useState(false)
+  if (items.length === 0) return null
+  const label = (m: StreamMsg) => INJECT_LABELS[m.injectKind ?? ''] ?? '上下文注入'
+  return (
+    <div className="ts-inject">
+      <button
+        className="ts-proc-head"
+        title={`上下文注入 ${items.length} 条（${items.map(label).join('、')}），点开查看正文`}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <span className="ts-proc-caret">{open ? '▾' : '▸'}</span>
+        <span className="ts-proc-lead">上下文注入 {items.length} 条</span>
+        <span className="ts-dim">{items.map(label).join('、')}</span>
+      </button>
+      {open && (
+        <div className="ts-proc-body">
+          {items.map((m, i) => (
+            <div className="ts-proc-item ts-inject-item" key={i}>
+              <div className="ts-proc-item-head">
+                <span className="ts-proc-role">{label(m)}</span>
+              </div>
+              <div className="ts-msg-full"><RichText text={m.content} /></div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
@@ -95,6 +147,8 @@ interface Turn {
   users: StreamMsg[]
   proc: StreamMsg[]
   answer: StreamMsg | null
+  /** 宿主自动注入的上下文（非用户所发），单独折叠成一行，不进用户气泡 */
+  injects: StreamMsg[]
 }
 
 /**
@@ -105,8 +159,15 @@ interface Turn {
  */
 function splitTurn(turn: StreamMsg[]): Turn {
   const users: StreamMsg[] = []
+  const injects: StreamMsg[] = []
   const rest: StreamMsg[] = []
-  for (const m of turn) (m.role === 'user' ? users : rest).push(m)
+  for (const m of turn) {
+    // 注入消息 role 也是 'user'，必须先于 role 判断拦下：
+    // 既不能当用户气泡，也不能被算作「该轮的提问」。
+    if (m.injected) injects.push(m)
+    else if (m.role === 'user') users.push(m)
+    else rest.push(m)
+  }
   // 从后往前找最后一条「非思考的 assistant 文本」作回答
   let answer: StreamMsg | null = null
   for (let i = rest.length - 1; i >= 0; i--) {
@@ -117,7 +178,7 @@ function splitTurn(turn: StreamMsg[]): Turn {
     }
   }
   const proc = rest.filter((m) => m !== answer)
-  return { users, proc, answer }
+  return { users, injects, proc, answer }
 }
 
 export function MsgList({ messages, emptyText }: { messages: StreamMsg[]; emptyText?: string }) {
@@ -126,7 +187,9 @@ export function MsgList({ messages, emptyText }: { messages: StreamMsg[]; emptyT
   const turns = useMemo(() => {
     const out: StreamMsg[][] = []
     for (const m of messages) {
-      if (m.role === 'user' || out.length === 0) out.push([])
+      // 注入消息不开新轮：它紧跟在用户消息之后到达，若按 user 切轮，
+      // 一轮「提问 + 注入 + 回答」会被拆成两轮（提问孤零零、回答没了提问）。
+      if ((m.role === 'user' && !m.injected) || out.length === 0) out.push([])
       out[out.length - 1].push(m)
     }
     return out
@@ -194,6 +257,7 @@ export function MsgList({ messages, emptyText }: { messages: StreamMsg[]; emptyT
           {t.users.map((m, i) => (
             <div className="ts-msg-user" key={`u${i}`}>{m.content}</div>
           ))}
+          <InjectionRow items={t.injects} />
           {t.proc.length > 0 && <ProcessGroup items={t.proc} />}
           {t.answer && (
             <div className="ts-msg-assistant">

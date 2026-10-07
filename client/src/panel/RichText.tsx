@@ -302,6 +302,33 @@ export function stripMarkdown(text: string): string {
     .trim()
 }
 
+/** 只收 dsh-ui：GenUI 自己定义的围栏语言（它的 svg 围栏会改变普通 svg 代码块的语义，故不收）。 */
+const GENUI_FENCE_LANGS = new Set(['dsh-ui'])
+
+/**
+ * dsh-ui 围栏槽位 —— 交给已安装的 @changfenhuang/dsh-genui 渲染。
+ *
+ * 为什么只输出结构、不自己调它的 React 组件：它的 embed 入口指向未打包的 TS 源码
+ * （lib/ 里没有 embed.js），浏览器端拿不到；而它在本宿主走 DOM 通道（宿主的
+ * dsh-client-ui-primitives 没有它要的 registerFenceRenderer 扩展点），该通道扫描
+ * 整个 document，按结构接管：**叶子元素文本恰为 `dsh-ui`（在代码体之外）+ 同级一个 <pre>**。
+ * 已用真实页面验证：命中后本块 display:none，其后插入 genui-dom-fence 容器。
+ *
+ * 标签用 CSS 隐藏（接管前不显示字样；插件被卸载时回落为普通代码块）；<pre> 保留原文，
+ * 判定不通过时原文照常可读。
+ */
+function GenuiFenceSlot({ lang, code }: { lang: string; code: string }) {
+  return (
+    <div className="ts-genui-slot">
+      {/* 结构识别用的语言标签：必须是叶子元素且文本恰等于语言名 */}
+      <div className="ts-genui-lang">{lang}</div>
+      <pre className="ts-rich-code">
+        <code>{code}</code>
+      </pre>
+    </div>
+  )
+}
+
 function renderMarkdown(src: string): React.ReactNode[] {
   const lines = src.replace(/\r\n?/g, '\n').split('\n')
   const out: React.ReactNode[] = []
@@ -324,11 +351,16 @@ function renderMarkdown(src: string): React.ReactNode[] {
       const buf: string[] = []
       i++
       while (i < lines.length && !FENCE.test(lines[i])) buf.push(lines[i++])
-      i++ // 跳过收尾围栏
+      // 是否真的遇到了收尾围栏：流式过程中围栏可能还没收，此时**不**交给 GenUI
+      // （插件把“无 data-streaming”视为已结算，未收的围栏会被当成坏围栏挂诊断）
+      const closed = i < lines.length
+      if (closed) i++
       const code = buf.join('\n')
       if (lang === 'json') {
         const j = parseJson(code)
         push(j.ok ? <JsonValue value={j.value} /> : <JsonBlock pretty={code} />)
+      } else if (closed && GENUI_FENCE_LANGS.has(lang)) {
+        push(<GenuiFenceSlot lang={lang} code={code} />)
       } else {
         push(
           <pre className="ts-rich-code">

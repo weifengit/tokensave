@@ -128,7 +128,9 @@ export function TalkColumn({
         const list2 = msgs.get(ex.id) || []
         const m = emetrics.get(ex.id)
 
-        const firstUser = list2.find((x) => x.role === 'user' && clean(x.content))
+        // 注入消息 role 也是 'user'，但它不是「交给探索者的任务」——
+        // 不排除的话，派发文案会变成整段运行时上下文快照。
+        const firstUser = list2.find((x) => x.role === 'user' && !x.injected && clean(x.content))
         if (firstUser) {
           out.push({
             key: `${ex.id}-assign`,

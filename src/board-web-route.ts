@@ -326,9 +326,13 @@ function latestMtimeMs(root: string): number {
 }
 
 /**
- * 从 package.json 推断开发服务器端口（有则给出本机 URL）。
+ * 项目的「展示」地址。
  *
- * 只认**显式**端口（`--port 3000` / `-p 5173` / `PORT=3000`）——
+ * 优先读 package.json 的 `previewUrl`（项目自带的显式声明）：可为完整 URL，
+ * 也可为宿主自身的相对路径（如 `/api/intel/site/console/`）——后者由 DSH 自己
+ * 托管，宿主换端口也不会失效。
+ *
+ * 没声明时回退到**显式**端口推断（`--port 3000` / `-p 5173` / `PORT=3000`）——
  * 不猜默认端口：猜错会让「展示」打开一个不相干的地址。
  */
 function guessDevUrl(root: string): string {
@@ -336,6 +340,8 @@ function guessDevUrl(root: string): string {
     const pkgPath = path.join(root, 'package.json')
     if (!fs.existsSync(pkgPath)) return ''
     const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'))
+    const declared = pkg && typeof pkg.previewUrl === 'string' ? pkg.previewUrl.trim() : ''
+    if (declared) return declared
     const scripts = pkg && typeof pkg.scripts === 'object' ? pkg.scripts : {}
     const text = ['dev', 'start', 'serve', 'preview']
       .map((k) => (typeof scripts[k] === 'string' ? scripts[k] : ''))
@@ -419,7 +425,9 @@ async function handleProjectInfo(req: any, res: any): Promise<void> {
     const devUrl = guessDevUrl(target)
     // 真实探测端口是否有人在听：这才是「项目已启动」的诚实判定。
     // 未启动时 devUrl 仍返回（供 UI 提示“地址是 X，但当前未启动”）。
-    const devRunning = await probeUrl(devUrl)
+    // 相对路径（/…）由宿主 DSH 自己托管：本页能打开就说明宿主在跑，没有可探
+    // 的独立端口，直接视为可用。
+    const devRunning = devUrl.startsWith('/') ? true : await probeUrl(devUrl)
     writeJson(res, 200, {
       timestamp: Date.now(),
       path: target,

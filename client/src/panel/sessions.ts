@@ -11,10 +11,21 @@
  */
 import { useEffect, useState } from 'react'
 import { getClientContext, readService } from '../session-subscribe'
-import { rememberOpenedProject, loadProjects } from './store'
+import { rememberOpenedProject, loadProjects, touchProject } from './store'
 
-/** 「项目中心」tab 的 conversation.view 条目 id（宿主按 id 存视图偏好，不可改） */
+/**
+ * 「工作台」tab 的 conversation.view 条目 id。
+ *
+ * 注意：宿主按 id 存视图偏好（localStorage `dsh.conversation.<sessionId>`），
+ * 改 id 会让已有偏好悬空回落——因此本 tab 从「项目中心」改名为「工作台」时
+ * **只改 label、不改 id**。
+ */
 export const VIEW_ID = 'tokensave-control-room'
+/** 「工作台」tab 的显示名（宿主 tab 文案 = 注册时的 label；切 tab 时按它匹配）。 */
+export const WORKBENCH_LABEL = '工作台'
+/** 「项目中心」（真正的项目列表）tab 的 id 与显示名。 */
+export const PROJECT_CENTER_VIEW_ID = 'tokensave-project-center'
+export const PROJECT_CENTER_LABEL = '项目中心'
 
 /** 宿主会话视图偏好的持久化键（dsh-client-ui-conversation 的 CONVERSATION_STORE_KEY） */
 const CONVERSATION_STORE_KEY = 'dsh.conversation'
@@ -277,18 +288,22 @@ export function clearViewPreference(sessionId: string): void {
   }
 }
 
-/** 预写某个会话的视图偏好（保留其它字段，隐私模式下静默忽略）。 */
-export function primeViewPreference(sessionId: string): boolean {
+/**
+ * 预写某个会话的视图偏好（保留其它字段，隐私模式下静默忽略）。
+ * @param sessionId - 目标会话
+ * @param viewId - 要激活的 conversation.view id（默认「工作台」）
+ */
+export function primeViewPreference(sessionId: string, viewId: string = VIEW_ID): boolean {
   if (!sessionId || typeof localStorage === 'undefined') return false
   // 已绑定过就不重复写（sweep 会被频繁调用，避免无谓的 localStorage 写与事件）
-  if (recallViewPreference(sessionId) === VIEW_ID) return false
+  if (recallViewPreference(sessionId) === viewId) return false
   const key = `${CONVERSATION_STORE_KEY}.${sessionId}`
   try {
     const raw = localStorage.getItem(key)
     const parsed = raw ? JSON.parse(raw) : null
     const next = parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-      ? { ...parsed, view: VIEW_ID }
-      : { draft: '', view: VIEW_ID, viewRequest: null }
+      ? { ...parsed, view: viewId }
+      : { draft: '', view: viewId, viewRequest: null }
     localStorage.setItem(key, JSON.stringify(next))
     return true
   } catch {
@@ -481,26 +496,27 @@ export function onRequestWorkbench(fn: (sessionId?: string) => void): () => void
 
 
 /**
- * 让宿主把当前会话的**视图**切到「项目中心」。
+ * 点宿主自己的视图 tab（按 tab 文案匹配）。
  *
- * 宿主只在会话首次绑定时读 localStorage 偏好；已在会话中时，
- * 必须通过它自己的 store action 改 `view`，否则界面不会切。
- * 宿主没有导出这个 action，因此从 DOM 上**点它自己的 tab 按钮**：
- * tab 渲染为 `[data-conversation-tabs] button[role=tab]`，文案就是视图 label。
- * 这是能保证“点下去一定有反应”的做法（不依赖未导出的内部 API）。
+ * 宿主只渲染 store.view 指向的那个视图，而 store.view 只在会话首次绑定时从偏好读；
+ * 已在会话中时必须点它自己的 tab 才能把界面切过去。宿主没导出这个 action，
+ * 因此从 DOM 上点：tab 渲染为 `[data-conversation-tabs] button[role=tab]`，
+ * 文案就是注册时的 label（本插件现在是「项目中心」与「工作台」两个 tab）。
+ * @param label - 目标 tab 的文案
  * @returns 是否找到并点击了对应 tab
  */
-function selectHostView(): boolean {
+function selectHostView(label: string): boolean {
   if (typeof document === 'undefined') return false
   const tabs = document.querySelectorAll<HTMLElement>(
     '[data-conversation-tabs] button[role="tab"]'
   )
   if (tabs.length === 0) return false
-  // 按文案匹配「项目中心」这个 tab（宿主的 tab 文案就是注册时的 label）
+  // 先精确匹配文案，再退化为包含匹配（tab 文案可能带省略/装饰）
   let target: HTMLElement | null = null
   for (const el of Array.from(tabs)) {
     const text = (el.textContent || '').trim()
-    if (text.includes('项目中心')) { target = el; break }
+    if (text === label) { target = el; break }
+    if (target === null && text.includes(label)) target = el
   }
   if (!target) return false
   // 已经在这个视图上就不重复点（aria-selected 由宿主维护）
@@ -514,44 +530,78 @@ function selectHostView(): boolean {
   }
 }
 /**
- * 侧边栏「项目中心」按钮：在**项目列表**与**工作台**之间切换。
+ * 把当前会话的视图切到指定的 conversation.view（数据层激活 + 点宿主 tab）。
  *
- * 语义（用户要求）：
- *   当前在工作台 → 点一下回到项目列表（含「添加项目文件夹」与项目卡片）；
- *   当前在项目列表 → 点一下回到上次的工作台。
+ * 「项目中心」与「工作台」是两个独立 tab，两者之间跳转靠这里：
+ *   - 数据层：写偏好 + activate，让视图参与组装（空白会话才会渲染）；
+ *   - UI 层：点宿主 tab，把它自己的 store.view 切过去。
+ * @param viewId - 目标视图 id
+ * @param label - 目标 tab 文案（用于 DOM 点击）
+ * @returns 是否至少发起了一次导航
+ */
+export function switchToView(viewId: string, label: string): boolean {
+  const sid = getCurrentSessionId()
+  if (sid) {
+    primeViewPreference(sid, viewId)
+    scheduleActivate(sid, viewId, label)
+    return true
+  }
+  return selectHostView(label)
+}
+
+/**
+ * 进入某个项目的工作台（「项目中心」里点卡片/记录行/「进入工作台」按钮的统一入口）。
  *
- * 实现：读 `getControlRoomScreen()` 判断当前在哪一屏，发对应信号。
- * 两个方向都要保证：
- *   - 本插件视图被激活（空白会话也要能渲染）；
- *   - 点宿主 tab 真正切过去（宿主只渲染 store.view 指向的视图）。
+ * @param projectId - 目标项目
+ * @param targetSessionId - 可选：直接落到该会话（序号点点击 = 快速进入对应对话的工作台）
+ * @returns 是否发起了导航
+ */
+export function enterProjectWorkbench(projectId: string, targetSessionId?: string): boolean {
+  if (!projectId) return false
+  // 进入工作台 = 使用过这个项目 → 刷新「上次更新时间」
+  touchProject(projectId)
+  const current = getCurrentSessionId()
+  if (current) rememberOpenedProject(current, projectId)
+  if (targetSessionId) {
+    rememberOpenedProject(targetSessionId, projectId)
+    if (targetSessionId !== current) {
+      // 切到那个对话：先写好它的视图偏好再导航（宿主会在激活前读偏好）；
+      // 宿主导航是异步的，因此延后多点几次 tab，等它真正切过去。
+      primeViewPreference(targetSessionId, VIEW_ID)
+      const ok = openSession(targetSessionId)
+      if (typeof window !== 'undefined') {
+        for (const d of [0, 120, 400, 900]) {
+          window.setTimeout(() => selectHostView(WORKBENCH_LABEL), d)
+        }
+      }
+      return ok
+    }
+  }
+  return switchToView(VIEW_ID, WORKBENCH_LABEL)
+}
+
+/**
+ * 侧边栏「项目中心」入口：把视图切到**项目列表** tab。
+ *
+ * 没有当前会话时，先打开第一个项目的最新会话（打开后会自动落到工作台），
+ * 再切到项目中心——保证点下去一定有反应。
  * @returns 是否成功发起导航
  */
 export function openControlRoom(): boolean {
   const ctx: any = getClientContext()
   if (!ctx) return false
-  const toDesk = getControlRoomScreen() === 'list'
-  const current = getCurrentSessionId()
-  if (current) {
-    if (toDesk) {
-      // 列表 → 工作台：交给 ControlRoom 自己恢复（它有“上次打开的项目”记忆）
-      requestWorkbench()
-    } else {
-      // 工作台 → 列表：**保留**工作台记忆（切回来要知道回哪个项目），
-      // 只置“强制列表”标记（由 requestProjectList 内部完成）。
-      requestProjectList()
-    }
-    primeViewPreference(current)
-    scheduleActivate(current)
+  if (getCurrentSessionId()) {
+    switchToView(PROJECT_CENTER_VIEW_ID, PROJECT_CENTER_LABEL)
     return true
   }
-  // 没有当前会话：挑第一个项目的最新会话打开（打开后 ControlRoom 会显示列表）
+  // 没有当前会话：挑第一个项目的最新会话打开（打开后 ControlRoom 显示工作台/引导页）
   for (const p of loadProjects()) {
     const s = latestProjectSession(ctx, p.path)
     if (!s) continue
     primeViewPreference(s.id)
     const ok = openSession(s.id)
     if (typeof window !== 'undefined') {
-      window.setTimeout(() => { requestProjectList(); selectHostView() }, 150)
+      window.setTimeout(() => switchToView(PROJECT_CENTER_VIEW_ID, PROJECT_CENTER_LABEL), 150)
     }
     return ok
   }
@@ -584,42 +634,51 @@ export function bindToProject(sessionId: string, projectId: string): boolean {
 }
 
 /**
- * 把某个会话的当前视图切到「项目中心」（binding 已物化时生效；未物化时靠偏好）。
+ * 把某个会话的当前视图切到指定 conversation.view（binding 已物化时生效；未物化时靠偏好）。
  *
  * 宿主在 restoreView 时会读 localStorage 偏好，但**已物化**的 binding 不会再读；
  * 侧边栏「新建会话」恰好是「复用空白会话 → 导航」，复用时视图可能已是 chat。
- * 因此需要主动调 uiConversation.binding(id).activate(VIEW_ID)。
+ * 因此需要主动调 uiConversation.binding(id).activate(viewId)。
+ * @param sessionId - 目标会话
+ * @param viewId - 要激活的视图 id（默认「工作台」）
  */
-function activateView(sessionId: string): void {
+function activateView(sessionId: string, viewId: string = VIEW_ID): void {
   const ctx: any = getClientContext()
   if (!ctx) return
   try {
     const conv = readService<any>(ctx, 'uiConversation')
     const binding = conv?.binding?.(sessionId)
-    if (binding && typeof binding.activate === 'function') binding.activate(VIEW_ID)
+    if (binding && typeof binding.activate === 'function') binding.activate(viewId)
   } catch (e) {
     // binding 未物化/会话尚未注册：静默，偏好已写好，激活时自会生效
   }
 }
 
 /**
- * 多次尝试把视图切到「项目中心」。
+ * 多次尝试把视图切到指定 conversation.view（默认「工作台」）。
  *
  * 为什么要重试：新建会话刚返回时，`uiConversation.binding(id)` 可能还没物化（抛错），
  * 只试一次会静默失败。而**空白会话**下宿主 `DefaultConversationViews` 会直接返回 null
  * （`session.blank && phase==='blank'`）——一个 view 都不渲染；只有把我们的 view
- * 加入 activeTargets，`conversationPhase` 才会变 'active'，工作台才显示出来。
+ * 加入 activeTargets，`conversationPhase` 才会变 'active'，视图才显示出来。
  * 所以必须在一小段时间内多试几次，覆盖 binding 物化的时机。
+ * @param sessionId - 目标会话
+ * @param viewId - 要激活的视图 id
+ * @param label - 对应 tab 文案（用于 DOM 点击；不传则不点 tab）
  */
 const ACTIVATE_DELAYS = [0, 60, 200, 600, 1500]
-function scheduleActivate(sessionId: string): void {
+function scheduleActivate(
+  sessionId: string,
+  viewId: string = VIEW_ID,
+  label: string = WORKBENCH_LABEL,
+): void {
   if (!sessionId) return
   // 数据层激活（让 view 参与组装，空白会话才会渲染出我们的视图）
   for (const d of ACTIVATE_DELAYS) {
     if (d === 0) {
-      activateView(sessionId)
+      activateView(sessionId, viewId)
     } else if (typeof window !== 'undefined') {
-      window.setTimeout(() => activateView(sessionId), d)
+      window.setTimeout(() => activateView(sessionId, viewId), d)
     }
   }
   // UI 层激活：宿主只渲染 store.view 指向的那个视图，而 store.view 只在
@@ -627,7 +686,7 @@ function scheduleActivate(sessionId: string): void {
   // 延迟几次是因为新会话切过去后 tab 列表才渲染出来。
   if (typeof window !== 'undefined') {
     for (const d of [0, 120, 400, 900]) {
-      window.setTimeout(() => selectHostView(), d)
+      window.setTimeout(() => selectHostView(label), d)
     }
   }
 }

@@ -1019,3 +1019,50 @@ ControlRoom 的恢复逻辑第一行 `if (isForceList()) return` 就短路 → �
 - 线上产物已核对含 `序号` / `text-align:left` / `gridTemplateColumns:"minmax(0,1fr)"`。
 - 已知取舍：进入工作台首次探测返回前（~100ms）会先显示单窗口再展开 H 台
   —— 对“从不唤醒”的项目零闪烁（idle 即首帧），对有探索者的项目有一瞬切换。
+
+## Step 38（2026-10-07）：接入已安装的 GenUI 插件 —— 工作台卡片里的 dsh-ui 围栏不再是一坨 JSON
+
+### 用户要求
+已装插件 `@changfenhuang/dsh-genui`，能否用它美化「DSH 主对话 / 探索者对话」里的相关内容显示。
+
+### 先查清楚它到底怎么渲染（结论决定了接法）
+1. **它是围栏驱动的**：渲染 `` ```dsh-ui `` 围栏（布局/表格/图表/mermaid/表单/3D…）。
+   不是"自动美化任意 markdown"——正文要拿到美化，得让内容包含 dsh-ui 围栏。
+2. **两条通道，本宿主走 DOM 通道**：
+   - registry 通道需要宿主 `@deepseek-ai/dsh-client-ui-primitives` 暴露
+     `registerFenceRenderer` —— **全量搜索该符号在 DSH 安装里为零**，所以
+     `useRegistry=false`，插件安装的是 DOM 通道（插件自身也会打印 `fence-channel=dom`）；
+   - DOM 通道 `observer.observe(document.body)` + 1s sweep 调
+     `findFenceCandidates()`（默认 scope = **document**）——**我卡片里的节点也在扫描范围内**。
+3. **它按结构识别围栏**（结构兜底，不依赖宿主类名）：
+   *一个叶子元素、文本恰为 `dsh-ui`（且在代码体之外）+ 同级一个 `<pre>`*，
+   且该容器必须"可疑似围栏表面"（只含 1 个 `<pre>`、代码体之外无 p/ul/table/标题等块级内容）。
+4. **它不在浏览器里可 import**：`./embed` 导出指向**未打包的 TS 源码**（`lib/` 下没有
+   `embed.js`），客户端拿不到 —— 所以不能直接调它的 React 组件。
+
+### 接法：只输出它能识别的结构（零耦合、零新增依赖）
+`RichText.tsx` 新增 `GenuiFenceSlot`：dsh-ui 围栏渲染成
+`div.ts-genui-slot > (div.ts-genui-lang:text=dsh-ui) + pre.ts-rich-code > code`。
+- 标签用 CSS `display:none`（接管前不显示字样；**插件被卸载时回落成普通代码块**）；
+- `<pre>` 保留**原文**：护栏拒绝/JSON 非法时，插件会在原文上方挂诊断，原文照常可读；
+- **未收尾的围栏不交给它**（`const closed = i < lines.length`）：插件把"无 `data-streaming`"
+  视为已结算，流式中的半截 JSON 会被判成坏围栏并闪诊断；
+- 只收 `dsh-ui`（它的 `svg` 围栏会改变普通 svg 代码块的语义）；json 仍走我自己的 JSON 渲染。
+
+### 验证（真实页面 + 真实插件，非模拟）
+用 `agent-browser` 驱动线上 GUI：
+1. **形状探针**：往 document 注入与 TSX 完全同构的节点（含一份普通 `<pre>` 作对照）→
+   3s 后：我的块 `display:none` + `data-genui-rendered`，其后出现 `genui-dom-fence`，
+   渲染出 callout+table 文本；**对照块不受影响**（无误判）。
+2. **端到端**：进入真实工作台（`ts-hdesk`）→ 主对话卡片里
+   `.ts-genui-slot` ×1、`data-genui-rendered` ×1、`.ts-desk-chat .genui-dom-fence` ×1，
+   容器内是真实 React 树（`data-genui="true"`、`V1MMBW_block/_banner/_col/_list`…），
+   `rawJsonVisible=false`，无诊断。
+3. 服务端产物已含 `ts-genui-slot` / `ts-genui-lang` / `GENUI_FENCE_LANGS`。
+
+### 覆盖范围（诚实说明）
+- 主对话卡（MainChat → MsgList → RichText）**已实测**；
+- 探索者窗口 / 共享黑板走**同一个 RichText**，且 DOM 通道是 document 级扫描，同一路径适用；
+- 但**探索者输出通常没有 dsh-ui 围栏**（子 agent 的纯 markdown），所以那边主要仍是我自己的
+  markdown/JSON 渲染 —— 要美化得让内容带上 dsh-ui 围栏。
+- 客户端改动需**刷新页面**（当前没有 `pnpm run dev:web` 监听在跑）。

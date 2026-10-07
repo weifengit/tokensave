@@ -25,6 +25,16 @@ export interface StreamMsg {
    * 思考与正文同为 assistant 流，但呈现上要分开（思考默认折叠，见 MsgList）。
    */
   kind?: 'reasoning'
+  /**
+   * 该消息是宿主**自动注入**的上下文（运行时快照 / 技能目录 / 工作区指令…），
+   * 而非用户亲口发送。
+   * 依据：这类消息事件类型同为 user/message，但 data.source.kind 是
+   * runtime-context / skill-catalog / agent-instructions 等，只有真人消息才是 'user'。
+   * 呈现上要与真实用户气泡分开（见 MsgList 的「上下文注入」折叠行）。
+   */
+  injected?: boolean
+  /** 注入来源（event.data.source.kind），用于给人话标签 */
+  injectKind?: string
 }
 
 // —— 会话指标（token 用量 / 工具耗时 / 活动时间窗）————————————
@@ -179,6 +189,25 @@ function roleOf(type: string): string {
 }
 
 /**
+ * 判定一条 `user/message` 是否为宿主**自动注入**的上下文。
+ *
+ * 依据（0.2.0-rc.2 真实契约）：运行时上下文快照、技能目录、工作区指令等
+ * 同样以 user 角色写进会话（dsh-agent-loop 的 RuntimeContextProjection、
+ * dsh-tool-skill 的目录注入），但 `data.source.kind` 分别是
+ * runtime-context / skill-catalog / agent-instructions / skill-invocation …；
+ * 只有用户亲手发送的消息 source.kind 才是 'user'。
+ *
+ * 老数据或压根没有 source 的消息按真实用户处理（保守：宁可显示，不误折叠）。
+ */
+function injectionOf(ev: any): { injected: boolean; kind?: string } {
+  if (!ev || ev.type !== 'user/message') return { injected: false }
+  const source = ev.data?.source
+  const kind = typeof source?.kind === 'string' ? source.kind : ''
+  if (kind === '' || kind === 'user') return { injected: false }
+  return { injected: true, kind }
+}
+
+/**
  * 把 SessionEventWindow 快照重建为消息列表：
  * - durable 事件（{ type:'event', event }）：user/assistant/tool-result 进流，
  *   system/message（渲染后的整份系统提示词）与 tool/call（参数 JSON）不进流；
@@ -234,7 +263,15 @@ export function messagesFromWindow(snap: any): StreamMsg[] {
     const content = visibleTextOf(ev)
     if (!content) continue
     live = null
-    out.push({ role: roleOf(ev.type), content, time: typeof ev.time === 'number' ? ev.time : undefined, usage: ev?.data?.usage, type: ev.type })
+    const inj = injectionOf(ev)
+    out.push({
+      role: roleOf(ev.type),
+      content,
+      time: typeof ev.time === 'number' ? ev.time : undefined,
+      usage: ev?.data?.usage,
+      type: ev.type,
+      ...inj.injected ? { injected: true, injectKind: inj.kind } : {},
+    })
   }
   return out
 }
@@ -280,7 +317,8 @@ export function metricsFromWindow(snap: any): SessionMetrics {
       const text = contentOf(ev)
       if (text) { m.lastAssistant = text.slice(0, 400); m.lastAssistantMs = t }
     } else if (ev.type === 'user/message') {
-      const text = contentOf(ev)
+      // 注入上下文（source.kind !== 'user'）不是用户输入，不能算 lastUser
+      const text = injectionOf(ev).injected ? '' : contentOf(ev)
       if (text) m.lastUser = text.slice(0, 400)
     } else if (ev.type === 'tool/call') {
       m.toolCallCount++
@@ -331,7 +369,15 @@ function emitEvent(ch: Channel, x: any): void {
   if (ev.type === 'system/message' || ev.type === 'tool/call') return
   const content = contentOf(ev)
   if (!content) return
-  ch.msgs = ch.msgs.concat({ role: roleOf(ev.type), content, time: typeof ev.time === 'number' ? ev.time : undefined, usage: ev?.data?.usage, type: ev.type })
+  const inj = injectionOf(ev)
+  ch.msgs = ch.msgs.concat({
+    role: roleOf(ev.type),
+    content,
+    time: typeof ev.time === 'number' ? ev.time : undefined,
+    usage: ev?.data?.usage,
+    type: ev.type,
+    ...inj.injected ? { injected: true, injectKind: inj.kind } : {},
+  })
   if (typeof ev.time === 'number') ch.metrics.lastMs = ev.time
   publish(ch)
 }

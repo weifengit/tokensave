@@ -32,6 +32,7 @@ import { rememberOpenedProject } from './store'
 import type { ProjectRecord } from './store'
 import { reportExplorerCount } from '../float/mount'
 
+import { PreviewPanel } from './PreviewPanel'
 interface Props {
   project: ProjectRecord
   sessionId: string
@@ -416,6 +417,9 @@ export function HDesk({ project, sessionId, onBack }: Props) {
           />
         </span>
       </div>
+
+      {/* 项目预览：标题行（项目名 + 历史会话 + 新建会话）之下、其它窗口之上 */}
+      <PreviewPanel project={project} />
 
       {probeError && <div className="ts-hint">⚠️ {probeError}</div>}
       {/* idle 下其它卡都不渲染，恢复 chip 点了也没意义（且会与“只保留一个窗口”矛盾） */}

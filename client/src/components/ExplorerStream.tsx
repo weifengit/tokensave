@@ -3,6 +3,25 @@
 import React, { useEffect, useState } from 'react'
 import { subscribeSession } from '../session-subscribe'
 import type { StreamMsg } from '../session-subscribe'
+import { INJECT_LABELS } from '../panel/MsgList'
+
+/**
+ * 一条上下文注入（宿主自动带入的运行时快照/技能目录，非用户所发）：
+ * 折叠成一行，点开才看正文，不冒充用户气泡。
+ */
+function InjectLine({ msg }: { msg: StreamMsg }) {
+  const [open, setOpen] = useState(false)
+  const label = INJECT_LABELS[msg.injectKind ?? ''] ?? '上下文注入'
+  return (
+    <div className="msg msg-inject">
+      <button className="inject-toggle" onClick={() => setOpen((v) => !v)} title={open ? '收起' : '展开正文'}>
+        <span>{open ? '▾' : '▸'}</span>
+        <span>上下文注入 · {label}</span>
+      </button>
+      {open && <div className="inject-body">{msg.content}</div>}
+    </div>
+  )
+}
 
 interface Props {
   sessionId: string
@@ -29,9 +48,13 @@ export function ExplorerStream({ sessionId, visible, bossKey }: Props) {
       <div className="stream-messages">
         {messages.length === 0 && <div className="msg msg-system">等待会话消息…</div>}
         {messages.map((msg, i) => (
-          <div key={i} className={`msg msg-${msg.role}`}>
-            {msg.content}
-          </div>
+          msg.injected ? (
+            <InjectLine key={i} msg={msg} />
+          ) : (
+            <div key={i} className={`msg msg-${msg.role}`}>
+              {msg.content}
+            </div>
+          )
         ))}
       </div>
     </div>
