@@ -75,3 +75,45 @@ export function addProject(name: string, path: string): ProjectRecord {
 export function removeProject(id: string): void {
   saveProjects(loadProjects().filter((p) => p.id !== id))
 }
+
+// —— 「已进入的工作台」记忆 ——
+// 切换会话（宿主按会话作用域重挂 conversation.view）或刷新页面后，仍停留在
+// 同一项目的 H 台，而不是退回项目列表。按会话 id 记：每个会话各自记住自己
+// 打开的是哪个项目。
+const OPENED_KEY = 'tokensave:opened-project.v1'
+const openedBySession = new Map<string, string>()
+
+function readOpenedMap(): Record<string, string> {
+  try {
+    const raw = localStorage.getItem(OPENED_KEY)
+    if (!raw) return {}
+    const parsed = JSON.parse(raw)
+    return parsed && typeof parsed === 'object' ? (parsed as Record<string, string>) : {}
+  } catch {
+    return {}
+  }
+}
+
+/** 记住某会话当前打开的项目；传 null 表示退回项目列表（清除记忆）。 */
+export function rememberOpenedProject(sessionId: string, projectId: string | null): void {
+  if (!sessionId) return
+  if (projectId) openedBySession.set(sessionId, projectId)
+  else openedBySession.delete(sessionId)
+  try {
+    const map = readOpenedMap()
+    if (projectId) map[sessionId] = projectId
+    else delete map[sessionId]
+    localStorage.setItem(OPENED_KEY, JSON.stringify(map))
+  } catch {
+    /* 隐私模式等：仅本次会话有效（模块内 Map 已更新） */
+  }
+}
+
+/** 读某会话记住的项目 id（无记忆返回 null）。 */
+export function recallOpenedProject(sessionId: string): string | null {
+  if (!sessionId) return null
+  const inMemory = openedBySession.get(sessionId)
+  if (inMemory) return inMemory
+  const stored = readOpenedMap()[sessionId]
+  return typeof stored === 'string' && stored ? stored : null
+}

@@ -22,7 +22,7 @@ export function MsgList({ messages, emptyText }: { messages: StreamMsg[]; emptyT
   }, [messages.length, lastLen])
 
   return (
-    <div className="ts-chat-msgs" ref={ref} style={{ padding: 8 }}>
+    <div className="ts-chat-msgs" ref={ref}>
       {messages.length === 0 && (
         <div className="ts-hint">{emptyText ?? '等待会话消息…'}</div>
       )}

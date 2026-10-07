@@ -35,7 +35,7 @@ function stripBriefMarks(content: string): string {
   return content
 }
 
-export function Blackboard({ workspace }: { workspace: string }) {
+export function Blackboard({ workspace, actions }: { workspace: string; actions?: React.ReactNode }) {
   const [entries, setEntries] = useState<BoardEntry[]>([])
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -70,6 +70,7 @@ export function Blackboard({ workspace }: { workspace: string }) {
     <div className="ts-board">
       <div className="ts-board-head">
         <span>📋 共享黑板</span>
+        {actions}
         <div className="ts-board-tabs">
           <button
             className={`ts-board-tab${activeTopic === 'all' ? ' active' : ''}`}

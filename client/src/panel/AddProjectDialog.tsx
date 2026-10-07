@@ -139,7 +139,6 @@ export function AddProjectDialog({ onClose, onCreated }: Props) {
             className="ts-btn ts-btn-primary"
             disabled={!selectedPath}
             onClick={confirm}
-            title="布局：H 型工作台"
           >创建并进入工作台</button>
         </div>
       </div>

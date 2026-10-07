@@ -160,3 +160,40 @@ DSH 读取全局系统提示词段（tokensave-delegation）→ 调用 tokensave
 5. **「选择当前文件夹」选中态**：「选中」与「未选」循环——再次点击同一目录取消选择。选中态 `ts-btn-picked`（绿色实心 + 描边 + 加粗）文案变为「✓ 已选中（点击取消）」，未选中为浅蓝「选择当前文件夹」，并各带 title 提示。
 
 **验证**：tsc 全绿；bundle 115,019B；线上 rev `18fb48130b93`，本地 ⊆ 线上；解码校验 9 个关键串（已选中（点击取消）/ 选择当前文件夹 / 计价口径 / ts-hdesk / ts-btn-picked / ts-rich-json / ts-json-key / 探索者用量 / 主 agent 等待）全部在位。
+
+## Step 18（2026-10-07）：工作台对话可见性 + 会话切换 + 去宽度控件 + 卡片三键 + 项目中心美化
+
+**任务来源**：用户两轮反馈（先 3 条，后追加 4 条）。
+
+### 第一轮（3 条）
+
+1. **中下卡片看不到对话内容**（根因确认）：中下格此前只有宿主原生输入条 fixed 停靠，**消息记录本身只渲染在宿主的「对话」tab**（发送不会自动切 tab），所以工作台里看起来是空的。修法：新增 `client/src/panel/MainChat.tsx` —— 复用 `session-subscribe` 的会话事件窗口订阅（与探索者窗口同一套 `messagesFromWindow`），把当前会话的消息流就地渲染进中下卡片；输入条仍停靠在卡片底部（`.ts-mainchat .ts-chat-msgs { padding-bottom:72px }` 预留位置）。只读，不复制宿主的发送/停止逻辑，避免与原生 composer 抢职责。
+2. **顶部会话条**：新增 `client/src/panel/sessions.ts`（项目会话访问层）+ `client/src/panel/SessionPicker.tsx`（下拉 UI）。
+   - 数据源全部是宿主客户端服务，**不走 HTTP**：`ctx.sessions.list`（会话目录，含 `cwd`/`displayTitle`/`updatedAt`/`blank`/`running`）、`ctx.workspaces.list`（工作区路径 + 归档集）、`ctx.uiWorkspace`（导航）。服务一律经 `ctx.get()`（reflect 层）取得并兜住异常，与 `src/board-web-route.ts` 的 boardStore 同款处理。
+   - 列表范围＝该项目（工作区目录）下**全部历史会话**（含非 tokensave 的普通对话），排除子代理与已归档，按最近活动倒序；目录匹配先比规范化全等、再退化尾部路径段逐段相等（容忍 `/tmp/x` 与 `/private/tmp/x`），无匹配时兜底用工作区登记的 `sessionIds`。
+   - 切换＝`uiWorkspace.openSession(id)`；新建＝`startProjectSession(path)`：先复用该项目已有空白会话，没有则 `sessions.create({ workspaceId })`（无工作区登记时按 `cwd`），再 `openSession` 导航过去。
+   - **新会话预写视图偏好**：新建会话是空白会话，宿主在空白期不渲染任何 `conversation.view`（Hero 界面），因此 `primeViewPreference` 预写 `localStorage['dsh.conversation.<id>'].view = 'tokensave-control-room'`，让它发出第一条消息后直接落在「项目中心」。
+   - **会话切换后保持在工作台**：新增 `rememberOpenedProject` / `recallOpenedProject`（`store.ts`，按会话 id 记忆打开的项目，localStorage + 模块内 Map 双写）。切会话/刷新页面后宿主重挂 `conversation.view`，`ControlRoom` 读记忆恢复同一项目的 H 台；点「← 项目中心」清除记忆。
+3. **工作台默认铺满**：删除 `client/src/panel/width.ts`（整文件）与 HDesk 里的宽度控件（滑块 + 「铺满」按钮 + `availW`/`widthPref` 状态）。`.ts-hdesk` 固定 `width:100%`，宿主那套全局宽度把手仍在进入工作台期间隐藏（`body.ts-hdesk-open [data-width-handle] { display:none }`）。
+
+### 第二轮（4 条）
+
+4. **去掉「H 型工作台」标签**：项目卡片删掉布局标签（含 `LAYOUT_OPTIONS` 相关展示），工作台顶部删掉「布局：H 型工作台」，添加项目弹窗的按钮 title 也删掉。`store.ts` 的 `layout` 字段保留（旧数据兼容），仅不再展示。
+5. **项目中心美化（参照 dsh-worktable 的「控制室」）**：下载并解包 `dsh-worktable@0.4.0` 研读其 `lib/client.js` 中的控制室样式，抽取其视觉语言落到本项目（**未复制其代码**，只借鉴设计手法）：
+   - 流光玻璃背景：30px 网格底 + 三个 52vmax 模糊彩光光晕（紫/青/粉）缓慢漂移（`tsBlob1..3` keyframes）。
+   - 玻璃卡：半透明渐变底 + 内高光 + 圆锥渐变描边（`conic-gradient` + `mask-composite:exclude` 的 1px 环挖空）+ hover 上浮；新增卡为虚线玻璃底 + 居中加号，永远排在网格末尾。
+   - 头部改为「标题 + 副标题 + 添加项目」双列布局；卡片信息层次改为 图标 + 名称 / 目录尾段 + 完整路径 / 创建时间 / 操作。
+   - 配色**只用半透明中性色 + 少量主题蓝/绿/黄**，因此深浅主题都自适应 —— 已核实宿主未暴露稳定的主题标记（无 `data-theme`/`color-scheme` 可读），故不走主题探测分支。
+6. **协作收益**：删掉底部 `ⓘ 计价口径` 角标，`PRICE_TIP` 悬浮提示直接挂到「优势 · 省 token · 省费用」标题上（`title={PRICE_TIP}`）；`.ts-save-block` 改 `flex:1 1 0` + `.ts-save-rows` 改 `flex:1; justify-content:center`，优势/劣势两卡铺满整卡，底部不留白。
+7. **四张卡支持最小化 / 最大化 / 关闭**：共享黑板、DSH 主对话、协作对话、协作收益统一走 HDesk 的 `CardState`（`collapsed`/`hidden`/`maximized`）与 `CardActions` 三键。
+   - 三键渲染在**各卡片自己的标题条**里（HDesk 构造 `actions` 节点传入，避免与卡片自带标题重复）；最大化时只留 ✕ 退出浮层（与探索者窗口一致）。
+   - 最大化＝`.ts-card-overlay` 覆盖整个工作台（同一时刻只允许一张），且铺满时普通格子不再渲染该卡（`cardShell` 里 `if (st.hidden || st.maximized) return null`），避免同组件双实例双订阅。
+   - 关闭的卡片不占位，改以「已关闭：＋ 名称」chip 形式出现在台顶，点击恢复。
+   - 最小化＝只留标题条（`.ts-card-collapsed` 隐藏内层列表）。
+   - **输入条联动**：`useDockNativeComposer` 增加 `enabled` 参数与 `overlayChatRef` —— 主对话卡收起/关闭时输入条还原宿主原位（不再悬在空格里）；主对话铺满时输入条改停靠到浮层内那张卡上。
+
+**新增/改动文件**：`client/src/panel/MainChat.tsx`（新）、`client/src/panel/sessions.ts`（新）、`client/src/panel/SessionPicker.tsx`（新）；`HDesk.tsx`（重写）、`ControlRoom.tsx`（重写）、`styles.ts`（重写）、`store.ts`、`Blackboard.tsx`、`TalkColumn.tsx`、`SavingsColumn.tsx`、`MsgList.tsx`、`AddProjectDialog.tsx`；删除 `client/src/panel/width.ts`。
+
+**验证（2026-10-07）**：`pnpm run check`（tsc --noEmit）全绿；`pnpm run build:client` 产出 `dist/client.js` 146,367B；`node --check dist/client.js` 经典脚本解析通过；模拟 `__ModuleLoader__.load` 注册 + `factory(require)` 物化通过（`id=dsh-tokensave`、`exports={apply,inject}`、`inject={slots:true}`、`apply` 为函数、外部依赖仅 react 系列）；3080 线上 bundle 经批量 URL（`/plugins/??dsh-tokensave/client.js&rev=...`）下发 146,479B（本地 146,367 + 平台 sourcemap 尾巴），HTTP 200。
+
+**浏览器目检项**：中下卡片出现「💬 DSH 主对话」并实时显示消息（发送后不再空白）；顶部「🕘 历史会话（N）」下拉可切换、切换后仍停在同一项目、「＋ 新建会话」开启新对话并同样留在本项目；工作台无宽度滑块且默认铺满；项目卡片与工作台顶部均无「H 型工作台」字样；项目中心为流光玻璃背景 + 玻璃卡；协作收益两卡铺满无留白、悬停「优势 · 省 token · 省费用」出现计价口径提示；四张卡的 —/⛶/✕ 三键生效（含关闭后的台顶恢复 chip、铺满时输入条跟随）。

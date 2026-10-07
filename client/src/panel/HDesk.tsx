@@ -3,13 +3,18 @@
  * ┌────左竖────┬────中上：共享黑板────┬────右竖────┐
  * │  免费模型   │                     │  免费模型   │
  * │  窗口×N    ├─────────────────────┤  窗口×M    │
- * │           │  中下：DSH 原生输入条 │           │
+ * │           │  中下：DSH 主对话    │           │
  * └───────────┴─────────────────────┴───────────┘
  * - 全台共享 R = max(左窗口数, 右窗口数, 2) 行的 1fr 网格：黑板跨 1..R-1 行、
  *   中下格占最后一行、左右两竖跨满 R 行 —— 所有横向缝隙对齐（偶数探索者时
  *   三列缝完全一致），列内窗口 flex:1 等高均分，探索者增多自动细分。
- * - 中下格不自造聊天：挂载时把宿主原生输入条（conversation.composer，
- *   每个 tab 常驻）position:fixed 停靠进该格，卸载/切 tab 自动还原。
+ * - 中下格内嵌 DSH 主对话只读消息流（MainChat），并把宿主原生输入条
+ *   （conversation.composer，每个 tab 常驻）position:fixed 停靠在消息流下方，
+ *   卸载/切 tab 自动还原。
+ * - 顶部第一行：项目名 + 该项目历史会话选择器 + 新建会话（sessions.ts）。
+ * - 工作台默认铺满，无宽度把手/滑块（宿主那套全局把手在进入工作台期间隐藏）。
+ * - 黑板 / 主对话 / 协作对话 / 协作收益 四张卡都支持最小化、最大化、关闭；
+ *   三键渲染在各自卡片自己的标题条里（由本组件构造后作为 actions 传入）。
  * - 左右两竖按奇偶均分探索者；被隐藏的窗口以 chip 形式留在列底部可恢复
  */
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
@@ -19,8 +24,11 @@ import { Blackboard } from './Blackboard'
 import { ExplorerWindow } from './ExplorerWindow'
 import { TalkColumn } from './TalkColumn'
 import { SavingsColumn } from './SavingsColumn'
+import { MainChat } from './MainChat'
+import { SessionPicker } from './SessionPicker'
+import { useProjectSessions, openSession, startProjectSession } from './sessions'
+import { rememberOpenedProject } from './store'
 import type { ProjectRecord } from './store'
-import { loadDeskWidth, saveDeskWidth, deskCssWidth, DESK_MIN, DESK_FULL } from './width'
 import { reportExplorerCount } from '../float/mount'
 
 interface Props {
@@ -32,6 +40,81 @@ interface Props {
 interface WinState {
   collapsed: boolean
   hidden: boolean
+}
+
+/** 非探索者卡片的窗口状态（与探索者窗口同款语义：最小化 / 最大化 / 关闭） */
+interface CardState {
+  collapsed: boolean
+  hidden: boolean
+  /** 铺满整个工作台的浮层 */
+  maximized: boolean
+}
+
+const CARD_DEFAULT: CardState = { collapsed: false, hidden: false, maximized: false }
+
+/** 四张可管理卡片（顺序即恢复条的显示顺序） */
+const CARD_LABELS: Array<{ id: string; label: string }> = [
+  { id: 'board', label: '共享黑板' },
+  { id: 'chat', label: 'DSH 主对话' },
+  { id: 'talk', label: '协作对话' },
+  { id: 'save', label: '协作收益' },
+]
+
+/**
+ * 卡片三键（— 最小化 / ⛶ 最大化 / ✕ 关闭），渲染进卡片自己的标题条。
+ * 最大化时只留 ✕ 退出浮层（与探索者窗口一致）。
+ */
+function CardActions({
+  state,
+  label,
+  onToggleCollapse,
+  onToggleMax,
+  onHide,
+}: {
+  state: CardState
+  label: string
+  onToggleCollapse: () => void
+  onToggleMax: () => void
+  onHide: () => void
+}) {
+  return (
+    <span className="ts-card-actions">
+      {state.maximized ? (
+        <button className="ts-icon-btn" onClick={onToggleMax} title={`退出「${label}」最大化`}>✕</button>
+      ) : (
+        <>
+          <button
+            className="ts-icon-btn"
+            onClick={onToggleCollapse}
+            title={state.collapsed ? `展开「${label}」` : `最小化「${label}」`}
+          >{state.collapsed ? '□' : '—'}</button>
+          <button className="ts-icon-btn" onClick={onToggleMax} title={`最大化「${label}」`}>⛶</button>
+          <button className="ts-icon-btn" onClick={onHide} title={`关闭「${label}」（可从台顶恢复）`}>✕</button>
+        </>
+      )}
+    </span>
+  )
+}
+
+/** 已关闭卡片的恢复条（放在台顶，避免卡片本身占位） */
+function ClosedCardsBar({
+  closed,
+  onRestore,
+}: {
+  closed: Array<{ id: string; label: string }>
+  onRestore: (id: string) => void
+}) {
+  if (closed.length === 0) return null
+  return (
+    <div className="ts-closed-bar">
+      <span className="ts-closed-label">已关闭：</span>
+      {closed.map((c) => (
+        <button key={c.id} className="ts-chip" title={`恢复「${c.label}」`} onClick={() => onRestore(c.id)}>
+          ＋ {c.label}
+        </button>
+      ))}
+    </div>
+  )
 }
 
 function labelOf(session: TelemetrySession): string {
@@ -47,15 +130,32 @@ const COMPOSER_SEAT = '[data-conversation-region="composer"]'
  * 把宿主原生输入条停靠进中下格（position:fixed，向下锚定、内容向上生长）。
  * 组件卸载即还原原始行内样式，宿主在其它 tab 的行为原样恢复。
  */
-function useDockNativeComposer(ref: React.RefObject<HTMLDivElement | null>, deps: unknown[]): void {
+function useDockNativeComposer(
+  ref: React.RefObject<HTMLDivElement | null>,
+  enabled: boolean,
+  deps: unknown[],
+): void {
   useLayoutEffect(() => {
     const cell = ref.current
     if (!cell || typeof document === 'undefined') return
     const seat = document.querySelector<HTMLElement>(COMPOSER_SEAT)
     if (!seat) return
-
     const KEYS = ['position', 'left', 'right', 'top', 'bottom', 'width', 'zIndex'] as const
     const saved: Record<string, string> = {}
+    for (const k of KEYS) saved[k] = (seat.style as any)[k]
+
+    // 主对话卡收起/关闭时不再停靠：让输入条回到宿主的原位置（避免悬在空格里）
+    if (!enabled) {
+      for (const k of KEYS) (seat.style as any)[k] = saved[k]
+      return
+    }
+
+
+    // 主对话卡收起/关闭时不再停靠：让输入条回到宿主的原位置（避免悬在空格里）
+    if (!enabled) {
+      for (const k of KEYS) (seat.style as any)[k] = saved[k]
+      return
+    }
     for (const k of KEYS) saved[k] = (seat.style as any)[k]
 
     let raf = 0
@@ -90,7 +190,7 @@ function useDockNativeComposer(ref: React.RefObject<HTMLDivElement | null>, deps
     window.addEventListener('resize', schedule)
     // scroll 不冒泡，capture 可捕获所有滚动容器（工作台内部/宿主滚动）
     window.addEventListener('scroll', schedule, true)
-    // 兑底：未触发 ResizeObserver 的宿主布局变化（含宽度把手拖拽/tab 切换）
+    // 兑底：未触发 ResizeObserver 的宿主布局变化（含 tab 切换）
     const timer = window.setInterval(schedule, 300)
 
     return () => {
@@ -102,7 +202,7 @@ function useDockNativeComposer(ref: React.RefObject<HTMLDivElement | null>, deps
       for (const k of KEYS) (seat.style as any)[k] = saved[k]
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, deps)
+  }, [enabled, ...deps])
 }
 
 export function HDesk({ project, sessionId, onBack }: Props) {
@@ -110,48 +210,33 @@ export function HDesk({ project, sessionId, onBack }: Props) {
   const [winState, setWinState] = useState<Record<string, WinState>>({})
   const [overlayId, setOverlayId] = useState<string | null>(null)
   const [probeError, setProbeError] = useState<string | null>(null)
+  const [cards, setCards] = useState<Record<string, CardState>>({
+    board: CARD_DEFAULT,
+    chat: CARD_DEFAULT,
+    talk: CARD_DEFAULT,
+    save: CARD_DEFAULT,
+  })
   const overlayRef = useRef<HTMLDivElement>(null)
   const chatCellRef = useRef<HTMLDivElement>(null)
+  // 主对话铺满时，输入条改停靠到浮层里的那张卡上
+  const overlayChatRef = useRef<HTMLDivElement>(null)
   const rootRef = useRef<HTMLDivElement>(null)
 
-  // —— 本工作台自己的宽度（按项目独立，默认铺满）——
-  // 不读宿主的 --dsh-chat-content-width：那是全局值，且给两侧把手预留了 176px，
-  // 永远铺不满、一处拖动处处生效。
-  const [widthPref, setWidthPref] = useState<number>(() => loadDeskWidth(project.id))
-  const [availW, setAvailW] = useState(0)
+  const sessions = useProjectSessions(project.path)
 
-  useEffect(() => {
-    setWidthPref(loadDeskWidth(project.id))
-  }, [project.id])
+  const cardOf = (id: string): CardState => cards[id] || CARD_DEFAULT
+  const setCard = (id: string, patch: Partial<CardState>) =>
+    setCards((prev) => ({ ...prev, [id]: { ...(prev[id] || CARD_DEFAULT), ...patch } }))
 
-  useEffect(() => {
-    const el = rootRef.current
-    const host = el?.parentElement
-    if (!host) return
-    const read = () => setAvailW(host.clientWidth || 0)
-    read()
-    const ro = new ResizeObserver(read)
-    ro.observe(host)
-    window.addEventListener('resize', read)
-    return () => {
-      ro.disconnect()
-      window.removeEventListener('resize', read)
-    }
-  }, [])
-
-  const applyWidth = (px: number) => {
-    setWidthPref(px)
-    saveDeskWidth(project.id, px)
+  /** 同一时刻只允许一张卡片铺满：切换即收回其它卡片。 */
+  const toggleMax = (id: string) => {
+    const next = !cardOf(id).maximized
+    setCards((prev) => {
+      const out: Record<string, CardState> = {}
+      for (const [k, v] of Object.entries(prev)) out[k] = { ...v, maximized: k === id ? next : false }
+      return out
+    })
   }
-  const maxW = Math.max(DESK_MIN, availW || 0)
-
-  // 进入工作台期间隐藏宿主那套「全局宽度把手」（[data-width-handle]，其值写在共享
-  // 父元素上、一处拖动处处生效，且给把手预留 176px 永远铺不满）。工作台用自己的
-  // 宽度控件，退出即恢复宿主把手。
-  useEffect(() => {
-    document.body.classList.add('ts-hdesk-open')
-    return () => document.body.classList.remove('ts-hdesk-open')
-  }, [])
 
   const probe = useCallback(async () => {
     try {
@@ -189,11 +274,41 @@ export function HDesk({ project, sessionId, onBack }: Props) {
   const left = visible.filter((_, i) => i % 2 === 0)
   const right = visible.filter((_, i) => i % 2 === 1)
   const overlaid = overlayId ? explorers.find((s) => s.id === overlayId) : undefined
+  const maximizedCard = CARD_LABELS.find((c) => cardOf(c.id).maximized)?.id ?? null
 
   // 网格行数：黑板占 1..R-1，中下占 R；左右两竖跨满 —— 探索者增多即均分
   const rows = Math.max(left.length, right.length, 2)
   // 中下格随窗口数/布局变化 → 停靠持续跟随（deps 覆盖重排）
-  useDockNativeComposer(chatCellRef, [rows, sessionId, visible.length])
+  const chatMaximized = cardOf('chat').maximized
+  const chatDocked = !cardOf('chat').collapsed && !cardOf('chat').hidden
+  useDockNativeComposer(
+    chatMaximized ? overlayChatRef : chatCellRef,
+    chatDocked,
+    [rows, sessionId, visible.length, chatMaximized],
+  )
+
+  /** 卡片三键：构造后交给各卡片渲染进自己的标题条 */
+  const actionsFor = (id: string, label: string) => {
+    const st = cardOf(id)
+    return (
+      <CardActions
+        state={st}
+        label={label}
+        onToggleCollapse={() => setCard(id, { collapsed: !st.collapsed })}
+        onToggleMax={() => toggleMax(id)}
+        onHide={() => setCard(id, { hidden: true })}
+      />
+    )
+  }
+
+  /** 卡片外壳：只负责收起/铺满的布局，标题条由卡片自己渲染（actions 传入） */
+  const cardShell = (id: string, body: React.ReactNode, extraClass = '') => {
+    const st = cardOf(id)
+    // 铺满时由下方浮层独占渲染（避免同一组件双实例、双订阅）
+    if (st.hidden || st.maximized) return null
+    const cls = `ts-card ${extraClass}${st.collapsed ? ' ts-card-collapsed' : ''}`
+    return <div className={cls}>{body}</div>
+  }
 
   const renderWin = (session: TelemetrySession) => (
     <ExplorerWindow
@@ -222,66 +337,79 @@ export function HDesk({ project, sessionId, onBack }: Props) {
     </div>
   )
 
+  const closedCards = CARD_LABELS.filter((c) => cardOf(c.id).hidden)
+
   return (
-    <div
-      className="ts-cr ts-hdesk"
-      ref={rootRef}
-      style={{ padding: 8, width: deskCssWidth(widthPref) }}
-    >
+    <div className="ts-cr ts-hdesk" ref={rootRef} style={{ padding: 8 }}>
       <div className="ts-bar">
         <button className="ts-btn" onClick={onBack}>← 项目中心</button>
         <span className="ts-title">{project.name}</span>
-        <span className="ts-tag">布局：H 型工作台</span>
         <span className="ts-sub" title={project.path}>{project.path}</span>
-        <span className="ts-sub" style={{ marginLeft: 'auto' }}>
+        <span className="ts-sub ts-bar-right">
           模型窗口 {visible.length}{hidden.length > 0 ? `（隐藏 ${hidden.length}）` : ''}
         </span>
-        {/* 宽度：本工作台私有，默认铺满；拖动即收窄并记住（按项目） */}
-        <span className="ts-width-ctl" title="工作台宽度（按项目独立记忆）">
-          {widthPref === DESK_FULL ? (
-            <button
-              className="ts-btn"
-              onClick={() => applyWidth(Math.min(maxW, Math.max(DESK_MIN, Math.round(availW * 0.72))))}
-              title="收窄为居中宽度（可再拖滑块微调）"
-            >⤢ 铺满中</button>
-          ) : (
-            <>
-              <input
-                className="ts-width-range"
-                type="range"
-                min={DESK_MIN}
-                max={maxW}
-                value={Math.min(Math.max(widthPref, DESK_MIN), maxW)}
-                onChange={(e) => applyWidth(Number(e.target.value))}
-                title={`宽度 ${Math.round(widthPref)}px / 可用 ${availW}px`}
-              />
-              <button
-                className="ts-btn"
-                onClick={() => applyWidth(DESK_FULL)}
-                title="恢复铺满（左右不留白）"
-              >⤢ 铺满</button>
-            </>
-          )}
-        </span>
       </div>
-      {probeError && <div className="ts-hint">⚠️ 探索者探测：{probeError}</div>}
+
+      {/* 顶部第二行：该项目历史会话 + 新建会话 */}
+      <div className="ts-bar ts-bar-sessions">
+        <SessionPicker
+          sessions={sessions}
+          currentId={sessionId}
+          onPick={(id) => {
+            if (id !== sessionId && !openSession(id)) {
+              setProbeError('切换会话失败：会话导航服务不可用')
+            }
+          }}
+          onNew={async () => {
+            const res = await startProjectSession(project.path)
+            if (res.ok) {
+              // 新会话也记住同一个项目：发出第一条消息后直接回到本工作台
+              rememberOpenedProject(res.id, project.id)
+            } else {
+              setProbeError(`新建会话失败：${res.error}`)
+            }
+          }}
+        />
+      </div>
+
+      {probeError && <div className="ts-hint">⚠️ {probeError}</div>}
+      <ClosedCardsBar closed={closedCards} onRestore={(id) => setCard(id, { hidden: false })} />
+
       <div className="ts-desk" style={{ gridTemplateRows: `repeat(${rows}, 1fr)` }}>
         {/* 左竖：顶部协作对话（主 agent ↔ 探索者），下方探索者窗口等高均分 */}
         <div className="ts-desk-col ts-desk-left">
-          <TalkColumn sessionId={sessionId} explorers={visible} />
+          {cardShell('talk', (
+            <TalkColumn
+              sessionId={sessionId}
+              explorers={visible}
+              actions={actionsFor('talk', '协作对话')}
+            />
+          ), 'ts-card-talk')}
           {left.length === 0 && <div className="ts-hint">左列暂无模型窗口<br />运行 tokensave_delegate 后自动出现</div>}
           {left.map(renderWin)}
           {renderHiddenChips()}
         </div>
         {/* 中上：共享黑板（跨 1..R-1 行，底边与左右列缝隙对齐，无横线） */}
         <div className="ts-desk-board" style={{ gridRow: `1 / ${rows}` }}>
-          <Blackboard workspace={project.path} />
+          {cardShell('board', (
+            <Blackboard workspace={project.path} actions={actionsFor('board', '共享黑板')} />
+          ), 'ts-card-fill')}
         </div>
-        {/* 中下：DSH 主对话卡片 —— 宿主原生输入条 fixed 停靠其中（无自造 UI） */}
-        <div className="ts-desk-chat" style={{ gridRow: String(rows) }} ref={chatCellRef} />
+        {/* 中下：DSH 主对话卡片 —— 消息流就地渲染 + 宿主原生输入条停靠 */}
+        <div className="ts-desk-chat" style={{ gridRow: String(rows) }} ref={chatCellRef}>
+          {cardShell('chat', (
+            <MainChat sessionId={sessionId} actions={actionsFor('chat', 'DSH 主对话')} />
+          ), 'ts-card-fill')}
+        </div>
         {/* 右竖：顶部协作收益（省 token/费用 vs 等待时间），下方探索者窗口 */}
         <div className="ts-desk-col ts-desk-right">
-          <SavingsColumn sessionId={sessionId} explorers={visible} />
+          {cardShell('save', (
+            <SavingsColumn
+              sessionId={sessionId}
+              explorers={visible}
+              actions={actionsFor('save', '协作收益')}
+            />
+          ), 'ts-card-save')}
           {right.map(renderWin)}
         </div>
         {/* 最大化/双击全屏的浮层 */}
@@ -302,6 +430,28 @@ export function HDesk({ project, sessionId, onBack }: Props) {
           />
         )}
       </div>
+
+      {/* 卡片铺满浮层：覆盖整个工作台 */}
+      {maximizedCard && (
+        <div className="ts-card-overlay">
+          <div className="ts-card-overlay-inner">
+            {maximizedCard === 'board' && (
+              <Blackboard workspace={project.path} actions={actionsFor('board', '共享黑板')} />
+            )}
+            {maximizedCard === 'chat' && (
+              <div className="ts-card-overlay-chat" ref={overlayChatRef}>
+                <MainChat sessionId={sessionId} actions={actionsFor('chat', 'DSH 主对话')} />
+              </div>
+            )}
+            {maximizedCard === 'talk' && (
+              <TalkColumn sessionId={sessionId} explorers={visible} actions={actionsFor('talk', '协作对话')} />
+            )}
+            {maximizedCard === 'save' && (
+              <SavingsColumn sessionId={sessionId} explorers={visible} actions={actionsFor('save', '协作收益')} />
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

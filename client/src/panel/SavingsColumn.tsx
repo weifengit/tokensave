@@ -54,9 +54,11 @@ function priceOf(inputTokens: number, outputTokens: number): number {
 export function SavingsColumn({
   sessionId,
   explorers,
+  actions,
 }: {
   sessionId: string
   explorers: TelemetrySession[]
+  actions?: React.ReactNode
 }) {
   const [main, setMain] = useState<SessionMetrics | null>(null)
   const [perExplorer, setPerExplorer] = useState<Record<string, SessionMetrics>>({})
@@ -140,12 +142,13 @@ export function SavingsColumn({
         <span className="ts-save-sub">
           {stat.calls} 次派发 · {explorers.length} 位
         </span>
+        {actions}
       </div>
 
       <div className="ts-save-body">
         {/* —— 优势 —— */}
         <div className="ts-save-block good">
-          <div className="ts-save-title">
+          <div className="ts-save-title" title={PRICE_TIP}>
             <span className="ts-badge good">优势</span>
             <span>省 token · 省费用</span>
           </div>
@@ -207,9 +210,6 @@ export function SavingsColumn({
           </div>
         </div>
 
-        <div className="ts-save-foot" title={PRICE_TIP}>
-          ⓘ 计价口径
-        </div>
       </div>
     </div>
   )

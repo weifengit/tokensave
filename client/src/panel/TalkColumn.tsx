@@ -59,9 +59,11 @@ function hhmmss(ms: number): string {
 export function TalkColumn({
   sessionId,
   explorers,
+  actions,
 }: {
   sessionId: string
   explorers: TelemetrySession[]
+  actions?: React.ReactNode
 }) {
   const [lines, setLines] = useState<TalkLine[]>([])
   const listRef = useRef<HTMLDivElement>(null)
@@ -248,6 +250,7 @@ export function TalkColumn({
         <span className="ts-talk-sub">
           {explorers.length} 位探索者 · {talkCount} 条发言
         </span>
+        {actions}
       </div>
       <div className="ts-talk-list" ref={listRef}>
         {lines.length === 0 && (
