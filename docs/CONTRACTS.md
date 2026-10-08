@@ -112,6 +112,19 @@ const EXPLORER_PRESETS: ExplorerConfig[] = [
 
 > 2026-10-06 变更（Step 09，经用户确认）：第 3 槽由 opencode-zen/deepseek-v4-flash-free 换为 our-free-model/nemotron-3-ultra-free——Zen 免费档凭据（OPENCODE_API_KEY）待用户后续配置，届时可换回；llm-fallbacks 的 rootChain 免费链保留 zen 条目不受影响（凭据到位即生效）。
 
+> 2026-10-08 变更（Step 46）：新增**探索者设置**——用户可在工作台标题行打开面板，按
+> 「默认 / 免费 / 收费」三组逐个或整组开关探索者，至少保留 1 个。涉及：
+> - 新模块 `src/explorer-catalog.ts`（纯数据：分组口径 `EXPLORER_GROUPS` / 免费 provider 白名单
+>   `FREE_PROVIDERS` / 免费回退清单 `KNOWN_MODELS` / `buildCatalog` / `sanitizeSelection` / `selectionToConfigs`）；
+>   免费 / 收费的候选**来自真实模型目录**：对已注册 provider 调 `ctx.llm.listModels()`（4s 超时 + 60s 缓存，
+>   失败/为空回退 `KNOWN_MODELS`），并用 `LlmModelInfo.name` / `.description`。**三组互不重复**：默认组先入，
+>   其 model 从免费/收费里排除；
+> - 新路由 `GET|POST /plugins/dsh-tokensave/explorer-settings`（读目录 / 写选择，写入 `~/.dsh/tokensave/explorers.json`，
+>   空选择返回 400）；
+> - `parallelExplore` 的探索者集合改为：**存过选择就完全按选择跑**（不再受 explorer_count 截取），
+>   从未配置时保持旧行为（`EXPLORER_PRESETS.slice(0, explorerCount)`）。`EXPLORER_PRESETS` 本体与签名不变；
+> - `POST /projects` 加固：请求体缺 `projects` 数组一律 400（避免误写把项目注册表清空）。
+
 
 ### parallelExplore 签名（2026-10-06 Step 10 补记：新增 agent 透传参数）
 ```typescript

@@ -4,5 +4,113 @@ node_modules/
 # 构建产物（scripts/build-client.mjs 生成 dist/client.js）
 dist/
 
+# ==================== 操作系统 ====================
 # macOS
 .DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Linux
+*~
+
+# ==================== 编辑器 / IDE ====================
+# VS Code
+.vscode/
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+
+# JetBrains (WebStorm / IntelliJ / PyCharm 等)
+.idea/
+
+# Vim / Neovim
+*.swp
+*.swo
+*.swm
+*.un~
+Session.vim
+.netrwhist
+
+# Emacs
+*~
+\#*\#
+.dir-locals.el
+
+# Sublime Text
+*.sublime-workspace
+*.sublime-project
+
+# ==================== 构建 / 编译 ====================
+# TypeScript
+*.tsbuildinfo
+
+# Next.js / Vite / Webpack
+.next/
+out/
+.cache/
+.parcel-cache/
+
+# esbuild
+*.meta
+
+# ==================== 日志 ====================
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# ==================== 环境变量 / 密钥 ====================
+.env
+.env.local
+.env.*.local
+.env.development
+.env.production
+.env.staging
+
+# ==================== 测试 / 覆盖率 ====================
+coverage/
+.nyc_output/
+.lcov
+
+# ==================== 临时文件 / 缓存 ====================
+.tmp/
+tmp/
+temp/
+.cache/
+
+# npm
+.npm/
+
+# pnpm
+.pnpm-store/
+
+# yarn
+.yarn-integrity
+
+# ==================== 其他 ====================
+# 系统备份文件
+*.bak
+*.orig
+
+# 压缩文件
+*.zip
+*.gz
+*.tar
+*.rar
+
+# 数据库
+db/
+*.db
+*.sqlite
+
+# Docker
+docker-compose.override.yml

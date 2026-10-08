@@ -12,7 +12,7 @@
  * （契约见 session-subscribe 的 loadOlderHistory）。滚动到顶部时 MsgList 会
  * 请求下一页并保持滚动位置，形成瀑布式按需加载。
  */
-import React, { useCallback, useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { subscribeSession, loadOlderHistory, subscribeHistoryState } from '../session-subscribe'
 import type { StreamMsg } from '../session-subscribe'
 import { MsgList } from './MsgList'
@@ -48,6 +48,26 @@ export function MainChat({ sessionId, actions }: { sessionId: string; actions?: 
     })
   }, [sessionId])
 
+  /**
+   * 标题条上的消息统计：总数 + user / agent 细分。
+   *
+   * 口径（与 MsgList 的收纳一致）：
+   *   msg   = 会话流里的全部行（用户/助手/工具…）
+   *   user  = 你发出的消息——**不算**宿主自动注入的上下文（运行时快照/技能目录等）
+   *   agent = 助手回复——**不算**思考（reasoning）片段（MsgList 单拎为「思考」）
+   */
+  const stat = useMemo(() => {
+    let user = 0
+    let agent = 0
+    for (const m of messages) {
+      if (m.role === 'user') {
+        if (!m.injected) user++
+      } else if (m.role === 'assistant') {
+        if (m.kind !== 'reasoning') agent++
+      }
+    }
+    return { total: messages.length, user, agent }
+  }, [messages])
   const loadOlder = useCallback(async () => {
     if (!sessionId) return
     await loadOlderHistory(sessionId)
@@ -58,7 +78,19 @@ export function MainChat({ sessionId, actions }: { sessionId: string; actions?: 
       {/* #3 标题条：标题 + 中间信息（消息条数）居中，三键固定右上角 */}
       <div className="ts-mainchat-head">
         <span className="ts-head-title">💬 DSH 主对话</span>
-        <span className="ts-head-mid ts-mainchat-sub">{messages.length} 条消息</span>
+        <span
+          className="ts-head-mid ts-mainchat-sub"
+          title={`msg ${stat.total} · user ${stat.user} · agent ${stat.agent}`
+            + '\n\nmsg：已载入的会话流行数（工具结果、上下文注入等都算一行；往上滚动加载更早历史后会变大）'
+            + '\nuser：你发出的消息（不含宿主自动注入的运行时快照 / 审批通知 / 技能目录等）'
+            + '\nagent：助手回复（不含思考片段与工具过程）'}
+        >
+          <span className="ts-msgstat"><span className="ts-msgstat-k">msg</span>{stat.total}</span>
+          <span className="ts-msgstat-sep">·</span>
+          <span className="ts-msgstat"><span className="ts-msgstat-k">user</span>{stat.user}</span>
+          <span className="ts-msgstat-sep">·</span>
+          <span className="ts-msgstat"><span className="ts-msgstat-k">agent</span>{stat.agent}</span>
+        </span>
         {actions}
       </div>
       <MsgList
@@ -67,6 +99,7 @@ export function MainChat({ sessionId, actions }: { sessionId: string; actions?: 
         hasMore={history.hasMore}
         loadingOlder={history.loadingOlder}
         onLoadOlder={loadOlder}
+        followKey={sessionId}
       />
     </div>
   )

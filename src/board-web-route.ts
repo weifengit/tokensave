@@ -13,6 +13,10 @@ import fs from 'node:fs'
 import net from 'node:net'
 import path from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
+import {
+  buildCatalog, defaultSelection, EXPLORER_GROUPS, KNOWN_MODELS, sanitizeSelection,
+  type ExplorerSelection, type ModelEntry, type ProviderEntry,
+} from './explorer-catalog.ts'
 
 export const BOARD_ROUTE_PATH = '/plugins/dsh-tokensave/board'
 export const FS_ROUTE_PATH = '/plugins/dsh-tokensave/fs'
@@ -20,6 +24,7 @@ export const EXPLORERS_ROUTE_PATH = '/plugins/dsh-tokensave/explorers'
 export const SCOPE_ROUTE_PATH = '/plugins/dsh-tokensave/scope'
 export const PROJECT_INFO_ROUTE_PATH = '/plugins/dsh-tokensave/project-info'
 export const MKDIR_ROUTE_PATH = '/plugins/dsh-tokensave/mkdir'
+export const EXPLORER_SETTINGS_ROUTE_PATH = '/plugins/dsh-tokensave/explorer-settings'
 
 // —— 当前「打开的工作台项目」（探索者归属的真相）————————————
 //
@@ -42,6 +47,164 @@ export function readProjectScope(): { workspace: string; updatedAt: number } {
 export function writeProjectScope(workspace: string): { workspace: string; updatedAt: number } {
   projectScope = { workspace: normalizeWorkspace(workspace), updatedAt: Date.now() }
   return projectScope
+}
+
+// —— 探索者选择（用户自行控制探索者：默认 / 免费 / 收费 三组开关）————
+//
+// 面板可逐个（或整组）开关探索者，至少保留 1 个选中。选择持久化到
+// ~/.dsh/tokensave/explorers.json（与项目注册表同款：跨来源 / 跨重启都保留），
+// 由 parallelExplore 消费。null = 从未配置 → 保持旧行为（内置预设按 explorer_count 截取）。
+let explorerSelectionCache: ExplorerSelection[] | null | undefined
+
+function explorerSettingsFilePath(): string {
+  return path.join(dshHomeDir(), 'tokensave', 'explorers.json')
+}
+
+/** 读用户选择；从未配置返回 null。 */
+export function readExplorerSelection(): ExplorerSelection[] | null {
+  if (explorerSelectionCache !== undefined) return explorerSelectionCache
+  try {
+    const data = JSON.parse(fs.readFileSync(explorerSettingsFilePath(), 'utf8'))
+    const list = Array.isArray(data?.selected) ? data.selected : []
+    const sel = list.map(sanitizeSelection).filter(Boolean) as ExplorerSelection[]
+    explorerSelectionCache = sel.length ? sel : null
+  } catch {
+    explorerSelectionCache = null
+  }
+  return explorerSelectionCache
+}
+
+/** 写用户选择（调用方保证非空）。返回归一化后的列表。 */
+export function writeExplorerSelection(raw: unknown): ExplorerSelection[] {
+  const list = Array.isArray(raw) ? raw : []
+  const sel = list.map(sanitizeSelection).filter(Boolean) as ExplorerSelection[]
+  if (!sel.length) throw new Error('至少保留 1 个探索者')
+  const file = explorerSettingsFilePath()
+  fs.mkdirSync(path.dirname(file), { recursive: true })
+  const tmp = `${file}.tmp-${process.pid}`
+  fs.writeFileSync(tmp, JSON.stringify({ version: 1, updatedAt: Date.now(), selected: sel }, null, 2), 'utf8')
+  fs.renameSync(tmp, file) // 原子替换
+  explorerSelectionCache = sel
+  return sel
+}
+
+// —— 模型目录发现（provider 广告的模型）——————————————
+//
+// 用户要求把「our-free-model 里很多可用的免费模型」都列出来，所以不再依赖手写清单：
+// 对**已注册**的 provider 调 ctx.llm.listModels()（我们的 adapter 会返回它当下的目录）。
+// 该调用是异步的、可能打到网络，因此：① 每 provider 4s 超时；② 结果缓存 60s；
+// ③ 失败/为空时回退 KNOWN_MODELS。休眠 provider 无 adapter，直接用 KNOWN_MODELS。
+let explorerModelCache: { at: number; byProvider: Record<string, ModelEntry[]> } | null = null
+const EXPLORER_MODEL_TTL_MS = 60_000
+
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('model discovery timed out')), ms)
+    p.then(
+      (v) => { clearTimeout(timer); resolve(v) },
+      (e) => { clearTimeout(timer); reject(e) },
+    )
+  })
+}
+
+async function discoverProviderModels(llm: any, providers: string[]): Promise<Record<string, ModelEntry[]>> {
+  if (explorerModelCache && Date.now() - explorerModelCache.at < EXPLORER_MODEL_TTL_MS) {
+    return explorerModelCache.byProvider
+  }
+  const byProvider: Record<string, ModelEntry[]> = {}
+  await Promise.all(providers.map(async (provider) => {
+    let list: ModelEntry[] = []
+    try {
+      if (typeof llm?.listModels === 'function') {
+        const models = await withTimeout(Promise.resolve(llm.listModels(provider)), 4_000)
+        list = (Array.isArray(models) ? models : [])
+          .map((m: any) => ({
+            id: String(m?.id ?? ''),
+            name: m?.name ? String(m.name) : undefined,
+            description: m?.description ? String(m.description) : undefined,
+          }))
+          .filter((m: ModelEntry) => Boolean(m.id))
+      }
+    } catch { /* 探测失败 → 回退 */ }
+    if (!list.length) list = (KNOWN_MODELS[provider] ?? []).map((id) => ({ id }))
+    byProvider[provider] = list
+  }))
+  explorerModelCache = { at: Date.now(), byProvider }
+  return byProvider
+}
+
+/** 组装设置面板要的目录 + 当前选择（provider 目录来自 ctx.llm，含休眠项）。 */
+async function buildExplorerSettings(ctx: Context): Promise<Record<string, unknown>> {
+  const entries: ProviderEntry[] = []
+  const seenProvider = new Set<string>()
+  const liveProviders: string[] = []
+  let llm: any
+  try { llm = (ctx as any).get?.('llm') } catch { llm = undefined }
+  // ① 已注册（live）的 provider —— 真正当下可用的，逐个发现其模型
+  try {
+    for (const p of llm?.listProviders?.() ?? []) {
+      if (!p?.id || seenProvider.has(p.id)) continue
+      seenProvider.add(p.id)
+      liveProviders.push(p.id)
+      entries.push({ provider: p.id, displayName: p.name, available: true })
+    }
+  } catch { /* llm 未就绪 */ }
+  // ② 已声明的 provider（含休眠）—— 让「收费」等分组即使未配置凭据也能列出
+  try {
+    for (const p of llm?.listConfigurableProviders?.() ?? []) {
+      if (!p?.provider || seenProvider.has(p.provider)) continue
+      seenProvider.add(p.provider)
+      entries.push({ provider: p.provider, displayName: p.displayName, available: false })
+    }
+  } catch { /* 无 provider 目录 */ }
+
+  let modelsByProvider: Record<string, ModelEntry[]> = {}
+  try {
+    modelsByProvider = await discoverProviderModels(llm, liveProviders)
+  } catch { /* 发现整体失败 → 逐个回退 */ }
+  for (const entry of entries) {
+    entry.models = modelsByProvider[entry.provider] ?? (KNOWN_MODELS[entry.provider] ?? []).map((id) => ({ id }))
+  }
+
+  const candidates = buildCatalog(entries)
+  const groups = EXPLORER_GROUPS.map((g) => ({ ...g, items: candidates.filter((c) => c.group === g.id) }))
+  const configured = readExplorerSelection()
+  const selected = (configured ?? defaultSelection()).map((s) => s.model)
+  return { timestamp: Date.now(), configured: configured !== null, groups, selected }
+}
+
+function handleExplorerSettingsRead(ctx: Context, res: any): void {
+  buildExplorerSettings(ctx).then(
+    (payload) => writeJson(res, 200, payload),
+    (error) => {
+      console.error('[dsh-tokensave] explorer-settings 读取失败:', error)
+      writeJson(res, 500, { error: 'explorer settings unavailable' })
+    },
+  )
+}
+
+function handleExplorerSettingsWrite(ctx: Context, req: any, res: any): void {
+  if (typeof req.on !== 'function') {
+    writeJson(res, 501, { error: 'request stream unavailable' })
+    return
+  }
+  let body = ''
+  req.on('data', (c: any) => { body += String(c) })
+  req.on('end', () => {
+    try {
+      const parsed = body ? JSON.parse(body) : {}
+      const sel = writeExplorerSelection(parsed?.selected)
+      console.log(`[dsh-tokensave] 探索者选择已保存（${sel.length} 个）: ${sel.map((s) => s.model).join(', ')}`)
+      buildExplorerSettings(ctx).then(
+        (payload) => writeJson(res, 200, payload),
+        () => writeJson(res, 500, { error: 'explorer settings unavailable' }),
+      )
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'invalid explorer settings payload'
+      console.warn('[dsh-tokensave] explorer-settings 保存失败:', message)
+      writeJson(res, 400, { error: message })
+    }
+  })
 }
 const JSON_HEADERS = Object.freeze({
   'content-type': 'application/json; charset=utf-8',
@@ -641,6 +804,49 @@ function projectsFilePath(): string {
   return path.join(dshHomeDir(), 'tokensave', 'projects.json')
 }
 
+/**
+ * 注册表备份目录与保留份数。
+ *
+ * 为什么必须备份：`POST /projects` 是**整表覆盖**语义。只要有一个来源（另一个
+ * 浏览器 / 另一个 origin / 一次探测脚本）拿着残缺或陈旧的缓存回推，整张注册表
+ * 就会被它那一份覆盖——历史上有过两次事故，第二次丢了 6 个项目。
+ * 因此每次真正落盘前先存一份快照，事后总能找回。
+ */
+const PROJECTS_BACKUP_DIR = 'projects-backups'
+const PROJECTS_BACKUP_KEEP = 40
+
+function projectsBackupDir(): string {
+  return path.join(dshHomeDir(), 'tokensave', PROJECTS_BACKUP_DIR)
+}
+
+/**
+ * 落盘前把当前文件复制一份到备份目录（按时间戳命名，只保留最近 N 份）。
+ *
+ * 只在内容**确实要变**时调用（调用方已判重），避免每 8s 轮询都写一份。
+ * 失败不抛：备份是兼底手段，不应阻断正常写入。
+ * @param previous - 即将被覆盖的注册表内容
+ */
+function backupProjectsFile(previous: StoredProject[]): void {
+  if (previous.length === 0) return // 空表无可备份（首启或已丢，备份它没意义）
+  try {
+    const dir = projectsBackupDir()
+    fs.mkdirSync(dir, { recursive: true })
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+    fs.writeFileSync(
+      path.join(dir, `projects-${stamp}.json`),
+      JSON.stringify({ version: PROJECTS_FILE_VERSION, updatedAt: Date.now(), projects: previous }, null, 2),
+      'utf8',
+    )
+    // 只留最近 N 份，防止无限增长
+    const files = fs.readdirSync(dir).filter((f) => f.startsWith('projects-') && f.endsWith('.json')).sort()
+    for (const old of files.slice(0, Math.max(0, files.length - PROJECTS_BACKUP_KEEP))) {
+      try { fs.unlinkSync(path.join(dir, old)) } catch { /* 兼底：删不掉就留着 */ }
+    }
+  } catch (e) {
+    console.warn('[dsh-tokensave] 注册表备份失败（不影响写入）:', e)
+  }
+}
+
 /** 逐字段校验并归一化一条项目记录；不合法返回 null（丢弃）。 */
 function sanitizeProject(raw: any): StoredProject | null {
   if (!raw || typeof raw !== 'object') return null
@@ -682,12 +888,63 @@ function readProjectsFile(): { initialized: boolean; projects: StoredProject[] }
   }
 }
 
+/**
+ * 两份项目列表是否等价（按 id → 关键字段比较，忽略顺序）。
+ *
+ * 只用于「内容真的变了吗」的判断，因此不比较 updatedAt（touch 会改它，
+ * 但那种改动不需要留备份）。
+ */
+function sameProjects(a: StoredProject[], b: StoredProject[]): boolean {
+  if (a.length !== b.length) return false
+  const key = (p: StoredProject) => `${p.id}|${p.path}|${p.name}|${p.description}`
+  const setA = new Set(a.map(key))
+  return b.every((p) => setA.has(key(p)))
+}
+
+/**
+ * 把「客户端提交的列表」与「服务端现有列表」合并（并集）。
+ *
+ * 这是防止「残缺缓存冲掉整库」的关键：`POST /projects` 以前是整表覆盖，
+ * 只要某个来源的缓存不全（另一个 origin、被清过 localStorage 的浏览器、
+ * 探测脚本），一次同步就能把服务端清成它那一份。现在改为：
+ *   - 服务端已有的项目，只要提交里没**显式删除**，一律保留；
+ *   - 提交里的新项目照常新增；
+ *   - 同一路径以提交的版本为准（用户刚改的名字/介绍生效）。
+ *
+ * @param current - 服务端现有列表
+ * @param incoming - 客户端提交的列表
+ * @param removed - 客户端显式删除的 id 列表（真正的删除必须走这里）
+ */
+function mergeProjects(
+  current: StoredProject[],
+  incoming: StoredProject[],
+  removed: Set<string>,
+): StoredProject[] {
+  const byPath = new Map<string, StoredProject>()
+  // 先放服务端现有（删除名单里的排除）
+  for (const p of current) {
+    if (removed.has(p.id)) continue
+    byPath.set(p.path, p)
+  }
+  // 再用提交的覆盖 / 新增（同 id 或同路径都算同一条）
+  for (const p of incoming) {
+    if (removed.has(p.id)) continue
+    byPath.set(p.path, p)
+  }
+  return [...byPath.values()]
+}
+
 function writeProjectsFile(projects: StoredProject[]): StoredProject[] {
   // 同一路径只留一条（后写覆盖），与客户端 addProject 的去重语义一致
   const byPath = new Map<string, StoredProject>()
   for (const p of projects) byPath.set(p.path, p)
   const deduped = [...byPath.values()]
   const file = projectsFilePath()
+  // 落盘前先备份即将被覆盖的内容（内容不变时跳过，避免无意义备份）
+  const before = readProjectsFile()
+  if (before.initialized && !sameProjects(before.projects, deduped)) {
+    backupProjectsFile(before.projects)
+  }
   fs.mkdirSync(path.dirname(file), { recursive: true })
   const tmp = `${file}.tmp-${process.pid}`
   fs.writeFileSync(
@@ -715,10 +972,33 @@ function handleProjectsWrite(req: any, res: any): void {
   req.on('end', () => {
     try {
       const parsed = body ? JSON.parse(body) : {}
-      const list = Array.isArray(parsed?.projects) ? parsed.projects : []
-      const projects = list.map(sanitizeProject).filter(Boolean) as StoredProject[]
-      const saved = writeProjectsFile(projects)
-      writeJson(res, 200, { timestamp: Date.now(), initialized: true, projects: saved })
+      // 防御：请求体缺 projects 数组一律 400——曾因一次探测性 POST（body 里没有
+      // projects 字段）把整表写空。
+      if (!parsed || !Array.isArray(parsed.projects)) {
+        writeJson(res, 400, { error: 'payload must contain a projects array' })
+        return
+      }
+      const incoming = parsed.projects.map(sanitizeProject).filter(Boolean) as StoredProject[]
+      // 显式删除名单：真正的删除只能走这里，且必须点名 id。
+      // 没有它就无法区分「用户删了项目」与「这个来源的缓存本来就不全」——
+      // 后者以前会被当成前者，于是把整张注册表覆盖成残缺的一份。
+      const removed = new Set<string>(
+        Array.isArray(parsed.removed)
+          ? parsed.removed.filter((x: any) => typeof x === 'string').map((x: string) => x.trim()).filter(Boolean)
+          : [],
+      )
+      const current = readProjectsFile().projects
+      // 并集合并：服务端已有的一律保留（除非被显式删除），提交里的新增/修改生效。
+      // 这样即使某个来源的缓存残缺，也无法再把别人的项目“顺手删掉”。
+      const merged = mergeProjects(current, incoming, removed)
+      const saved = writeProjectsFile(merged)
+      writeJson(res, 200, {
+        timestamp: Date.now(),
+        initialized: true,
+        projects: saved,
+        // 回显本次真正被删除的条数，方便客户端/排查确认删除生效
+        removed: current.filter((p) => removed.has(p.id)).map((p) => p.id),
+      })
     } catch (error) {
       console.error('[dsh-tokensave] projects route failed:', error)
       writeJson(res, 400, { error: 'invalid projects payload' })
@@ -835,6 +1115,20 @@ export function mountTokensaveWebRoutes(ctx: Context): void {
     handleMkdir(req, res)
   }
 
+  // 探索者设置：GET 读目录 / POST 写选择（同一路由两方法；同样自行鉴权）。
+  const explorerSettingsGuard = (req: any, res: any) => {
+    const rejection = rejectionFor(ctx, req)
+    if (rejection !== undefined) {
+      writeJson(res, rejection, {
+        error: rejection === 503 ? 'authentication unavailable' : 'unauthorized'
+      })
+      return
+    }
+    if (req.method === 'GET') return handleExplorerSettingsRead(ctx, res)
+    if (req.method !== 'POST') return methodNotAllowed(res)
+    handleExplorerSettingsWrite(ctx, req, res)
+  }
+
   const mount = (server: any): { server: any; dispose: () => void } => {
     // 只读观测面：统一走 GET-only 闸门（makeGuard）。
     const readRoutes: Array<[string, (req: any, res: any) => void]> = [
@@ -850,6 +1144,7 @@ export function mountTokensaveWebRoutes(ctx: Context): void {
       [SCOPE_ROUTE_PATH, scopeGuard],
       [PROJECTS_ROUTE_PATH, projectsGuard],
       [MKDIR_ROUTE_PATH, mkdirGuard],
+      [EXPLORER_SETTINGS_ROUTE_PATH, explorerSettingsGuard],
     ]
     const offs: Array<(() => void) | undefined> = []
     const registerAll = (
@@ -868,7 +1163,7 @@ export function mountTokensaveWebRoutes(ctx: Context): void {
     }
     registerAll(readRoutes, true)
     registerAll(writeRoutes, false)
-    console.log(`[dsh-tokensave] 路由已挂载: ${BOARD_ROUTE_PATH}, ${FS_ROUTE_PATH}, ${EXPLORERS_ROUTE_PATH}, ${PROJECT_INFO_ROUTE_PATH}, ${PROJECTS_ROUTE_PATH}`)
+    console.log(`[dsh-tokensave] 路由已挂载: ${BOARD_ROUTE_PATH}, ${FS_ROUTE_PATH}, ${EXPLORERS_ROUTE_PATH}, ${PROJECT_INFO_ROUTE_PATH}, ${PROJECTS_ROUTE_PATH}, ${EXPLORER_SETTINGS_ROUTE_PATH}`)
     const registration = {
       server,
       dispose: () => {

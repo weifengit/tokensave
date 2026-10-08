@@ -64,11 +64,15 @@ body.ts-center-open [data-conversation-scroll] {
     linear-gradient(90deg, rgba(127,127,127,.055) 1px, transparent 1px);
   background-size: auto, auto, auto, 30px 30px, 30px 30px;
 }
-/* 输入条座位原本自带「透明 → 不透明宿主底色」渐变，用来遮住从下方滚过的内容；
-   但项目中心的滚动发生在卡片内部（.ts-center-inner / 各卡片），并没有内容会从
-   输入框下方滚过，因此这里可以直接置透明，让容器背景完整连续地铺到输入框及其下方。 */
+/* —— 项目中心（列表态）：**整条隐藏**宿主输入条 ——
+   用户要求：项目中心页不该出现聊天输入框及其状态信息（模型名 · 费用 · 上下文占比 ·
+   步数 · token 缓存…）。这条座位（[data-conversation-region="composer"]）与本视图
+   是**兄弟节点**（同在 [data-conversation-scroll] 内），所以从共享容器上就能藏。
+
+   用 display:none 而非 unmount：宿主不会因为节点消失而重排/丢状态，
+   切回工作台时（ts-center-open 移除）输入条原样回来，无需重新挂载。 */
 body.ts-center-open [data-conversation-region="composer"] {
-  background: transparent !important;
+  display: none !important;
 }
 /* —— 工作台停靠宿主输入条时：去掉“黑色背景板” ——
    宿主对座位（[data-conversation-region="composer"]）写了一条
@@ -83,12 +87,18 @@ body.ts-hdesk-dock [data-conversation-region="composer"] {
 
 /* —— 通用条/按钮 —— */
 .ts-bar { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
-.ts-bar-right { margin-left:auto; flex:none; }
-/* 顶部路径可截断，但不把右侧会话操作挤换行（#8） */
-.ts-bar-path { flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ts-bar-right { margin-left:auto; flex:0 1 auto; min-width:0; }
+/* 右侧工具簇：已关闭列表 + 一键切换 + 历史/新建会话；项多时允许换行，整体右对齐 */
+.ts-bar-tools { display:flex; align-items:center; justify-content:flex-end; gap:8px; flex-wrap:wrap; min-width:0; }
 /* 会话操作固定单行，不换行 */
 .ts-bar-sessions { flex:none; flex-wrap:nowrap; }
 .ts-title { font-size:16px; font-weight:600; }
+/* 标题行左侧：只留项目名，做显著标识（徽标形态） */
+.ts-title-proj { flex:none; display:inline-flex; align-items:center; gap:8px; max-width:min(420px,42vw); padding:3px 13px; border-radius:11px; font-size:19px; font-weight:700; letter-spacing:.01em; background:linear-gradient(135deg, rgba(96,165,250,.24), rgba(96,165,250,.07)); border:1px solid rgba(96,165,250,.5); box-shadow:inset 0 0 0 1px rgba(96,165,250,.12); }
+.ts-title-proj-icon { flex:none; font-size:16px; opacity:.9; }
+.ts-title-proj-name { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+/* 一键切换按钮：显示全部窗口 ↔ 仅显示预览 + DSH 主对话 */
+.ts-btn-mode { flex:none; white-space:nowrap; }
 .ts-sub { opacity:.65; font-size:12px; }
 .ts-btn { cursor:pointer; border:1px solid rgba(127,127,127,.35); background:rgba(127,127,127,.12); color:inherit; border-radius:8px; padding:5px 12px; font-size:13px; line-height:1.4; transition:background .15s ease, border-color .15s ease, box-shadow .15s ease; }
 .ts-btn:hover { background:rgba(127,127,127,.22); }
@@ -122,6 +132,19 @@ body.ts-hdesk-dock [data-conversation-region="composer"] {
 .ts-side-entry.rail:active { transform:none; background:rgba(127,127,127,.24); }
 .ts-side-icon { flex:none; font-size:14px; line-height:1; }
 .ts-side-label { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+/* 呼吸灯：侧边栏「项目中心」入口的存活指示（3 个小圆点，wide 时右对齐）。
+   绿 = 正常使用；黄 = 弹选择框 / 被故障中断；有对话在跑时依次闪烁（跑马灯）。 */
+.ts-pulse { flex:none; margin-left:auto; display:inline-flex; align-items:center; gap:4px; }
+/* 收起态：圆点居中（顶替图标），不要被 margin-left:auto 推到右边 */
+.ts-side-entry.rail .ts-pulse { margin-left:0; }
+.ts-pulse-dot { display:block; width:6px; height:6px; border-radius:50%; background:#22c55e; box-shadow:0 0 6px rgba(34,197,94,.7); animation:ts-pulse-breathe 1.6s ease-in-out infinite; }
+.ts-pulse-warn .ts-pulse-dot { background:#f59e0b; box-shadow:0 0 6px rgba(245,158,11,.8); }
+/* 有对话正在跑：依次闪烁（跑马灯）——animationDelay 由 JSX 按序号给出 */
+.ts-pulse-run .ts-pulse-dot { animation:ts-pulse-chase 1.05s ease-in-out infinite; }
+@keyframes ts-pulse-chase { 0%,100% { opacity:.22; transform:scale(.8) } 30% { opacity:1; transform:scale(1.15) } }
+@keyframes ts-pulse-breathe { 0%,100% { opacity:.45 } 50% { opacity:1 } }
+@media (prefers-reduced-motion: reduce) { .ts-pulse-dot { animation:none; opacity:1 } }
 .ts-btn-primary:hover { background:rgba(96,165,250,.4); box-shadow:0 0 12px rgba(96,165,250,.25); }
 .ts-btn-picked { background:rgba(74,222,128,.35); border-color:rgba(74,222,128,.85); font-weight:600; box-shadow:0 0 0 1px rgba(74,222,128,.35) inset; }
 .ts-btn-picked:hover { background:rgba(74,222,128,.5); }
@@ -139,6 +162,22 @@ body.ts-hdesk-dock [data-conversation-region="composer"] {
 .ts-tag-warn { background:rgba(251,191,36,.2); border-color:rgba(251,191,36,.5); }
 .ts-hint { opacity:.6; font-size:12px; text-align:center; padding:4px; }
 .ts-hint-warn { opacity:1; color:#fbbf24; background:rgba(251,191,36,.12); border:1px solid rgba(251,191,36,.4); border-radius:8px; padding:6px 10px; }
+
+/* —— 一轮异常结束的提示（工作台里「中断」必须一眼可辨）——
+   宿主原生「对话」tab 有 turn-error / turn-max-tokens 节点；工作台的消息流
+   以前把 turn/end 丢掉了，导致中止的一轮与正常结束外观一致（用户反馈）。
+   这里用琥珀色警示块（fatal 时转红）把它摆到轮末，与普通消息明显区分。 */
+.ts-turn-notice { display:flex; flex-direction:column; gap:4px; align-self:stretch; border:1px solid rgba(251,191,36,.5); background:rgba(251,191,36,.12); border-radius:8px; padding:6px 9px; }
+.ts-turn-notice-fatal { border-color:rgba(248,113,113,.55); background:rgba(248,113,113,.13); }
+.ts-turn-notice-head { display:flex; align-items:center; gap:6px; min-width:0; }
+.ts-turn-notice-icon { flex:none; font-size:12.5px; }
+.ts-turn-notice-label { flex:none; font-weight:600; font-size:12.5px; color:#fbbf24; }
+.ts-turn-notice-fatal .ts-turn-notice-label { color:#f87171; }
+.ts-turn-notice-code { flex:none; font-size:11px; padding:1px 6px; border-radius:99px; background:rgba(127,127,127,.22); border:1px solid rgba(127,127,127,.4); opacity:.9; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+/* 展开按钮推到最右，与标题条三段式一致 */
+.ts-turn-notice-head .ts-msg-toggle { margin-left:auto; }
+.ts-turn-notice-preview { font-size:12px; opacity:.85; word-break:break-word; }
+.ts-turn-notice-body { font-size:12.5px; }
 
 /* —— 会话选择条（工作台顶部第二行） —— */
 .ts-bar-sessions { gap:8px; }
@@ -159,11 +198,11 @@ body.ts-hdesk-dock [data-conversation-region="composer"] {
 .ts-sess-item:hover { background:rgba(127,127,127,.18); }
 .ts-sess-item.active { background:rgba(96,165,250,.24); box-shadow:inset 0 0 0 1px rgba(96,165,250,.5); }
 .ts-sess-item:focus-visible { outline:2px solid rgba(96,165,250,.8); outline-offset:-2px; }
-/* 右侧插槽：空闲时显示时间（紧跟在标题后，用 · 分隔），悬浮时换成两个按钮。
-   插槽宽度固定（min-width），互换不会改变行宽 → 浮动面板宽度不会跳。 */
-.ts-sess-slot { flex:none; display:inline-flex; align-items:center; justify-content:flex-end; min-width:64px; }
+/* 右侧插槽：固定在行尾（margin-left:auto）。空闲时显示时间（右对齐），
+   悬浮时换成两个按钮；插槽宽度固定（min-width），互换不会改变行宽。 */
+.ts-sess-slot { flex:none; margin-left:auto; display:inline-flex; align-items:center; justify-content:flex-end; min-width:64px; }
 .ts-sess-time { font-size:10.5px; opacity:.5; font-variant-numeric:tabular-nums; white-space:nowrap; }
-.ts-sess-sep { margin:0 5px; opacity:.65; }
+/* 时间已右对齐、独立成列（不需要跟在标题后的分隔符） */
 .ts-sess-rowops { display:none; align-items:center; gap:2px; }
 .ts-sess-item:hover .ts-sess-rowops, .ts-sess-item-open .ts-sess-rowops { display:inline-flex; }
 .ts-sess-item:hover .ts-sess-time, .ts-sess-item-open .ts-sess-time { display:none; }
@@ -180,8 +219,8 @@ body.ts-hdesk-dock [data-conversation-region="composer"] {
 .ts-sess-menu-item:disabled { cursor:default; opacity:.5; }
 /* 归档失败等短提示（自动消失） */
 .ts-sess-notice { flex:none; max-width:260px; font-size:11.5px; opacity:.8; color:#fca5a5; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-/* 标题：按内容自适应（不抢剩余空间），但设上限，让面板宽度既能跟随标题、又不会被超长标题撑爆 */
-.ts-sess-item-title { flex:0 1 auto; min-width:0; max-width:340px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+/* 标题：占满剩余空间（把右侧插槽顶到行尾），超长时省略号/跑马灯 */
+.ts-sess-item-title { flex:1 1 auto; min-width:0; max-width:340px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 /* 跑马灯：悬浮且内容超宽时左右来回滚动；位移量由 JS 实测写进 --ts-marquee-shift */
 .ts-marquee { display:inline-block; white-space:nowrap; }
 .ts-sess-item:hover .ts-marquee-move { animation: tsSessMarquee 5s ease-in-out infinite alternate; }
@@ -399,6 +438,8 @@ body.ts-vsplit-dragging .ts-card { transition:none !important; animation:none !i
 .ts-card-fill { flex:1; min-height:0; }
 /* 左右两竖顶部两栏：与探索者窗口按 40% / 剩余均分 */
 .ts-card-talk, .ts-card-save { flex:0 0 40%; min-height:104px; }
+/* 该列没有探索者窗口时：两张卡铺满整列可用高度（不再固定 40% 留空档） */
+.ts-card-talk-solo, .ts-card-save-solo { flex:1 1 0; }
 .ts-card-collapsed { flex:0 0 auto !important; min-height:0 !important; }
 .ts-card-collapsed > * > .ts-board-list,
 .ts-card-collapsed > * > .ts-chat-msgs,
@@ -428,7 +469,8 @@ body.ts-vsplit-dragging .ts-card { transition:none !important; animation:none !i
 .ts-head-mid.ts-card-count { padding:0; opacity:.62; flex:0 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .ts-card-overlay { position:absolute; inset:0; z-index:40; background:rgba(12,14,18,.92); backdrop-filter:blur(8px) saturate(1.2); border-radius:10px; display:flex; flex-direction:column; padding:10px; box-sizing:border-box; }
 .ts-card-overlay-inner { flex:1; min-height:0; display:flex; flex-direction:column; }
-.ts-closed-bar { flex:none; display:flex; align-items:center; gap:6px; flex-wrap:wrap; padding:5px 8px; border:1px dashed rgba(127,127,127,.45); border-radius:9px; }
+/* 已关闭列表（标题行内）：卡片与探索者窗口的恢复 chip 统一收口 */
+.ts-closed-bar { flex:0 1 auto; min-width:0; max-width:100%; display:flex; align-items:center; gap:6px; flex-wrap:wrap; padding:4px 8px; border:1px dashed rgba(127,127,127,.45); border-radius:9px; }
 .ts-closed-label { font-size:11.5px; opacity:.6; }
 
 /* —— 主对话卡（中下） —— */
@@ -446,7 +488,18 @@ body.ts-vsplit-dragging .ts-card { transition:none !important; animation:none !i
    与停靠的输入条同宽并居中；变量未写入时铺满卡片。
    修复「拖拽只改输入框、对话内容纹丝不动」的不一致。 */
 .ts-mainchat .ts-chat-msgs { width:100%; max-width:var(--ts-chat-content-w, none); margin-inline:auto; }
-.ts-mainchat-sub { font-size:10.5px; font-weight:400; opacity:.6; }
+/* 消息统计：三段式 [标题][统计][三键]。用 grid 的 1fr/auto/1fr 让中间那段
+   在**整条标题条**里真正居中（之前用 flex + margin:auto，是在“标题与三键之间”的
+   剩余空间里居中，三键比标题宽时就会偏左——用户反馈的“不居中”就是这个）。 */
+.ts-mainchat-head { display:grid; grid-template-columns:1fr auto 1fr; align-items:center; }
+.ts-mainchat-head > * { min-width:0; }
+.ts-mainchat-head > .ts-head-title { justify-self:start; }
+.ts-mainchat-head > .ts-head-mid { justify-self:center; margin:0; }
+.ts-mainchat-head > .ts-card-actions { justify-self:end; margin-left:0; order:0; }
+.ts-mainchat-sub { font-size:10.5px; font-weight:400; opacity:.6; display:inline-flex; align-items:baseline; gap:5px; }
+.ts-msgstat { display:inline-flex; align-items:baseline; gap:3px; font-variant-numeric:tabular-nums; }
+.ts-msgstat-k { font-size:9.5px; font-weight:400; opacity:.78; letter-spacing:.02em; }
+.ts-msgstat-sep { opacity:.38; }
 /* 探索者窗口标题条中间信息 */
 .ts-win-mid { flex:0 1 auto; margin:0 auto; }
 
@@ -574,14 +627,14 @@ body.ts-vsplit-dragging .ts-card { transition:none !important; animation:none !i
 .ts-save-head { display:flex; align-items:center; gap:8px; padding:6px 9px; background:rgba(127,127,127,.13); font-size:12.5px; font-weight:600; flex:none; }
 .ts-save-sub { margin-left:auto; font-size:10.5px; font-weight:400; opacity:.6; }
 .ts-save-body { flex:1; min-height:0; overflow:auto; padding:7px; display:flex; flex-direction:column; gap:7px; }
-.ts-save-block { border:1px solid rgba(127,127,127,.26); border-radius:8px; padding:7px 9px; display:flex; flex-direction:column; gap:6px; flex:1 1 0; min-height:0; }
+.ts-save-block { border:1px solid rgba(127,127,127,.26); border-radius:8px; padding:7px 9px; display:flex; flex-direction:column; gap:6px; flex:0 0 auto; }
 .ts-save-block.good { background:rgba(74,222,128,.08); border-color:rgba(74,222,128,.38); }
 .ts-save-block.bad { background:rgba(251,191,36,.08); border-color:rgba(251,191,36,.38); }
 .ts-save-title { display:flex; align-items:center; gap:6px; font-size:11.5px; font-weight:600; flex:none; }
 .ts-badge { font-size:10px; padding:1px 7px; border-radius:99px; border:1px solid transparent; font-weight:600; }
 .ts-badge.good { background:rgba(74,222,128,.25); border-color:rgba(74,222,128,.6); }
 .ts-badge.bad { background:rgba(251,191,36,.22); border-color:rgba(251,191,36,.6); }
-.ts-save-rows { display:flex; flex-direction:column; gap:5px; flex:1; min-height:0; justify-content:center; }
+.ts-save-rows { display:flex; flex-direction:column; gap:5px; flex:0 0 auto; }
 .ts-kv { display:flex; gap:8px; align-items:flex-start; font-size:11px; }
 .ts-kv-k { flex:none; width:82px; opacity:.65; }
 .ts-kv-v { flex:1; min-width:0; display:flex; flex-direction:column; gap:1px; word-break:break-word; }
@@ -646,6 +699,35 @@ body.ts-vsplit-dragging .ts-card { transition:none !important; animation:none !i
 /* 启动情况小标：已启动=绿，未启动=灰（放在「进入工作台」之前） */
 .ts-dev-chip { font-size:11px; padding:2px 8px; border-radius:99px; border:1px solid rgba(127,127,127,.45); background:rgba(127,127,127,.12); opacity:.72; }
 .ts-dev-chip.on { border-color:rgba(74,222,128,.55); background:rgba(74,222,128,.18); color:#86efac; opacity:1; }
+
+/* —— 标题行「探索者设置」：按钮 + 浮动面板（默认 / 免费 / 收费 三组开关） —— */
+.ts-expset { flex:none; display:inline-flex; align-items:center; }
+.ts-expset-btn { display:inline-flex; align-items:center; gap:6px; white-space:nowrap; }
+.ts-expset-btn.active { border-color:rgba(96,165,250,.7); background:rgba(96,165,250,.18); }
+/* 面板：portal 挂 body（避开 .ts-cr 的 overflow:hidden），宽度跟随内容但有限，列表内部滚动 */
+.ts-expset-pop { z-index:46; width:max-content; min-width:300px; max-width:min(420px, calc(100vw - 32px)); max-height:64vh; overflow:auto; display:flex; flex-direction:column; gap:8px; padding:10px 12px; border-radius:12px; border:1px solid rgba(127,127,127,.35); background:rgba(24,27,33,.97); color:#e6e8eb; box-shadow:0 14px 40px rgba(0,0,0,.5); backdrop-filter:blur(12px) saturate(1.2); }
+.ts-expset-head { display:flex; align-items:baseline; gap:8px; font-size:12.5px; font-weight:600; }
+.ts-expset-head-tip { margin-left:auto; font-size:10.5px; font-weight:400; opacity:.6; }
+.ts-expset-err { font-size:11.5px; color:#fca5a5; }
+.ts-expset-empty { font-size:11.5px; opacity:.55; padding:2px 0; }
+.ts-expset-busy { font-size:11px; opacity:.6; }
+.ts-expset-group { display:flex; flex-direction:column; gap:5px; padding:7px 8px; border:1px solid rgba(127,127,127,.24); border-radius:9px; background:rgba(127,127,127,.07); }
+.ts-expset-group-head { display:flex; align-items:center; gap:8px; }
+.ts-expset-group-name { font-size:12px; font-weight:600; }
+.ts-expset-group-count { font-size:10.5px; opacity:.55; font-variant-numeric:tabular-nums; }
+.ts-expset-group-head .ts-switch { margin-left:auto; }
+.ts-expset-row { display:flex; align-items:center; gap:8px; padding:2px 0 2px 2px; }
+.ts-expset-row-off { opacity:.5; }
+.ts-expset-name { flex:1; min-width:0; font-size:11.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; display:inline-flex; align-items:center; gap:6px; }
+.ts-expset-tag { flex:none; font-size:9.5px; padding:0 5px; border-radius:99px; border:1px solid rgba(127,127,127,.5); opacity:.8; }
+/* 开关（role=switch）：轨道 + 圆钮；开=绿 */
+.ts-switch { flex:none; width:34px; height:18px; padding:0; border-radius:99px; border:1px solid rgba(127,127,127,.5); background:rgba(127,127,127,.25); cursor:pointer; position:relative; transition:background .15s ease, border-color .15s ease; }
+.ts-switch:disabled { opacity:.4; cursor:not-allowed; }
+.ts-switch .ts-switch-knob { position:absolute; top:1px; left:1px; width:14px; height:14px; border-radius:50%; background:#e6e8eb; transition:transform .15s ease; }
+.ts-switch.on { background:rgba(74,222,128,.55); border-color:rgba(74,222,128,.8); }
+.ts-switch.on .ts-switch-knob { transform:translateX(16px); }
+/* 分组开关：蓝色调，与单个探索者的绿色开关区分开 */
+.ts-switch-group.on { background:rgba(96,165,250,.6); border-color:rgba(96,165,250,.9); }
 `
 
 export function injectProjectCenterStyles(): void {

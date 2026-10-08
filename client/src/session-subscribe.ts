@@ -35,6 +35,14 @@ export interface StreamMsg {
   injected?: boolean
   /** 注入来源（event.data.source.kind），用于给人话标签 */
   injectKind?: string
+  /**
+   * 本轮的**异常结局**（`turn/end` 的 reason / `agent/error`）。
+   *
+   * 有值 = 这一轮不是正常结束（故障中断 / 输出被截断 / 异常中止）。
+   * 以前 `turn/end` 被直接丢掉，于是「本轮被故障中止」只在宿主原生「对话」
+   * tab 里可见，工作台里与正常结束长得一模一样（用户反馈）。
+   */
+  notice?: TurnNotice
 }
 
 // —— 会话指标（token 用量 / 工具耗时 / 活动时间窗）————————————
@@ -209,6 +217,68 @@ function injectionOf(ev: any): { injected: boolean; kind?: string } {
   return { injected: true, kind }
 }
 
+
+/**
+ * 一轮为何异常结束（归一化后的可读说明）。
+ *
+ * 语义对齐宿主 dsh-client-ui-chat 的 turn-error / turn-max-tokens 节点：
+ *   reason.kind === 'error'      → 用 reason.error.{message,code}（如 REASONING_LOOP）
+ *   reason.kind === 'max-tokens' → 输出被 token 上限截断
+ *   reason.kind === 'aborted'    → 用户主动停止**不报**；钩子/登出等异常中止要报
+ *   reason.kind === 'completed' / 'forked' → 正常结束，不产出行
+ */
+export interface TurnNotice {
+  /** 归一化结局：error=故障中断 / max-tokens=输出截断 / aborted=异常中止 / 其它为宿主原样 kind */
+  kind: string
+  /** 给人看的说明（优先用宿主给的原文） */
+  message: string
+  /** 宿主错误码（如 REASONING_LOOP），便于排查 */
+  code?: string
+}
+
+/**
+ * 从 `turn/end`（或 `agent/error`）里抽出「本轮为何结束」的可读说明。
+ * @returns 需要提示时返回说明；正常结束 / 用户主动停止返回 null
+ */
+function noticeFromEvent(ev: any): TurnNotice | null {
+  if (!ev || typeof ev !== 'object') return null
+  const data = ev.data && typeof ev.data === 'object' ? ev.data : {}
+  if (ev.type === 'agent/error') {
+    const message = typeof data.message === 'string' ? data.message : ''
+    return { kind: 'error', message: message || '本轮运行出错，已中止。' }
+  }
+  if (ev.type !== 'turn/end') return null
+  const reason = data.reason && typeof data.reason === 'object' ? data.reason : {}
+  const kind = String(reason.kind || '')
+  if (kind === 'error') {
+    const err = reason.error && typeof reason.error === 'object' ? reason.error : {}
+    const message = typeof err.message === 'string' ? err.message : ''
+    const code = typeof err.code === 'string' ? err.code : undefined
+    return { kind: 'error', message: message || '本轮运行失败，已中止。', ...(code ? { code } : {}) }
+  }
+  if (kind === 'max-tokens') {
+    return { kind: 'max-tokens', message: '本轮达到输出长度上限被截断，回答可能不完整。' }
+  }
+  if (kind === 'aborted') {
+    const r = reason.reason && typeof reason.reason === 'object' ? reason.reason : {}
+    const rk = String(r.kind || '')
+    // 用户自己按的停止：不是故障，不要误报成异常
+    if (rk === 'user') return null
+    const message = typeof r.message === 'string' ? r.message : ''
+    // 宿主对「登出」有专门文案，照搬以免工作台与「对话」tab 口径不一
+    if (rk === 'hook' && String(r.reason || '') === 'deepseek-account/signed-out') {
+      return { kind: 'aborted', message: '因为已退出 DeepSeek 登录，本轮被中止。', code: 'ACCOUNT_SIGNED_OUT' }
+    }
+    return { kind: 'aborted', message: message || '本轮已被中止。' }
+  }
+  if (kind === 'blocked') {
+    return { kind: 'blocked', message: '本轮被阻断，未继续执行。' }
+  }
+  if (kind === 'interrupted') {
+    return { kind: 'interrupted', message: '本轮被中断。' }
+  }
+  return null
+}
 /**
  * 把 SessionEventWindow 快照重建为消息列表：
  * - durable 事件（{ type:'event', event }）：user/assistant/tool-result 进流，
@@ -260,6 +330,21 @@ export function messagesFromWindow(snap: any): StreamMsg[] {
       if (think) out.push({ role: 'assistant', content: think, kind: 'reasoning', time: t, type: ev.type })
       if (text) out.push({ role: 'assistant', content: text, time: t, usage: u, type: ev.type })
       // 思考与正文都空（例如只含 tool-call）时不产出行
+      continue
+    }
+    // 本轮的异常结局：必须显式呈现，否则工作台里「中断」与「正常结束」无从分辨。
+    if (ev.type === 'turn/end' || ev.type === 'agent/error') {
+      const notice = noticeFromEvent(ev)
+      live = null
+      if (notice) {
+        out.push({
+          role: 'system',
+          content: notice.message,
+          time: typeof ev.time === 'number' ? ev.time : undefined,
+          type: ev.type,
+          notice,
+        })
+      }
       continue
     }
     const content = visibleTextOf(ev)
@@ -369,6 +454,21 @@ function emitEvent(ch: Channel, x: any): void {
   const ev = x && typeof x === 'object' && x.event ? x.event : x
   if (!ev || typeof ev.type !== 'string') return
   if (ev.type === 'system/message' || ev.type === 'tool/call') return
+  // 逐事件订阅路径同样要带上异常结局（与 messagesFromWindow 保持同口径）
+  if (ev.type === 'turn/end' || ev.type === 'agent/error') {
+    const notice = noticeFromEvent(ev)
+    if (notice) {
+      ch.msgs = ch.msgs.concat({
+        role: 'system',
+        content: notice.message,
+        time: typeof ev.time === 'number' ? ev.time : undefined,
+        type: ev.type,
+        notice,
+      })
+      publish(ch)
+    }
+    return
+  }
   const content = contentOf(ev)
   if (!content) return
   const inj = injectionOf(ev)

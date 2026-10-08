@@ -164,13 +164,25 @@ export async function fetchProjects(): Promise<ProjectsPayload> {
   }
 }
 
-/** 整表写回服务端项目注册表。失败返回 false（调用方静默兜底为本地缓存）。 */
-export async function publishProjects(projects: ProjectRecord[]): Promise<boolean> {
+/**
+ * 写回服务端项目注册表。失败返回 false（调用方静默兼底为本地缓存）。
+ *
+ * 注意语义：服务端做的是**并集合并**（见 board-web-route 的 mergeProjects），
+ * 而不是整表覆盖。因此这里的 projects 只是「我这边看到的全部」，服务端已有的
+ * 项目只要没出现在 removed 里就会保留——残缺缓存再也无法把别人的项目删掉。
+ *
+ * @param projects - 本机看到的项目列表（新增 + 修改 + 保留）
+ * @param removed - 显式删除的项目 id（真正的删除必须走这里）
+ */
+export async function publishProjects(
+  projects: ProjectRecord[],
+  removed: string[] = [],
+): Promise<boolean> {
   try {
     const res = await fetch('/plugins/dsh-tokensave/projects', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ projects }),
+      body: JSON.stringify({ projects, removed }),
     })
     if (!res.ok) {
       console.warn(`[tokensave] 项目注册表保存失败（HTTP ${res.status}）`)
@@ -216,4 +228,84 @@ export function createFolder(parent: string, name: string): Promise<FolderResult
 /** 把 parent 下的 from 重命名为 name（同目录内改名）。 */
 export function renameFolder(parent: string, from: string, name: string): Promise<FolderResult> {
   return postMkdir({ parent, from, name })
+}
+
+// —— 探索者设置（默认 / 免费 / 收费 三组开关）——————————————
+//
+// 面板可逐个（或整组）开关探索者，至少保留 1 个选中。选择由宿主持久化
+// （~/.dsh/tokensave/explorers.json）并驱动 parallelExplore。
+
+export type ExplorerGroupId = 'default' | 'free' | 'paid'
+
+export interface ExplorerSettingItem {
+  /** `provider/model`，同时作唯一键 */
+  model: string
+  label: string
+  focus: string
+  group: ExplorerGroupId
+  /** provider 当前是否已注册（未注册 = 凭据未配置，暂不可用） */
+  available: boolean
+  /** provider 广告的描述（面板里作悬浮提示，可选） */
+  note?: string
+}
+
+export interface ExplorerSettingGroup {
+  id: ExplorerGroupId
+  label: string
+  items: ExplorerSettingItem[]
+}
+
+export interface ExplorerSettingsPayload {
+  /** 用户是否存过选择（false = 仍用内置默认） */
+  configured: boolean
+  groups: ExplorerSettingGroup[]
+  /** 当前选中的 model 列表 */
+  selected: string[]
+}
+
+function groupIdOf(raw: unknown): ExplorerGroupId {
+  return raw === 'free' || raw === 'paid' ? raw : 'default'
+}
+
+function pickExplorerSettings(data: any): ExplorerSettingsPayload {
+  const groups: ExplorerSettingGroup[] = (Array.isArray(data?.groups) ? data.groups : []).map((g: any) => {
+    const id = groupIdOf(g?.id)
+    const items: ExplorerSettingItem[] = (Array.isArray(g?.items) ? g.items : [])
+      .map((it: any) => ({
+        model: String(it?.model || ''),
+        label: String(it?.label || it?.model || ''),
+        focus: String(it?.focus || ''),
+        group: id,
+        available: it?.available !== false,
+        note: it?.note ? String(it.note) : undefined,
+      }))
+      .filter((it: ExplorerSettingItem) => it.model)
+    return { id, label: String(g?.label || ''), items }
+  })
+  return {
+    configured: data?.configured === true,
+    groups,
+    selected: (Array.isArray(data?.selected) ? data.selected : []).map(String),
+  }
+}
+
+/** 读探索者目录 + 当前选择。 */
+export async function fetchExplorerSettings(): Promise<ExplorerSettingsPayload> {
+  const res = await fetch('/plugins/dsh-tokensave/explorer-settings')
+  if (!res.ok) throw new Error(`探索者设置加载失败（HTTP ${res.status}）`)
+  return pickExplorerSettings(await res.json())
+}
+
+/** 保存选择（至少 1 个；宿主侧会再校验一次）。 */
+export async function saveExplorerSettings(
+  selected: Array<Pick<ExplorerSettingItem, 'model' | 'label' | 'focus'>>
+): Promise<ExplorerSettingsPayload> {
+  const res = await fetch('/plugins/dsh-tokensave/explorer-settings', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ selected }),
+  })
+  const data: any = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(String(data?.error || `探索者设置保存失败（HTTP ${res.status}）`))
+  return pickExplorerSettings(data)
 }

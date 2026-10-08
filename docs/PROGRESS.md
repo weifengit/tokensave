@@ -1281,3 +1281,409 @@ conversation.activeTargets.size > 0 || (!session.blank && !session.awaitingFirst
 | 项目中心・列表模式・行内「＋ 新会话」（第 1 行） | `desk=true / project=ai / activeTab=工作台` ✓ |
 
 `pnpm run check` 全绿；`pnpm build:client` + `node --check` 通过。
+
+## Step 43（2026-10-08）：侧边栏「项目中心」呼吸灯（3 个小圆点）
+
+### 需求
+在左侧边栏的「项目中心」入口上加一个**呼吸灯**：3 个小圆点表示是否有项目还在活动。
+- 有对话存活才显示；所有对话都完成时**不显示**圆点；
+- 正在跑 = 绿点；弹选择框 / 被故障中断（调用失败、任务未完成验收）= 黄点（黄覆盖绿）；
+- **有对话在跑时 3 个点依次闪烁**（跑马灯）；只有待处理/失败时同相呼吸；
+- 圆点右对齐；侧边栏收起后**直接用圆点顶替图标**，没有存活对话才回到原图标；
+- 收起态实在挤不下 3 个时允许降为 2（展开也跟 2）。
+
+### 数据源（关键：宿主没有「上一轮失败」字段）
+- `running` / `pendingInteraction`：`uiSession.sessionStatus`（与项目卡片 ①②③ 同源）。
+- 「上一轮是否正常结束」：SessionSummary 只有 running/blank/updatedAt，sessionStatus 只有
+  running/pendingInteraction/completionUnread——**无失败标志**。因此只能读会话事件窗口里
+  最后一条 `turn/end.reason.kind`：`completed` / `forked` / `aborted`（用户主动停）以外
+  （`error` / `interrupted` / `blocked` / `max-tokens`）算「被故障中断」。
+  读窗口要 `sessions.using(id, { source:'gateway' }, ref => …)`（retain → 读
+  `binding.eventSource.getSnapshot()` → release），**有成本**，所以做成：
+  - 只扫「已停下来、非空会话、updatedAt 在 1 小时内」的候选；
+  - 一次最多 retain 5 个；扫描间隔 ≥10s；
+  - 结论按 `sessionId + updatedAt` 缓存 → 同一个会话每个版本只判一次，稳态几乎零开销。
+
+### 实现
+- 新增 `client/src/panel/pulse.ts`：`useActivityPulse()`（订阅 sessions.list +
+  uiSession.sessionStatus + 4s 兜底轮询，与 activity.ts 同款）→ `{ alive, warn, running, tip }`；
+  内部 `scanOutcomes()` / `sessionTurnFailed()` 负责失败判定。
+- `activity.ts`：把 `statusSnapshot()` 改成导出（pulse 复用，避免双份实现）。
+- `ControlRoomEntry.tsx`：wide 时图标 + 文字 + 圆点（`margin-left:auto` 右对齐）；
+  收起时**圆点顶替图标**；`title` 里列出存活对话（`● 进行中 / ⏳ 待你确认 / ⚠️ 上一轮未正常结束`）。
+  圆点数默认 3，用 ResizeObserver 量按钮宽度，<30px 才降 2（实测 rail 36px → 保持 3）。
+- `styles.ts`：`.ts-pulse*` + `@keyframes ts-pulse-chase`（依次闪烁）/ `ts-pulse-breathe`
+  （同相呼吸）；`animationDelay` 由 JSX 按序号 0/.16/.32s 给出；尊重 `prefers-reduced-motion`。
+
+### 验证（真实浏览器 3080）
+| 项 | 实测 |
+|---|---|
+| 入口圆点 | `.ts-side-entry` 内 3 个 `.ts-pulse-dot`，`ts-pulse ts-pulse-run` ✓ |
+| 圆点样式 | `6×6`，`rgb(34,197,94)`，`animation=ts-pulse-chase` ✓ |
+| 跑马灯相位 | 三个点 `animation-delay` = `0s / .16s / .32s` ✓ |
+| 黄色（warn）样式 | 合成节点 `ts-pulse-warn` → `rgb(245,158,11)` + chase ✓ |
+| 收起态 | `ts-side-entry rail`（36px）→ 3 个圆点、**`icon=null`**（顶替图标）✓ |
+| 展开态 | icon=🗂️ + 文字「项目中心」+ 3 个圆点 ✓ |
+| `sessions.using` 运行时可用 | `USING_OK`，读到 `turn/end.reason=completed` ✓ |
+| 悬停说明 | `● 进行中：新建会话按钮跳转逻辑` ✓ |
+
+**诚实说明**：黄色分支的**触发器**没有真实数据可演——当前 1 小时内活动的会话里
+`turn/end` 全是 `completed`、也没有待确认弹窗，所以实测只能盖到绿色；黄色是
+`warn>0` 到 CSS 的一段映射（已用合成节点逐项验过），以及失败判定的取数路径
+（`sessions.using` 已实跑通）。
+「无存活对话 → 不显示圆点 + 收起时回落图标」是 `{alive && …}` / `{(!alive || wide) && 图标}`
+两个条件式，真机不好构造（需全部对话停完），靠代码保证。
+
+`pnpm run check` 全绿；`pnpm build:client`（307,269B）+ `node --check` 通过。
+
+## Step 44（2026-10-08）：主对话标题条——统计居中 + 细化为 msg / user / agent
+
+### 反馈
+DSH 主对话标题行里的消息条数：① 不居中；② 想要更细的统计（总数 / user / agent）。
+
+### ① 不居中的真因（实测量出来的）
+标题条三段式是 `[标题][中间信息][三键]`，而 `.ts-head-mid` 用 `margin:0 auto` 居中——
+那是“在标题与三键**之间**的剩余空间里”居中，不是整条居中。标题（「💬 DSH 主对话」
+≈87px）与三键（三个按钮 ≈78px）宽度不等，中间信息就会偏。
+改成三段式 **grid**（`grid-template-columns:1fr auto 1fr`）后两侧列等宽，
+中间那段就是整条的正中：
+```css
+.ts-mainchat-head { display:grid; grid-template-columns:1fr auto 1fr; align-items:center; }
+.ts-mainchat-head > * { min-width:0; }          /* 两侧列可被压缩，1fr 才真对称 */
+.ts-mainchat-head > .ts-head-mid { justify-self:center; margin:0; }
+.ts-mainchat-head > .ts-card-actions { justify-self:end; margin-left:0; order:0; }
+```
+实测：`headCenter 776.5 / midCenter 776.5`，`deltaPx = 0`（改前用 flex + margin:auto）。
+
+### ② 统计细化：`msg N · user N · agent N`
+口径（与 MsgList 的收纳一致）：
+- `msg`   = **已载入**的会话流行数（工具结果/上下文注入也算一行；`messages.length`）
+  —— 窗口是分页的，往上滚动加载更早历史后它会变大（行数本来就与旧版「N 条消息」同源）；
+- `user`  = `role==='user' && !injected`：你发出的消息，**不算**宿主自动注入的
+  `runtime-context / user-approval / skill-catalog` 等（实测本会话窗口里 4 条 user/message
+  中有 2 条是注入，只有 2 条是真人）；
+- `agent` = `role==='assistant' && kind!=='reasoning'`：助手**有正文**的回复，
+  不算思考片段与只跑工具的步骤（实测窗口里 assistant/message 有 51 条，但真正出正文的只有 6 条）。
+悬停 `title` 里逐项写明了这三个口径。样式：标签小一号、数字 `tabular-nums`。
+
+### 验证（真实浏览器 3080）
+| 项 | 实测 |
+|---|---|
+| 标题条布局 | `display:grid`，列宽 `393.97px / 137.06px / 393.97px`（两侧相等）✓ |
+| 居中偏差 | `midCenter − headCenter = 0.0px` ✓ |
+| 文案 | `msg 112 · user 2 · agent 6`（随消息流实时变化：101 → 112）✓ |
+| 口径交叉核对 | 窗口 870 事件：user/message 4 条（2 条注入）/ assistant/message 51 条 → 投影出行 101 条 ✓ |
+| 悬停说明 | `msg：已载入的会话流行数… / user：… / agent：…` ✓ |
+
+`pnpm run check` 全绿；`pnpm build:client`（310,524B）+ `node --check` 通过。
+
+## Step 45（2026-10-08）：过程 / 上下文注入——展开后点正文任意位置即收起
+
+### 反馈
+「过程」与「上下文注入」展开后只能滚回顶部点折叠头才能收起，太麻烦。
+要求：展开后点击里面任意位置（**子折叠/展开按钮除外**）都能收起。
+
+### 修法（`MsgList.tsx`）
+新增 `collapseOnBodyClick(close)`，只挂在**已展开的正文容器** `.ts-proc-body` 上
+（`ProcessGroup` 与 `InjectionRow` 各一处）：
+- 不挂折叠头：头部本身就是切换按钮，挂上去会双触发（点一下开+关）；
+- 跳过可交互元素：`button / a / input / select / textarea / [role="button"] /
+  [contenteditable]` —— 子折叠按钮（ProcItem 的 ▾▴）与 RichText 里的链接照常工作；
+- 有文本选区时不收起：否则正文里的文字永远选不中（`window.getSelection()` 非空则跳过）。
+
+### 验证（真实浏览器 3080）
+| 场景 | 期望 | 实测 |
+|---|---|---|
+| 展开一个「过程 N 步」（69 条子项） | 正文出现 | `bodyPresent=true, items=69` ✓ |
+| 点子折叠按钮（ProcItem ▾） | 不收起，只展开那条 | `groupStillOpen=true, itemExpanded=true` ✓ |
+| 点正文里的普通文字 | 收起 | `groupCollapsed=true` ✓ |
+| 先拖选文字再点 | **不**收起（选区保护） | `sel len=126 → stillOpen=true` ✓ |
+| 「上下文注入」展开后点正文 | 收起 | `injectCollapsed=true` ✓ |
+
+`pnpm run check` 全绿；`pnpm build:client`（311,000B）+ `node --check` 通过。
+
+## Step 46（2026-10-08）：标题行增强 —— 隐藏窗口明示 / 项目名徽标 / 一键切换
+
+### 需求（四条）
+1. 「已关闭：＋ …」恢复区固定显示在标题行，位置移到「历史会话」左侧；只有全部窗口都呈现时才消失。
+2. 标题行最左侧去掉「← 项目中心」按钮与项目路径，只留项目名，并做显著标识。
+3. 标题行加一个快捷按钮，在「显示全部窗口」与「仅显示预览（如有）+ DSH 窗口」之间一键切换。
+4. 标题行区域顺序固定：项目名称 → 已关闭列表 → 一键切换 → 历史会话 → 新建会话。
+
+### 改动落点（`client/src/panel/HDesk.tsx`、`styles.ts`）
+
+1. **已关闭区升格为标题行组件**：`ClosedCardsBar` → `ClosedWindowsBar`（`<div>` → `<span>`），
+   新增 `ClosedWindowItem`（`{ id, label, kind: 'card' | 'explorer' }`），把**卡片（含预览）+ 被隐藏的探索者窗口**
+   统一收进一个恢复条；`closedItems` 为空即不渲染（= 全部窗口都呈现）。
+   同时删除列底的 `renderHiddenChips()`（探索者恢复 chip 不再在列尾重复一份）与旧的 `closedCards`。
+2. **左侧只留项目名**：删掉 `← 项目中心` 按钮与 `.ts-sub.ts-bar-path` 路径；项目名改为
+   `.ts-title-proj` 徽标（蓝色渐变底 + 描边 + 19px/700 + 🗂 图标，超长省略号）。`onBack` 仍留在 `Props`
+   （调用方照传）但不再渲染按钮——返回项目列表改由左侧边栏的「项目中心」入口承担。
+3. **一键切换按钮**（`.ts-btn-mode`）：`allShown = closedItems.length === 0`；已全部呈现则收起为
+   「仅保留预览（如有）+ DSH 主对话」（并把探索者最大化浮层一并退出），否则全部放出。
+4. **默认态改为「已关闭」**：`cards` 初始把 `board / talk / save` 置 `hidden: true` —— 未唤醒 tokensave
+   时只呈现 DSH 主对话，隐藏的黑板 / 协作对话 / 协作收益**列在标题行可选择性恢复**；
+   探索者一出现（`autoRevealed` 一次性 effect）自动把三张卡放出，保持「跑起来自动还原 H 台」的既有行为。
+5. **派生态改名**：`idle`（`explorers.length === 0`）→ `compact`，含义扩为「黑板 / 协作对话 / 协作收益 三个
+   都关闭且无可见探索者」——恢复任意一个窗口即可退出单窗口态（支持选择性恢复）。
+6. **样式**：`.ts-bar-right` 改 `flex:0 1 auto`；新增 `.ts-bar-tools`（右对齐、可换行）、`.ts-title-proj*`、
+   `.ts-btn-mode`；`.ts-closed-bar` 改 `flex:0 1 auto; max-width:100%` 并压矮内边距以适配标题行。
+
+### 验证
+- `pnpm run check`（tsc --noEmit）全绿；`pnpm build:client` → `dist/client.js` 316,458B；`node --check` 通过。
+- 线上 bundle 经 `/plugins/events` 取 rev（6c2d984c2206 → **35c8c9448ea5**，HMR stat-poll 已自动感知，**无需重启**），
+  `GET /plugins/??dsh-tokensave/client.js&rev=35c8c9448ea5` HTTP 200、`node --check` 通过，本地 dist 为线上前缀；
+  解码核验 `ts-title-proj` / `ts-bar-tools` / `ts-btn-mode` / `ClosedWindowsBar` / `toggleAllWindows` /
+  `restoreWindow` / 「显示全部窗口」/「仅显示预览 + DSH」/「已关闭：」均在位（esbuild 把非 ASCII 转写为 `\uXXXX`）。
+- 逻辑自检：首屏（无探索者）`closedItems=[共享黑板, 协作对话, 协作收益]` → 按钮「▣ 显示全部窗口」；
+  点 chip 恢复单个 → `compact=false` 退出单窗口态；「显示全部窗口」→ 三卡 + 探索者全放；
+  「仅显示预览 + DSH」→ 只留 chat(+preview) 且清 `overlayId`。
+
+**浏览器目检项（未能自动执行，需人工看一眼）**：标题行左→右为「项目名徽标 | 已关闭列表 | 一键切换 |
+历史会话 | 新建会话」；无探索者时「已关闭：＋ 共享黑板 ＋ 协作对话 ＋ 协作收益」在列、点任一即可放出对应窗口；
+点「显示全部窗口」后整个 H 台出现且恢复条消失；再点「仅显示预览 + DSH」回到单窗口（预览可用时带预览条）。
+
+### 追加调整（同一轮反馈）
+1. **按钮文案**：一键切换按钮**固定显示「一键切换」**（不再在两个模式名之间切换文案）；当前模式与点击结果仍由 `title` 悬浮说明。
+2. **无探索者时的左右两栏**：
+   - 删除左列「左列暂无模型窗口 / 运行 tokensave_delegate 后自动出现」提示；
+   - `.ts-card-talk` / `.ts-card-save` 在该列没有探索者窗口时加 `ts-card-talk-solo` / `ts-card-save-solo`
+     （`flex:1 1 0`）——**铺满整列可用高度**（原来固定 40%，下方留 60% 空档）；
+   - 铺满时**不再拉伸内部卡片**：`.ts-save-block` 由 `flex:1 1 0` 改 `flex:0 0 auto`、`.ts-save-rows`
+     由 `flex:1; justify-content:center` 改 `flex:0 0 auto` —— 优势/劣势两卡按内容自然高度，多余空间留在下方；
+     装不下时由 `.ts-save-body` / `.ts-talk-list` 自身的垂直滚动条承担（`overflow:auto` 既有）；
+   - 多窗口并存时两栏仍固定 `flex:0 0 40%`（不被压扁），内容超出即内部滚动，不互相挤压。
+
+验证：`pnpm run check` 全绿；`pnpm build:client`（324,952B）+ `node --check` 通过；bundle 冒烟通过；
+线上 rev `0f5febb95fbd` 本地 ⊆ 线上，含 `一键切换` / `ts-card-talk-solo` / `ts-card-save-solo`，`左列暂无` 已消失。
+
+## Step 46（2026-10-08）：侧边栏入口连点闪屏修复 + 工作台显示「本轮异常中止」
+
+### ① 侧边栏「项目中心」快速连点闪屏
+**用户反馈**：点击较频繁快速时容易闪屏（从项目中心快速变为工作台后又立即切回项目中心，然后才定住）。
+
+**根因**（两处叠加）：
+1. `sessions.ts` 的切 tab 靠一串延迟点击（`[0,120,400,900]`ms）等宿主异步回流；旧动作的**尾随定时器**
+   不作废，会在新动作之后触发，把界面拨回上一个目标。
+2. `openControlRoom()` 用 `getControlRoomScreen()` 判方向，而该值由视图**挂载时**上报——
+   连点时它滞后一整拍，第二次点击会算出反方向。
+
+**修法**：
+- **导航代次**（`navEpoch` + `beginNavigation()` / `runIfCurrent()`）：每次导航 +1，
+  所有延迟回调（`scheduleActivate` / `scheduleSelectHostView`）带上发起时代次，过期即自废 → 最后一次点击胜出。
+- **意图即真值**：`requestProjectList()` / `requestWorkbench()` 当场同步 `controlRoomScreen`，
+  按钮点击瞬间也乐观落定目标屏（不等宿主回流）。
+- **`getLiveScreen()`**：优先读宿主 DOM 的 `aria-selected`（即时真值），并有 `NAV_SETTLE_MS=700` 的
+  意图生效窗口——窗口内以意图为准，避免拿旧 DOM 顶回刚发起的导航。
+- **连点防抖**（`ControlRoomEntry` 的 `NAV_LOCK_MS=700`）：导航在途忽略重复点击。
+
+**A/B 对照（真实浏览器 3080，同一脚本）**：
+
+| 场景 | 修复前 | 修复后 |
+|---|---|---|
+| 2 次点击，间隔 250/320/500ms | 1 次切换 | 1 次切换 |
+| 2 次点击，间隔 **700ms** | **4 次切换**（尾随定时器互斗） | **2 次切换** ✓ |
+| 4 次点击，间隔 50ms | 1 次 | 1 次 |
+| 4 次点击，间隔 1100ms | 双向正常往返 | 双向正常往返 ✓ |
+
+宿主真实切换耗时实测：tab 选中 8–29ms、视图挂载 1–3ms（故 700ms 窗口足够且不吞有意的二次点击）。
+
+### ② 项目中心页整条隐藏聊天输入条
+**用户要求**：项目中心页隐藏聊天输入框及其状态信息（模型名 · 费用 · 上下文占比 · 步数 · token 缓存…）。
+
+**修法**（`styles.ts`）：输入条座位与本视图是兄弟节点（同在 `[data-conversation-scroll]` 内），
+因此 `body.ts-center-open [data-conversation-region="composer"] { display:none !important }`。
+用 `display:none` 而非卸载节点——切回工作台时输入条原样恢复，宿主不重排、不丢状态。
+
+### ③ 工作台明示「本轮异常中止」（用户反馈：只有原生「对话」tab 能看出）
+**根因**：`session-subscribe.ts` 的 `messagesFromWindow` 把 `turn/end` **整个丢弃**，
+于是工作台里「被故障中止的一轮」与「正常结束」外观完全一致。
+（此前只有侧边栏呼吸灯读 `turn/end`，消息流本身没有。）
+
+**修法**：
+- `session-subscribe.ts` 新增 `TurnNotice` + `noticeFromEvent()`，语义对齐宿主
+  `dsh-client-ui-chat` 的 turn-error / turn-max-tokens 节点：
+  `error` → 用 `reason.error.{message,code}`（如 `REASONING_LOOP`）；`max-tokens` → 输出被截断；
+  `aborted` → **用户主动停止不报**，钩子/登出等异常中止要报；`completed`/`forked` 不产出行。
+  `messagesFromWindow` 与逐事件路径 `emitEvent` 都产出该行（role=`system`，带 `notice`）。
+- `MsgList.tsx`：`splitTurn` 把 notice 单独收口（不埋进「过程」折叠），轮末渲染 `TurnNoticeRow`
+  —— 琥珀色警示块（error/blocked 转红）、带错误码徽章、正文可展开。
+- `styles.ts`：`.ts-turn-notice*` 样式。
+
+**验证**：
+- 逻辑单测（对照真实会话日志）：真实 `turn/end` 2 条 → 均判为需提示（`REASONING_LOOP`）；
+  边界全对（completed/forked/用户主动停止 → 不提示；登出中止/max-tokens/agent-error → 提示）。
+- 投影测试（esbuild 打包 `session-subscribe.ts` 后跑真实日志 91 事件）：投影 113 条消息，
+  2 条带 notice，且正确落在第 1、2 轮轮末（轮 3 正常结束无 notice）。
+- 真实浏览器 3080：工作台渲染出 `⛔ 本轮运行失败 REASONING_LOOP ▾`，展开可见完整判据原文。
+
+`pnpm run check` 全绿；`pnpm build:client`（323,477B）+ `node --check` 通过。
+
+## Step 47（2026-10-08）：探索者设置（默认 / 免费 / 收费 三组开关，自行控制探索者）
+
+### 需求
+标题行【一键切换、历史会话】之间加一个「探索者设置」按钮；点击展开浮动面板，内部三个大区
+「默认 / 免费 / 收费」列出可用探索者，每个探索者后面一个 toggle switch 可自由开关（包括默认的
+也能取消），但至少保留 1 个选中；三个大区后面也有 toggle，控制其包含探索者的快速全选 / 取消。
+
+### 实现
+- **宿主 `src/explorer-catalog.ts`（新）**：纯数据层，无 ctx。`EXPLORER_GROUPS`（默认/免费/收费）、
+  `FREE_PROVIDERS` 白名单、`KNOWN_MODELS`、`buildCatalog(providerEntries)` → 三组候选、`sanitizeSelection`、
+  `selectionToConfigs`。默认组 = 内置三个预设（沿用其 label/focus）；免费/收费 = 已声明 provider 的已知模型。
+  刻意不调 `ctx.llm.listModels()`（per-provider 异步探测可能打网络、会拖慢面板），用已知清单，快且确定。
+- **宿主路由**：新增 `GET|POST /plugins/dsh-tokensave/explorer-settings`（新增 `explorerSettingsGuard`，
+  与 scope/projects 同款自行鉴权 + 方法判定）。GET 返回 `{ groups, selected, configured }`（provider 目录 =
+  `ctx.llm.listProviders()`（live）+ `listConfigurableProviders()`（含休眠），后者让「收费」即使未配凭据也列得出，
+  并标 `available:false`）。POST `{ selected }` → 写入 `~/.dsh/tokensave/explorers.json`（原子替换），空选择 400。
+- **编排 `parallelExplore`**：读 `readExplorerSelection()`；存过选择 → `selectionToConfigs(saved)` **完全按选择跑**，
+  从未配置 → 保持旧行为 `EXPLORER_PRESETS.slice(0, explorerCount)`。
+- **客户端**：`api.ts` 新增 `fetchExplorerSettings` / `saveExplorerSettings`；新组件
+  `client/src/panel/ExplorerSettings.tsx`（按钮 + portal 浮动面板 + `role=switch` 小开关；逐个/整组开关，
+  最后一个不允许取消并提示「至少保留 1 个」；乐观更新 + 失败回滚）；HDesk 标题行在【一键切换】与
+  【历史会话】之间插入 `<ExplorerSettings />`；styles.ts 新增 `.ts-expset*` / `.ts-switch`。
+
+### 验证
+- `pnpm run check` 全绿；`pnpm build:client`（340,981B）+ `node --check` 通过。
+- **宿主逻辑 headless 实测**（DSH_HOME 指向临时目录）：`buildCatalog` 三组归位正确（默认 3 预设 / 免费 1 / 收费 2，
+  休眠 provider 标 `available:false`）；`writeExplorerSelection` → `readExplorerSelection` 往返一致；空选择被拒
+  （「至少保留 1 个探索者」）；非法项（无 `/`）被过滤；`selectionToConfigs` 映射正确。
+- **焦点修复**：预设模型必须用自己的 `focus`（否则 Nemotron 的「性能与实现复杂度」被 provider 默认值盖掉）——
+  实测默认组 focus = 整体方案可行性 / 边界条件与异常处理 / 性能与实现复杂度。
+- **线上实测（3080）**：`GET /explorer-settings` 200，返回三组目录（默认/免费/收费）+ `configured`；
+  面板实际被使用并落库（`~/.dsh/tokensave/explorers.json` 有选择）。宿主改码经 HMR 已生效（无需重启）。
+
+### ⚠️ 事故与修复（本人造成）
+探测新路由时对存量写路由误发了 `POST /projects -d '{"selected":[]}'`，而 `handleProjectsWrite` 当时把
+「缺 projects 字段」当作空列表处理 → 把服务端项目注册表（`~/.dsh/tokensave/projects.json`）写成了空表。
+处置：① 立即把该文件移走，使服务端回到 `initialized:false`，触发客户端既有的「本地有数据就反向播种」
+路径；客户端随后的同步把注册表按**浏览器缓存**原样重建（已恢复）；② 加固 `POST /projects`：请求体缺 `projects`
+数组一律 400（真正的清空必须显式 `projects: []`）。教训：探测写路由必须用与真实语义一致的最小体，或先 GET。
+（当前注册表内容 = 恢复后的 1 条：tokensave，与浏览器缓存一致。）
+
+`pnpm run check` 全绿；`pnpm build:client` + `node --check` 通过。
+
+### 追加（同日第二轮反馈）
+1. **分组开关换色**：三个大区（默认/免费/收费）后面的 switch 改蓝色（`.ts-switch-group.on`），
+   与单个探索者的绿色开关在视觉上分开。
+2. **三组互不重复**：默认组的 model 一律从免费/收费里排除（`buildCatalog` 的 `seen` 去重，
+   默认组先入）——所以 our-free-model 上即使也广告了同 id，也不会在两组各冒一个。
+3. **不再用手写清单：改用真实模型目录**（用户指出 our-free-model 还有很多可用免费模型）。
+   `ctx.llm.listModels(provider)` 对**已注册** provider 逐个取它当下广告的模型（our-free-model 的
+   adapter 就是返回其目录 / picker membership；`LlmModelInfo.name` 与 `description` 一并用于标签与悬浮说明）；
+   每 provider 4s 超时 + 结果缓存 60s（避免每次开面板都打网络），失败/为空时回退 `KNOWN_MODELS`。
+   实测（3080 GET /explorer-settings）：默认 3 / **免费 30** / **收费 56**——免费里 now 有 Jev 1.13、Exo、
+   Space Bunny、Longcat 2.5、Nemotron 3.5 Lightning、Kimi K2.6/K3、GPT-OSS 20B、GLM 5.3、Kilo 系列等。
+   注：`listModels` 是“目录/成员”口径，核心路由也接受未列入的 model id——实测 `mimo-v2.6-flash-free` /
+   `nemotron-3-ultra-free` 仍在 adapter 的 `src/catalog.js` 里，只是不在当前 membership，默认组照用无碍。
+
+`pnpm run check` 全绿；`pnpm build:client`（342,035B）+ `node --check` 通过；线上 rev `3ef31b78cccd`。
+
+## Step 48（2026-10-08）：工作台「时不时刷一下、对话跳回更早」——定位到布局翻转重挂聊天卡
+
+### 反馈
+在工作台看对话时，界面会时不时刷新一下；原本滚到最下面（正在看最新回复）的
+DSH 主对话，刷新后变成停在更早的聊天内容，每次都得重新拉到底。
+
+### 真因（真实浏览器 3080 实测，非推测）
+工作台的「未唤醒 tokensave = 单窗口铺满」与「有探索者 = H 台」是**两棵不同的 JSX 树**：
+```tsx
+compact ? <单窗口树> : <H 台树>   // 旧写法：两个分支
+```
+React 见到分支切换会**卸载重建整棵子树**，中下格的 `MainChat`/`MsgList` 连同
+其内部滚动容器 `.ts-chat-msgs` 一起被换掉——新节点的 `scrollTop` 从 0 开始，
+于是视图回到最早的消息。
+
+为什么「时不时」：HDesk 每 8s 探测一次探索者（`setInterval(probe, 8_000)`），
+探索者会话一旦增/减（派发、完成、被清理），`compact` 就翻转一次，界面就“刷”一次。
+
+**实测证据**（给 `.ts-chat-msgs` 装 `scrollTop` setter 陷阱 + 节点身份探针）：
+翻转前后节点身份由 `msgs#1` 变为 `msgs#2`（`containerAttached` 事件伴随），
+新节点 `scrollTop = 0`；不翻转时节点身份稳定不变。
+
+### 修法
+1. **单棵稳定树**（`HDesk.tsx`）：不再用 `compact ? A : B` 两个分支，只留一棵树，
+   切换布局只改 grid 样式；主对话固定渲染在**同一个 child index**，其余格子用
+   `{!compact && …}` 渲染成 `false`（不占位、不挤动兄弟）。这样布局翻转不再重挂卡片，
+   滚动位置、展开态、已加载历史全部保留。
+2. **滚动位置记忆**（`MsgList.tsx`）：组件重挂仍是可能发生的（最大化/还原等），
+   因此把位置按会话存到模块级 `SCROLL_MEMO`（卸载前 `useEffect` 清理函数里写，
+   挂载时 layout effect 恢复），并新增 `followKey`（= sessionId）区分「同会话重挂」
+   与「切到别的会话」——后者仍应贴底看最新。
+3. **贴底稳定化**（`MsgList.tsx`）：布局切换时宿主输入条会重新停靠，
+   `.ts-chat-msgs` 的 `padding-bottom`（`--ts-composer-h`）分几步异步变化，中间态会把
+   `scrollTop` 夹到一个较小的值且**不会**自己恢复。新增一段有界 rAF 窗口
+   （1.5s 内反复贴底、尺寸稳定即停），只在 `pinnedRef` 为真时动手。
+4. **用户意图与布局钳位的区分**：这是最容易搞错的一步——布局钳位产生的 scroll 事件
+   与「用户往上翻」长得一模一样（实测正是它把 `pinned` 误置为 false，留下 98px 偏差）。
+   现在只有**真实输入事件**（wheel / touch / keydown / pointerdown / mousedown，捕获阶段）
+   才算用户意图；程序化改 `scrollTop` 不算。
+
+### 验证（真实浏览器 3080，headless Chrome + CDP 驱动）
+| 场景 | 期望 | 实测 |
+|---|---|---|
+| 连续翻转 5 次 | 聊天卡/消息流节点身份不变 | `replacements: []`（始终 `N1`）✓ |
+| 贴底时翻转 | 仍贴底（gap≈0） | `gap=0` → `gap=0` ✓ |
+| 用户往上翻后翻转 | 位置保持、不跟随 | `st=878 → 878`，`gap=305` 不变 ✓ |
+| 点「回到最新」 | 贴底 | `gap=0` ✓ |
+| 最大化 / 还原（真实重挂） | 仍贴底 | `gap=0` / `gap=0` ✓ |
+| 布局本身 | compact 单窗口 / H 台各自正确 | `deskKids 1→4`、左竖/右竖/黑板按预期出现 ✓ |
+
+`pnpm run check` 全绿；`pnpm build:client`（340,981B）+ `node --check` 通过。
+
+**说明**：本次同时清理了过程中试错引入、最终未采用的哨兵元素与相关 CSS（`.ts-msgs-end`），
+最终实现只保留上述 4 点。
+
+## Step 49（2026-10-08）：项目注册表被清空的事故与加固（数据固化）
+
+### 事故（本人造成，已恢复）
+用户反馈「多个对话同时跑，不知道更新了什么，项目中心很多项目都删掉了」。
+排查结论：**我在 Step 48 用浏览器做验证时，往注册表写了一条探针项目，把原有的 8 条覆盖成了 1 条**。
+证据：
+- 注册表内容只剩 `p-tokensave`，其 `description` = `"探针"`（我手填的测试字符串）；
+- 该记录 `createdAt` 与 `updatedAt` 相差 86812619ms（≈1 天），恰好是我 seed 表达式的指纹
+  （`createdAt: now - 86400000`，之后被 `touchProject` 刷新过 `updatedAt`）；
+- 文件 mtime `16:16:57` 与我的验证时段完全重合。
+
+### 根因（架构缺陷，不只是误操作）
+`POST /plugins/dsh-tokensave/projects` 是**整表覆盖**语义：客户端每次增删都回推
+「我这边看到的全部」，服务端原样替换。于是：
+> 任何一个来源（另一个浏览器 / 另一个 origin / 被清过 localStorage 的 profile / 探测脚本）
+> 只要它的缓存**残缺或陈旧**，一次同步就能把整张注册表冲成它那一份。
+客户端 `doSyncProjects` 同样单向：`writeCache(remote)` 会用服务端的残缺内容覆盖本地更全的缓存，
+把事故从一台机器放大到每一台。
+
+### 加固（两层，均已实测）
+**服务端**（`src/board-web-route.ts`）：
+1. **并集合并** `mergeProjects(current, incoming, removed)`：服务端已有的项目一律保留，
+   只有出现在 `removed` 名单里的 id 才会真的消失；同一路径以提交的版本为准。
+2. **显式删除**：`POST /projects` 新增 `removed: string[]` 字段，真正的删除必须点名 id，
+   并在响应里回显 `removed` 供审计。
+3. **自动备份** `backupProjectsFile()`：每次内容**确实要变**时，先把旧内容存档到
+   `~/.dsh/tokensave/projects-backups/projects-<ISO>.json`，保留最近 40 份。
+**客户端**（`client/src/panel/store.ts` + `api.ts`）：
+4. `publishProjects(projects, removed)` 带上删除名单；`removeProject` 传 `[id]`。
+5. **并集水合**：`doSyncProjects` 不再直接 `writeCache(remote)`，而是按 id 并集；
+   本地独有的项目保留并回推服务端，同时告警（“服务端偏少”）。
+
+### 数据恢复
+从两个权威来源反推（程序化，非手工推断）：
+- `~/.dsh/storages/workspace.json` 的 `tables.workspaces` → 真实工作区路径与创建时间；
+- 浏览器 `tokensave:opened-project.v1` 的 session→projectId 映射 + `~/.dsh/sessions/<cwd编码>/` 反推 projectId→路径。
+恢复结果：**8 条**（tokensave / dsh / compare-text / info_report / ai / summer / preview-demo / Downloads），
+projectId 沿用原值（session→项目映射不失效）。
+
+### 验证（真实 3080 服务）
+| 场景 | 期望 | 实测 |
+|---|---|---|
+| 恢复写入 | 8 条 | HTTP 200，磁盘 `count: 8` ✓ |
+| **事故重演**：只带 1 条的残缺缓存 POST | 不能清库 | 返回 **9 条**（原 8 条全保留 + 新增 1）✓ |
+| 显式删除 `removed:[id]` | 只删点名那条 | 9 → 8，`removed` 回显正确 ✓ |
+| 自动备份 | 覆盖前存档 | `projects-backups/` 出现 3 份快照 ✓ |
+
+`pnpm run check` 全绿；`pnpm build:client`（342,035B）+ `node --check` 通过。
+
+### 教训
+「整表覆盖」的写接口在多来源/多标签场景下等同于「谁最后同步谁说了算」，而“最后同步的”
+往往是缓存最残缺的那个。写接口要么做并集，要么把删除显式化；两者都做，才能让
+残缺数据无法造成破坏。另外：**验证写路由时不要向生产数据里写测试记录**——
+这次本可以用只读 GET 验证。

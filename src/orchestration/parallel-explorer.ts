@@ -2,9 +2,10 @@ import type { Context } from '@deepseek-ai/cordis'
 import { brandString } from '@deepseek-ai/dsh-brand'
 import { createUserMessage, type ToolCallId } from '@deepseek-ai/dsh-llm'
 import type { Agent } from '@deepseek-ai/dsh-agent'
-import { readProjectScope } from '../board-web-route.ts'
+import { readProjectScope, readExplorerSelection } from '../board-web-route.ts'
 import type { ExplorerConfig } from '../types.ts'
 import { EXPLORER_PRESETS } from '../types.ts'
+import { selectionToConfigs } from '../explorer-catalog.ts'
 
 // 进程内 callSeq 保证 callId 唯一（registry 以 callId 关联一次执行）
 let callSeq = 0
@@ -103,7 +104,15 @@ export async function parallelExplore(
   ctx: Context, taskDescription: string,
   codeContext: string | null, explorerCount: number, agent?: Agent
 ): Promise<Array<{ sessionId: string; label: string }>> {
-  const presets = EXPLORER_PRESETS.slice(0, explorerCount)
+  // 探索者集合：用户若在「探索者设置」里存过选择，就**完全按选择跑**（自行控制）；
+  // 从未配置时保持旧行为——内置预设按 explorer_count 截取。
+  const saved = readExplorerSelection()
+  const presets: ExplorerConfig[] = saved && saved.length
+    ? selectionToConfigs(saved)
+    : EXPLORER_PRESETS.slice(0, explorerCount)
+  console.log(
+    `[dsh-tokensave] 探索者集合(${saved ? '用户设置' : '内置默认'}): ${presets.map((p) => p.label).join(', ')}`
+  )
 
   // 探索者强制跟随「当前打开的工作台项目」：把 cwd 注入传给 session_create 的 agent。
   // 无作用域（未发布/已清除）时保持原行为（跟随发起会话），不静默改到未知目录。

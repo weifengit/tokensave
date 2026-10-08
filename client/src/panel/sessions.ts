@@ -638,6 +638,86 @@ export function getControlRoomScreen(): Screen {
   return controlRoomScreen
 }
 
+/**
+ * 宿主当前正选中的 conversation.view tab 文案（宿主自己维护的即时真值）。
+ *
+ * 为何要读 DOM：`controlRoomScreen` 由视图**挂载时**上报，而宿主切 tab 是异步的——
+ * 用户连点时它会滞后一整拍，切换方向就会算反（点两次却同向、或该去列表却去了工作台）。
+ * `aria-selected` 是宿主即时维护的，用它兜一层，连点也能得到确定的方向。
+ * @returns 命中 `WORKBENCH_LABEL` / `PROJECT_CENTER_LABEL`，读不到返回 null
+ */
+function currentHostViewLabel(): string | null {
+  if (typeof document === 'undefined') return null
+  const tabs = document.querySelectorAll<HTMLElement>('[data-conversation-tabs] button[role="tab"]')
+  for (const el of Array.from(tabs)) {
+    if (el.getAttribute('aria-selected') !== 'true') continue
+    const text = (el.textContent || '').trim()
+    if (text === WORKBENCH_LABEL || text.includes(WORKBENCH_LABEL)) return WORKBENCH_LABEL
+    if (text === PROJECT_CENTER_LABEL || text.includes(PROJECT_CENTER_LABEL)) return PROJECT_CENTER_LABEL
+  }
+  return null
+}
+
+/**
+ * 导航意图的生效窗口：宿主把 tab 真正切过去需要一拍（实测 ~150ms）。
+ * 这段时间里 DOM 上的 `aria-selected` 还是**旧值**，若拿它当真值会把
+ * 刚发起的意图顶回去 —— 正是「点一下先闪到工作台、又立即跳回列表」的成因。
+ */
+const NAV_SETTLE_MS = 700
+let navSettleUntil = 0
+
+/**
+ * 当前**实际**所处的屏（列表 / 工作台）。
+ *
+ * 优先级：导航刚发起的一小段时间内以「意图」（`controlRoomScreen`，由 request* 同步写入）
+ * 为准；窗口过后以宿主 DOM 的即时真值兜底（用户直接点宿主自己的 tab 条时，
+ * 视图不重挂、也不经 request*，只有 DOM 知道真实屏幕）。
+ */
+export function getLiveScreen(): Screen {
+  if (Date.now() < navSettleUntil) return controlRoomScreen
+  const label = currentHostViewLabel()
+  if (label === WORKBENCH_LABEL) return 'desk'
+  if (label === PROJECT_CENTER_LABEL) return 'list'
+  return getControlRoomScreen()
+}
+
+// —— 导航代次：让「最后一次点击」胜出，杜绝尾随定时器把界面拨回去 ————
+//
+// 切 tab 靠一串延迟点击（0/120/400/900ms…）。若不作废，上一个动作的尾随点击会在新动作
+// **之后**触发，表现为「点一下，界面闪到工作台又立刻跳回项目中心，然后才定住」（用户反馈）。
+// 每次发起导航把代次 +1，所有延迟回调都带上发起时的代次，过期即自废。
+let navEpoch = 0
+
+/** 开启一次新导航：作废此前所有延迟动作，返回本次代次。 */
+function beginNavigation(): number {
+  navSettleUntil = Date.now() + NAV_SETTLE_MS
+  return ++navEpoch
+}
+
+/** 代次未过期才执行（过期 = 已被更新的导航取代）。 */
+function runIfCurrent(epoch: number, fn: () => void): void {
+  if (epoch !== navEpoch) return
+  try {
+    fn()
+  } catch (e) {
+    console.warn('[tokensave] 过期导航回调失败', e)
+  }
+}
+
+/**
+ * 延迟点宿主 tab（带代次守卫）。
+ * @param label - 目标 tab 文案
+ * @param delays - 依次尝试的延迟（ms）
+ * @param epoch - 发起时的导航代次；若已被更新的导航取代则整个回调自废
+ */
+function scheduleSelectHostView(label: string, delays: number[], epoch: number): void {
+  if (typeof window === 'undefined') return
+  for (const d of delays) {
+    if (d === 0) runIfCurrent(epoch, () => selectHostView(label))
+    else window.setTimeout(() => runIfCurrent(epoch, () => selectHostView(label)), d)
+  }
+}
+
 /** 是否处于“强制列表”态（挂载时不要自动恢复工作台）。 */
 export function isForceList(): boolean {
   return forceList
@@ -670,12 +750,17 @@ function emitDesk(sessionId?: string): void {
 /** 请求「项目中心」显示项目列表（而非工作台）。保留工作台记忆，供切回时用。 */
 export function requestProjectList(): void {
   forceList = true
+  // 同步意图：目标屏当场落定，别等视图挂载才上报（否则连点会读回旧的屏幕，
+  // 切换方向算反——见 getLiveScreen 的说明）。
+  controlRoomScreen = 'list'
   emit(listListeners, '项目列表')
 }
 
 /** 请求「项目中心」回到**上次那个**工作台。可带目标会话 id（导航中已知）。 */
 export function requestWorkbench(sessionId?: string): void {
   forceList = false
+  // 同上：意图即真值，让下一次点击读到的方向是刚切过去的那个屏。
+  controlRoomScreen = 'desk'
   emitDesk(sessionId)
 }
 /** 订阅「显示项目列表」信号；返回取消订阅函数。 */
@@ -735,13 +820,18 @@ function selectHostView(label: string): boolean {
  * @param label - 目标 tab 文案（用于 DOM 点击）
  * @returns 是否至少发起了一次导航
  */
-export function switchToView(viewId: string, label: string): boolean {
+export function switchToView(
+  viewId: string,
+  label: string,
+  epoch: number = beginNavigation(),
+): boolean {
   const sid = getCurrentSessionId()
   if (sid) {
     primeViewPreference(sid, viewId)
-    scheduleActivate(sid, viewId, label)
+    scheduleActivate(sid, viewId, label, epoch)
     return true
   }
+  if (epoch !== navEpoch) return false
   return selectHostView(label)
 }
 
@@ -765,11 +855,9 @@ export function enterProjectWorkbench(projectId: string, targetSessionId?: strin
       // 宿主导航是异步的，因此延后多点几次 tab，等它真正切过去。
       primeViewPreference(targetSessionId, VIEW_ID)
       const ok = openSession(targetSessionId)
-      if (typeof window !== 'undefined') {
-        for (const d of [0, 120, 400, 900]) {
-          window.setTimeout(() => selectHostView(WORKBENCH_LABEL), d)
-        }
-      }
+      // 代次在 openSession 之后再取：宿主导航可能触发自动绑定（那会开启新代次），
+      // 若先取代次，我们的「点工作台 tab」会被绑定当场作废。
+      scheduleSelectHostView(WORKBENCH_LABEL, [0, 120, 400, 900], beginNavigation())
       return ok
     }
   }
@@ -792,18 +880,19 @@ export function enterProjectWorkbench(projectId: string, targetSessionId?: strin
 export function openControlRoom(): boolean {
   const ctx: any = getClientContext()
   if (!ctx) return false
-  const toDesk = getControlRoomScreen() === 'list'
+  const epoch = beginNavigation()
+  const toDesk = getLiveScreen() === 'list'
   const current = getCurrentSessionId()
   if (current) {
     if (toDesk) {
       // 回工作台：先发信号让已挂载的 ControlRoom 恢复「上次打开的项目」，
       // 再切 tab（未挂载时 ControlRoom 挂载后自己从记忆恢复）
       requestWorkbench()
-      switchToView(VIEW_ID, WORKBENCH_LABEL)
+      switchToView(VIEW_ID, WORKBENCH_LABEL, epoch)
     } else {
       // 回项目列表：保留工作台记忆（切回来要知道回哪个项目），只置强制列表标记
       requestProjectList()
-      switchToView(PROJECT_CENTER_VIEW_ID, PROJECT_CENTER_LABEL)
+      switchToView(PROJECT_CENTER_VIEW_ID, PROJECT_CENTER_LABEL, epoch)
     }
     return true
   }
@@ -814,11 +903,14 @@ export function openControlRoom(): boolean {
     primeViewPreference(s.id)
     const ok = openSession(s.id)
     if (typeof window !== 'undefined') {
+      // 代次同样在 openSession 之后再取（见 enterProjectWorkbench 的说明）
+      const epoch = beginNavigation()
       window.setTimeout(() => {
-        const back = getControlRoomScreen() === 'list'
+        const back = getLiveScreen() === 'list'
         switchToView(
           back ? VIEW_ID : PROJECT_CENTER_VIEW_ID,
           back ? WORKBENCH_LABEL : PROJECT_CENTER_LABEL,
+          epoch,
         )
       }, 150)
     }
@@ -921,24 +1013,21 @@ function scheduleActivate(
   sessionId: string,
   viewId: string = VIEW_ID,
   label: string = WORKBENCH_LABEL,
+  epoch: number = beginNavigation(),
 ): void {
   if (!sessionId) return
   // 数据层激活（让 view 参与组装，空白会话才会渲染出我们的视图）
   for (const d of ACTIVATE_DELAYS) {
     if (d === 0) {
-      activateView(sessionId, viewId)
+      runIfCurrent(epoch, () => activateView(sessionId, viewId))
     } else if (typeof window !== 'undefined') {
-      window.setTimeout(() => activateView(sessionId, viewId), d)
+      window.setTimeout(() => runIfCurrent(epoch, () => activateView(sessionId, viewId)), d)
     }
   }
   // UI 层激活：宿主只渲染 store.view 指向的那个视图，而 store.view 只在
   // 会话首次绑定时从偏好读一次。因此**必须点它自己的 tab**才能真把界面切过去。
   // 延迟几次是因为新会话切过去后 tab 列表才渲染出来。
-  if (typeof window !== 'undefined') {
-    for (const d of [0, 120, 400, 900]) {
-      window.setTimeout(() => selectHostView(label), d)
-    }
-  }
+  scheduleSelectHostView(label, [0, 120, 400, 900], epoch)
 }
 
 /**
@@ -1106,8 +1195,9 @@ export function openProjectCenterList(): boolean {
   if (!ctx) return false
   const current = getCurrentSessionId()
   if (current) {
+    const epoch = beginNavigation()
     requestProjectList()
-    return switchToView(PROJECT_CENTER_VIEW_ID, PROJECT_CENTER_LABEL)
+    return switchToView(PROJECT_CENTER_VIEW_ID, PROJECT_CENTER_LABEL, epoch)
   }
   const ordered = loadProjects().slice().sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
   for (const project of ordered) {
@@ -1118,11 +1208,9 @@ export function openProjectCenterList(): boolean {
     primeViewPreference(s.id, PROJECT_CENTER_VIEW_ID)
     rememberOpenedProject(s.id, null)
     const ok = openSession(s.id)
-    if (typeof window !== 'undefined') {
-      for (const d of [0, 150, 500, 1200]) {
-        window.setTimeout(() => selectHostView(PROJECT_CENTER_LABEL), d)
-      }
-    }
+    // 代次在 openSession 之后取：即便这次导航意外触发绑定，我们的目标也仍是最新意图
+    const epoch = beginNavigation()
+    scheduleSelectHostView(PROJECT_CENTER_LABEL, [0, 150, 500, 1200], epoch)
     return ok
   }
   return false

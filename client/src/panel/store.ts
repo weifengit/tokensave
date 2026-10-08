@@ -92,19 +92,32 @@ function writeCache(list: ProjectRecord[]): void {
 let pushChain: Promise<unknown> = Promise.resolve()
 let lastPushAt = 0
 
-/** 把整表推回服务端注册表（跨来源 / 跨设备共享的真相）。失败静默，缓存仍可用。 */
-function pushProjects(list: ProjectRecord[]): void {
+/**
+ * 把本机项目列表推回服务端注册表（跨来源 / 跨设备共享的真相）。失败静默，缓存仍可用。
+ *
+ * 服务端做**并集合并**：只有 removed 里点名的 id 才会真的从注册表消失。
+ * 这是为了防止「某个来源的缓存残缺 → 一次同步把别人的项目全删了」。
+ *
+ * @param list - 本机当前列表
+ * @param removed - 本次显式删除的项目 id（默认空 = 纯新增/修改）
+ */
+function pushProjects(list: ProjectRecord[], removed: string[] = []): void {
   const snapshot = list.map((p) => ({ ...p }))
+  const ids = [...removed]
   lastPushAt = Date.now()
-  pushChain = pushChain.then(() => publishProjects(snapshot)).catch(() => { /* 离线时以缓存兜底 */ })
+  pushChain = pushChain.then(() => publishProjects(snapshot, ids)).catch(() => { /* 离线时以缓存兼底 */ })
 }
 
-function saveProjects(list: ProjectRecord[]): void {
+/**
+ * 保存本机列表并回推服务端。
+ * @param list - 新列表
+ * @param removed - 本次显式删除的 id（仅 removeProject 会传）
+ */
+function saveProjects(list: ProjectRecord[], removed: string[] = []): void {
   writeCache(list)
   emitProjects(list)
-  pushProjects(list)
+  pushProjects(list, removed)
 }
-
 let syncInflight: Promise<boolean> | null = null
 
 /**
@@ -141,8 +154,26 @@ async function doSyncProjects(): Promise<boolean> {
     return true
   }
   if (JSON.stringify(remote) === JSON.stringify(local)) return true
-  writeCache(remote)
-  emitProjects(remote)
+  // —— 并集水合（关键防护）——
+  // 服务端可能比本地**少**（历史事故：某个来源拿着残缺缓存回推，把注册表冲小；
+  // 或者本机存着别人还没有的项目）。直接 writeCache(remote) 会把本地独有的项目
+  // 一起丢掉，等于把事故放大到每一台机器。因此这里改成按 id 并集：
+  //   - 远端有、本地没有 → 采纳（跨设备新增）
+  //   - 本地有、远端没有 → 保留，并回推给服务端（本机才是“知道得更多”的一方）
+  const byId = new Map<string, ProjectRecord>()
+  for (const p of remote) byId.set(p.id, p)
+  const localOnly: ProjectRecord[] = []
+  for (const p of local) {
+    if (!byId.has(p.id)) localOnly.push(p)
+  }
+  const merged = [...byId.values(), ...localOnly]
+  writeCache(merged)
+  emitProjects(merged)
+  if (localOnly.length > 0) {
+    // 本地比服务端多：把多出来的补回服务端，让其他来源也能看到
+    console.warn(`[tokensave] 服务端项目数偏少（远端 ${remote.length} / 本地 ${local.length}），已保留本地独有的 ${localOnly.length} 条并回推`)
+    pushProjects(merged)
+  }
   return true
 }
 
@@ -211,8 +242,15 @@ export function updateProjectDescription(id: string, description: string): boole
   return true
 }
 
+/**
+ * 删除一个项目（用户显式操作）。
+ *
+ * 关键：必须把 id 放进 removed 一并上报。服务端现在做并集合并，只有点名的 id
+ * 才会真的从注册表消失；否则「列表里少了一条」会被当成“本地缓存没看到它”
+ * 而自动保留——那正是防止残缺缓存误删别人项目的机制。
+ */
 export function removeProject(id: string): void {
-  saveProjects(loadProjects().filter((p) => p.id !== id))
+  saveProjects(loadProjects().filter((p) => p.id !== id), [id])
 }
 
 // —— 展示偏好（卡片 / 列表模式、排序方式）——————

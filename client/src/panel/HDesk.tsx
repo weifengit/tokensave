@@ -11,11 +11,11 @@
  * - 中下格内嵌 DSH 主对话只读消息流（MainChat），并把宿主原生输入条
  *   （conversation.composer，每个 tab 常驻）position:fixed 停靠在消息流下方，
  *   卸载/切 tab 自动还原。
- * - 顶部第一行：项目名 + 该项目历史会话选择器 + 新建会话（sessions.ts）。
+ * - 顶部标题行（左→右）：项目名（显著徽标）→ 已关闭列表 → 一键切换 → 历史会话 / 新建会话。
  * - 工作台默认铺满，无宽度把手/滑块（宿主那套全局把手在进入工作台期间隐藏）。
  * - 黑板 / 主对话 / 协作对话 / 协作收益 四张卡都支持最小化、最大化、关闭；
  *   三键渲染在各自卡片自己的标题条里（由本组件构造后作为 actions 传入）。
- * - 左右两竖按奇偶均分探索者；被隐藏的窗口以 chip 形式留在列底部可恢复
+ * - 左右两竖按奇偶均分探索者；被关闭的卡片与探索者窗口统一以 chip 列在标题行可恢复
  */
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { fetchExplorers, fetchProjectInfo, publishProjectScope } from './api'
@@ -26,6 +26,7 @@ import { TalkColumn } from './TalkColumn'
 import { SavingsColumn } from './SavingsColumn'
 import { MainChat } from './MainChat'
 import { SessionPicker } from './SessionPicker'
+import { ExplorerSettings } from './ExplorerSettings'
 import { useProjectSessions, openSession, startProjectSession, latestProjectSession, sessionBelongsToProject } from './sessions'
 import { getClientContext } from '../session-subscribe'
 import { rememberOpenedProject } from './store'
@@ -127,24 +128,36 @@ function CardActions({
   )
 }
 
-/** 已关闭卡片的恢复条（放在台顶，避免卡片本身占位） */
-function ClosedCardsBar({
-  closed,
+/** 已关闭窗口的恢复条：统一列出「被关闭的卡片」（含预览）与「被关闭的探索者窗口」。
+ *  固定在标题行「历史会话」左侧；全部窗口都呈现时 items 为空 → 本区域自然消失。 */
+interface ClosedWindowItem {
+  id: string
+  label: string
+  kind: 'card' | 'explorer'
+}
+
+function ClosedWindowsBar({
+  items,
   onRestore,
 }: {
-  closed: Array<{ id: string; label: string }>
-  onRestore: (id: string) => void
+  items: ClosedWindowItem[]
+  onRestore: (item: ClosedWindowItem) => void
 }) {
-  if (closed.length === 0) return null
+  if (items.length === 0) return null
   return (
-    <div className="ts-closed-bar">
+    <span className="ts-closed-bar">
       <span className="ts-closed-label">已关闭：</span>
-      {closed.map((c) => (
-        <button key={c.id} className="ts-chip" title={`恢复「${c.label}」`} onClick={() => onRestore(c.id)}>
+      {items.map((c) => (
+        <button
+          key={`${c.kind}:${c.id}`}
+          className="ts-chip"
+          title={`恢复「${c.label}」`}
+          onClick={() => onRestore(c)}
+        >
           ＋ {c.label}
         </button>
       ))}
-    </div>
+    </span>
   )
 }
 
@@ -287,7 +300,9 @@ function hostContentWidthPx(el: HTMLElement): number {
   return Math.max(680, Math.min(base * 0.64, 920))
 }
 
-export function HDesk({ project, sessionId, onBack }: Props) {
+/** 注意：`onBack` 仍保留在 Props 里（调用方照传），但标题行不再渲染返回按钮——
+ *  返回项目列表改由左侧边栏的「项目中心」入口承担（用户要求左侧只留项目名）。 */
+export function HDesk({ project, sessionId }: Props) {
   const [explorers, setExplorers] = useState<TelemetrySession[]>([])
   const [winState, setWinState] = useState<Record<string, WinState>>({})
   const [overlayId, setOverlayId] = useState<string | null>(null)
@@ -296,11 +311,13 @@ export function HDesk({ project, sessionId, onBack }: Props) {
   const [devInfo, setDevInfo] = useState<ProjectInfo | null>(null)
   const [previewH, setPreviewH] = useState<number>(() => readPreviewHeight())
   const [previewReload, setPreviewReload] = useState(0)
+  // 默认（未唤醒 tokensave、无探索者）只呈现「DSH 主对话」：黑板 / 协作对话 / 协作收益
+  // 一律以「已关闭」形式列在标题行里，可单独点开恢复 —— 这正是「隐藏窗口明示」的落点。
   const [cards, setCards] = useState<Record<string, CardState>>({
-    board: CARD_DEFAULT,
+    board: { ...CARD_DEFAULT, hidden: true },
     chat: CARD_DEFAULT,
-    talk: CARD_DEFAULT,
-    save: CARD_DEFAULT,
+    talk: { ...CARD_DEFAULT, hidden: true },
+    save: { ...CARD_DEFAULT, hidden: true },
     preview: CARD_DEFAULT,
   })
   const overlayRef = useRef<HTMLDivElement>(null)
@@ -423,10 +440,26 @@ export function HDesk({ project, sessionId, onBack }: Props) {
   const left = visible.filter((_, i) => i % 2 === 0)
   const right = visible.filter((_, i) => i % 2 === 1)
   const overlaid = overlayId ? explorers.find((s) => s.id === overlayId) : undefined
-  // 未唤醒 tokensave（本项目还没有任何探索者会话）：按用户要求只保留一个
-  // DSH 主对话窗口并铺满整个工作台；探索者一出现（tokensave_delegate 跑起来）
-  // 即自动还原 H 台——idle 是派生态，不写入任何卡片状态。
-  const idle = explorers.length === 0
+  // 工作台是**派生态**的单窗口 / H 台切换：只要「黑板 / 协作对话 / 协作收益」三者都仍
+  // 处于关闭、且没有任何可见的探索者窗口，就收成只有 DSH 主对话的单窗口；恢复其中任意
+  // 一个窗口（或探索者出现）即自动回到 H 台 —— 不额外存一份布局状态。
+  const extraShown =
+    visible.length > 0 || !cardOf('board').hidden || !cardOf('talk').hidden || !cardOf('save').hidden
+  const compact = !extraShown
+
+  // 探索者一出现（tokensave_delegate 跑起来）就把黑板 / 协作对话 / 协作收益 一并放出，
+  // 保持既有的「跑起来自动还原 H 台」行为；只做一次，之后不再抢用户手动收起的选择。
+  const autoRevealed = useRef(false)
+  useEffect(() => {
+    if (autoRevealed.current || explorers.length === 0) return
+    autoRevealed.current = true
+    setCards((prev) => ({
+      ...prev,
+      board: { ...(prev.board || CARD_DEFAULT), hidden: false },
+      talk: { ...(prev.talk || CARD_DEFAULT), hidden: false },
+      save: { ...(prev.save || CARD_DEFAULT), hidden: false },
+    }))
+  }, [explorers.length])
 
   // —— 项目预览（台顶一条，不在 H 台网格里）——
   // 「项目能显示预览时才显示预览窗口」：拿不到可用 devUrl 就整块不渲染。
@@ -440,6 +473,59 @@ export function HDesk({ project, sessionId, onBack }: Props) {
   const previewInStrip = previewAvailable && !previewState.hidden && !previewState.maximized
   const showSplitter = previewInStrip && !previewState.collapsed
 
+  // —— 标题行「已关闭列表」：卡片（含预览）与探索者窗口统一收口 ——
+  // 全部窗口都呈现时 closedItems 为空 → 该区域自然消失（「只有全部呈现才消失」）。
+  const closedItems: ClosedWindowItem[] = [
+    ...allCards
+      .filter((c) => cardOf(c.id).hidden)
+      .map((c) => ({ id: c.id, label: c.label, kind: 'card' as const })),
+    ...hidden.map((s) => ({ id: s.id, label: labelOf(s), kind: 'explorer' as const })),
+  ]
+  /** 点 chip 恢复单个窗口（可选择性恢复）。 */
+  const restoreWindow = (item: ClosedWindowItem) => {
+    if (item.kind === 'card') setCard(item.id, { hidden: false })
+    else setStateOf(item.id, { hidden: false })
+  }
+  /** 标题行一键切换：在「显示全部窗口」与「仅显示预览（如有）+ DSH 窗口」之间换挡。 */
+  const allShown = closedItems.length === 0
+  const toggleAllWindows = () => {
+    if (allShown) {
+      // 只保留「预览（如有）+ DSH 主对话」：其余卡片与探索者窗口全部关闭
+      const keep = new Set(['chat', ...(previewAvailable ? ['preview'] : [])])
+      // 探索者「最大化」走的是独立浮层：收成 focus 时必须一并退出，否则浮层仍会盖着。
+      setOverlayId(null)
+      if (document.fullscreenElement) document.exitFullscreen().catch(() => {})
+      setCards((prev) => {
+        const out: Record<string, CardState> = { ...prev }
+        for (const c of allCards) {
+          out[c.id] = { ...(prev[c.id] || CARD_DEFAULT), hidden: !keep.has(c.id), maximized: false }
+        }
+        return out
+      })
+      setWinState((prev) => {
+        const out: Record<string, WinState> = { ...prev }
+        for (const s of explorers) {
+          out[s.id] = { ...(prev[s.id] || { collapsed: false, hidden: false }), hidden: true }
+        }
+        return out
+      })
+    } else {
+      // 全部放出：卡片 + 探索者窗口一律恢复（不动各自的收起 / 铺满状态）
+      setCards((prev) => {
+        const out: Record<string, CardState> = { ...prev }
+        for (const c of allCards) out[c.id] = { ...(prev[c.id] || CARD_DEFAULT), hidden: false }
+        return out
+      })
+      setWinState((prev) => {
+        const out: Record<string, WinState> = { ...prev }
+        for (const s of explorers) {
+          out[s.id] = { ...(prev[s.id] || { collapsed: false, hidden: false }), hidden: false }
+        }
+        return out
+      })
+    }
+  }
+
   // 网格行数：黑板占 1..R-1，中下占 R；左右两竖跨满 —— 探索者增多即均分
   const rows = Math.max(left.length, right.length, 2)
   // 中下格随窗口数/布局变化 → 停靠持续跟随（deps 覆盖重排）
@@ -452,7 +538,7 @@ export function HDesk({ project, sessionId, onBack }: Props) {
     chatDocked,
     // 不再把 previewH 放进依赖：拖分隔条时 chat cell 尺寸变化会经它自己的
     // ResizeObserver 触发重定位；把高度写进依赖会让每次拖动都重建观察器（拖拽发卡）。
-    [rows, idle, sessionId, visible.length, chatMaximized, previewInStrip],
+    [rows, compact, sessionId, visible.length, chatMaximized, previewInStrip],
   )
 
   // 停靠期间给 body 加标记：宿主输入条**座位**自带「透明 → 宿主底色」渐变，
@@ -500,21 +586,6 @@ export function HDesk({ project, sessionId, onBack }: Props) {
       onHide={(id) => setStateOf(id, { hidden: true })}
     />
   )
-
-  const renderHiddenChips = () => hidden.length > 0 && (
-    <div className="ts-win-hidden-bar">
-      {hidden.map((s) => (
-        <button
-          key={s.id}
-          className="ts-chip"
-          title="恢复该模型窗口"
-          onClick={() => setStateOf(s.id, { hidden: false })}
-        >＋ {labelOf(s)}</button>
-      ))}
-    </div>
-  )
-
-  const closedCards = allCards.filter((c) => cardOf(c.id).hidden)
 
   /**
    * 拖动预览条与下方工作台之间的分隔条：总高度不变，上面变高下面就变矮。
@@ -589,11 +660,28 @@ export function HDesk({ project, sessionId, onBack }: Props) {
   return (
     <div className="ts-cr ts-hdesk" ref={rootRef} style={{ padding: 8 }}>
       <div className="ts-bar">
-        <button className="ts-btn" onClick={onBack}>← 项目中心</button>
-        <span className="ts-title">{project.name}</span>
-        <span className="ts-sub ts-bar-path" title={project.path}>{project.path}</span>
-        {/* 会话操作固定靠右，不换行（#8） */}
-        <span className="ts-bar-right ts-bar-sessions">
+        {/* 左侧只留项目名（显著标识）：原「← 项目中心」按钮与项目路径已移除，
+            返回项目列表改由左侧边栏的「项目中心」入口承担。 */}
+        <span className="ts-title ts-title-proj" title={project.path}>
+          <span className="ts-title-proj-icon" aria-hidden="true">🗂</span>
+          <span className="ts-title-proj-name">{project.name}</span>
+        </span>
+        {/* 右侧区域顺序固定：已关闭列表 → 一键切换 → 探索者设置 → 历史会话 / 新建会话 */}
+        <span className="ts-bar-right ts-bar-tools">
+          <ClosedWindowsBar items={closedItems} onRestore={restoreWindow} />
+          <button
+            className="ts-btn ts-btn-mode"
+            onClick={toggleAllWindows}
+            title={
+              allShown
+                ? '当前：全部窗口已呈现 · 点击只保留「项目预览（如有）+ DSH 主对话」'
+                : '当前：部分窗口已关闭 · 点击放出全部窗口（黑板 / 探索者 / 协作对话 / 协作收益）'
+            }
+          >
+            一键切换
+          </button>
+          {/* 探索者设置：浮动面板里按 默认 / 免费 / 收费 三组开关探索者 */}
+          <ExplorerSettings />
           <SessionPicker
             sessions={sessions}
             currentId={sessionId}
@@ -648,63 +736,72 @@ export function HDesk({ project, sessionId, onBack }: Props) {
       )}
 
       {probeError && <div className="ts-hint">⚠️ {probeError}</div>}
-      {/* 被关闭的卡（含预览）都给一个恢复入口 */}
-      <ClosedCardsBar closed={closedCards} onRestore={(id) => setCard(id, { hidden: false })} />
 
       {/* 行轨道同样用 minmax(0, 1fr)：裸 1fr 的自动最小值是 min-content，
           卡片里的长内容会把行撑高，把网格顶出容器（与列同款问题）。 */}
-      {idle ? (
-        /* —— 未唤醒 tokensave：单窗口 —— 其它窗口全部隐藏，DSH 主对话铺满整个工作台
-           （派生态：不改任何卡片状态；探索者一出现就回到 H 台） */
-        <div className="ts-desk" style={{ gridTemplateRows: 'minmax(0,1fr)', gridTemplateColumns: 'minmax(0,1fr)' }}>
-          <div className="ts-desk-chat" style={{ gridRow: '1', gridColumn: '1' }} ref={chatCellRef}>
-            {/* 走 cardShell：idle 下单窗口仍铺满，但三键（最小化/最大化/关闭）照常可用；
-                最大化或关闭时这里返回 null，由浮层 / 恢复条接管（避免双实例双订阅） */}
-            {cardShell('chat', (
-              <MainChat sessionId={sessionId} actions={actionsFor('chat', 'DSH 主对话')} />
-            ), 'ts-card-fill')}
-          </div>
-        </div>
-      ) : (
-        <div className="ts-desk" style={{ gridTemplateRows: `repeat(${rows}, minmax(0, 1fr))` }}>
-        {/* 左竖：顶部协作对话（主 agent ↔ 探索者），下方探索者窗口等高均分 */}
-        <div className="ts-desk-col ts-desk-left">
-          {cardShell('talk', (
-            <TalkColumn
-              sessionId={sessionId}
-              explorers={visible}
-              actions={actionsFor('talk', '协作对话')}
-            />
-          ), 'ts-card-talk')}
-          {left.length === 0 && <div className="ts-hint">左列暂无模型窗口<br />运行 tokensave_delegate 后自动出现</div>}
-          {left.map(renderWin)}
-          {renderHiddenChips()}
-        </div>
-        {/* 中上：共享黑板（跨 1..R-1 行，底边与左右列缝隙对齐，无横线） */}
-        <div className="ts-desk-board" style={{ gridRow: `1 / ${rows}` }}>
-          {cardShell('board', (
-            <Blackboard workspace={project.path} actions={actionsFor('board', '共享黑板')} />
-          ), 'ts-card-fill')}
-        </div>
-        {/* 中下：DSH 主对话卡片 —— 消息流就地渲染 + 宿主原生输入条停靠 */}
-        <div className="ts-desk-chat" style={{ gridRow: String(rows) }} ref={chatCellRef}>
+      {/* —— 单棵稳定树：compact ⇄ H 台 只改布局样式，**不重挂卡片** ——
+          以前这里是 `compact ? <单窗口树> : <H 台树>` 两个分支：布局一翻，React
+          就把整棵子树卸载重建，中下格的 MainChat/MsgList 连同它内部 `.ts-chat-msgs`
+          的 scrollTop、展开态、轮数窗口全部归零——用户看到的就是「时不时刷一下、
+          对话跳回更早，还得重新拉到底」。
+          现在只留一棵树：切换布局只更新 grid 样式，聊天卡片的组件实例与 DOM 节点
+          原样保留（滚动位置、展开态、已加载的历史都不丢）。
+          DOM 顺序把主对话放在 index 0：compact 下其余格子渲染成 false 也不会
+          挤动它的位置；视觉位置仍由各格子自己的 grid-row/grid-column 决定。 */}
+      <div
+        className="ts-desk"
+        style={compact
+          ? { gridTemplateRows: 'minmax(0,1fr)', gridTemplateColumns: 'minmax(0,1fr)' }
+          : { gridTemplateRows: `repeat(${rows}, minmax(0, 1fr))` }}
+      >
+        {/* 中下：DSH 主对话卡片 —— 消息流就地渲染 + 宿主原生输入条停靠。
+            两种布局下都渲染在**同一个 child index**，因此布局切换时组件实例不重建。 */}
+        <div
+          className="ts-desk-chat"
+          style={compact ? { gridRow: '1', gridColumn: '1' } : { gridRow: String(rows) }}
+          ref={chatCellRef}
+        >
           {cardShell('chat', (
             <MainChat sessionId={sessionId} actions={actionsFor('chat', 'DSH 主对话')} />
           ), 'ts-card-fill')}
         </div>
+        {/* 左竖：顶部协作对话（主 agent ↔ 探索者），下方探索者窗口等高均分。
+            compact（未唤醒 tokensave）时整列不渲染——省掉它的订阅与 DOM。 */}
+        {!compact && (
+          <div className="ts-desk-col ts-desk-left">
+            {cardShell('talk', (
+              <TalkColumn
+                sessionId={sessionId}
+                explorers={visible}
+                actions={actionsFor('talk', '协作对话')}
+              />
+            ), `ts-card-talk${left.length === 0 ? ' ts-card-talk-solo' : ''}`)}
+            {left.map(renderWin)}
+          </div>
+        )}
+        {/* 中上：共享黑板（跨 1..R-1 行，底边与左右列缝隙对齐，无横线） */}
+        {!compact && (
+          <div className="ts-desk-board" style={{ gridRow: `1 / ${rows}` }}>
+            {cardShell('board', (
+              <Blackboard workspace={project.path} actions={actionsFor('board', '共享黑板')} />
+            ), 'ts-card-fill')}
+          </div>
+        )}
         {/* 右竖：顶部协作收益（省 token/费用 vs 等待时间），下方探索者窗口 */}
-        <div className="ts-desk-col ts-desk-right">
-          {cardShell('save', (
-            <SavingsColumn
-              sessionId={sessionId}
-              explorers={visible}
-              actions={actionsFor('save', '协作收益')}
-            />
-          ), 'ts-card-save')}
-          {right.map(renderWin)}
-        </div>
-        {/* 最大化/双击全屏的浮层 */}
-        {overlaid && (
+        {!compact && (
+          <div className="ts-desk-col ts-desk-right">
+            {cardShell('save', (
+              <SavingsColumn
+                sessionId={sessionId}
+                explorers={visible}
+                actions={actionsFor('save', '协作收益')}
+              />
+            ), `ts-card-save${right.length === 0 ? ' ts-card-save-solo' : ''}`)}
+            {right.map(renderWin)}
+          </div>
+        )}
+        {/* 最大化/双击全屏的浮层（放在最后：它的增删不会挤动前面的格子） */}
+        {!compact && overlaid && (
           <ExplorerWindow
             session={overlaid}
             label={labelOf(overlaid)}
@@ -720,8 +817,7 @@ export function HDesk({ project, sessionId, onBack }: Props) {
             onHide={() => {}}
           />
         )}
-        </div>
-      )}
+      </div>
 
       {/* 卡片铺满浮层：覆盖整个工作台 */}
       {maximizedCard && (

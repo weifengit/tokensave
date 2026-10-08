@@ -17,7 +17,7 @@
  * 滚到顶部（或点「加载更早」）时先放大本地轮数窗口，本地没得放了就请宿主
  * 拉一页更早的历史（见 MainChat 的 onLoadOlder），并在内容变高后把视口钉回原处。
  */
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { StreamMsg } from '../session-subscribe'
 import { RichText, stripMarkdown } from './RichText'
 
@@ -29,6 +29,20 @@ const TURNS_PER_PAGE = 20
 const TOP_LOAD_THRESHOLD = 32
 /** 折叠行单行预览长度 */
 const PREVIEW = 120
+
+/**
+ * 会话滚动位置记忆（跨组件重挂保命）。
+ *
+ * 为什么要模块级而不是组件内 ref：滚动位置就在**被卸载的那个组件**里，
+ * 重挂后新实例读不到它。用 sessionId 作键存在模块作用域，重挂时才能接上。
+ *
+ * 语义：只在「用户当前就在底部附近」时记 bottom（重挂后继续贴底跟随流式输出）；
+ * 用户主动往上翻时记具体 scrollTop（重挂后回到原处，不把他抳回底部）。
+ */
+interface ScrollMemo { bottom: boolean; top: number }
+const SCROLL_MEMO = new Map<string, ScrollMemo>()
+const SCROLL_MEMO_MAX = 40
+
 
 const ROLE_LABELS: Record<string, string> = {
   user: '我',
@@ -50,6 +64,26 @@ export const INJECT_LABELS: Record<string, string> = {
 function oneLine(text: string): string {
   const t = stripMarkdown(text)
   return t.length > PREVIEW ? t.slice(0, PREVIEW) + '…' : t
+}
+
+/**
+ * 「展开后点正文任意位置即收起」——用户要求：不必再滚回顶部去点折叠头。
+ *
+ * 例外（这些不收起）：
+ *   - 落在可交互元素上：子折叠按钮（`button`）、RichText 里的链接、表单控件、
+ *     `[role=button]` / `contenteditable`；
+ *   - 存在文本选区（用户刚拖选了内容）——否则正文里的文字永远选不中。
+ *
+ * 只挂在已展开的**正文容器**上，不挂折叠头（头部本身就是切换按钮，挂上去会双触发）。
+ */
+function collapseOnBodyClick(close: () => void) {
+  return (e: React.MouseEvent<HTMLDivElement>) => {
+    const el = e.target as HTMLElement | null
+    if (!el || el.closest('button, a, input, select, textarea, [role="button"], [contenteditable="true"]')) return
+    const sel = typeof window !== 'undefined' && window.getSelection ? window.getSelection() : null
+    if (sel && String(sel).trim().length > 0) return
+    close()
+  }
 }
 /**
  * 过程里的一条：默认一行预览，点 ▾ 展开全文。
@@ -102,7 +136,7 @@ function InjectionRow({ items }: { items: StreamMsg[] }) {
         <span className="ts-dim">{items.map(label).join('、')}</span>
       </button>
       {open && (
-        <div className="ts-proc-body">
+        <div className="ts-proc-body" onClick={collapseOnBodyClick(() => setOpen(false))}>
           {items.map((m, i) => (
             <div className="ts-proc-item ts-inject-item" key={i}>
               <div className="ts-proc-item-head">
@@ -141,7 +175,7 @@ function ProcessGroup({ items }: { items: StreamMsg[] }) {
         {tools > 0 && <span className="ts-dim">工具 {tools} 次</span>}
       </button>
       {open && (
-        <div className="ts-proc-body">
+        <div className="ts-proc-body" onClick={collapseOnBodyClick(() => setOpen(false))}>
           {items.map((m, i) => <ProcItem key={i} msg={m} />)}
         </div>
       )}
@@ -155,6 +189,8 @@ interface Turn {
   answer: StreamMsg | null
   /** 宿主自动注入的上下文（非用户所发），单独折叠成一行，不进用户气泡 */
   injects: StreamMsg[]
+  /** 本轮异常结束的提示（turn/end 的 reason / agent/error）；正常结束为 null */
+  notice: StreamMsg | null
 }
 
 /**
@@ -167,7 +203,11 @@ function splitTurn(turn: StreamMsg[]): Turn {
   const users: StreamMsg[] = []
   const injects: StreamMsg[] = []
   const rest: StreamMsg[] = []
+  let notice: StreamMsg | null = null
   for (const m of turn) {
+    // 异常结局单独收口：它既不是用户消息，也不该被埋进「过程」折叠里——
+    // 用户必须一眼看到「这轮挂了」（以前 turn/end 被丢弃，工作台看不出来）。
+    if (m.notice) { notice = m; continue }
     // 注入消息 role 也是 'user'，必须先于 role 判断拦下：
     // 既不能当用户气泡，也不能被算作「该轮的提问」。
     if (m.injected) injects.push(m)
@@ -184,7 +224,7 @@ function splitTurn(turn: StreamMsg[]): Turn {
     }
   }
   const proc = rest.filter((m) => m !== answer)
-  return { users, injects, proc, answer }
+  return { users, injects, proc, answer, notice }
 }
 
 interface MsgListProps {
@@ -196,6 +236,53 @@ interface MsgListProps {
   loadingOlder?: boolean
   /** 请求拉取更早一页（由 MainChat 转发到 session face 的 loadOlder） */
   onLoadOlder?: () => void | Promise<void>
+  /**
+   * 会话身份键（主对话传 sessionId）。
+   *
+   * 为什么需要：组件**重挂**时（例如把主对话卡片最大化 / 还原，或布局重排）
+   * ref 指向的是新节点、scrollTop 从 0 开始——用户看到的就是对话「跳回更早」。
+   * 挂载时若已有内容，直接贴底，不再依赖「内容变化」这个触发条件。
+   */
+  followKey?: string
+}
+
+/**
+ * 一轮异常结束的提示行（故障中断 / 输出截断 / 异常中止）。
+ *
+ * 为什么必须独立成行：用户反馈「中断时看不出来」——以前 `turn/end` 被投影丢掉，
+ * 工作台里中止的一轮与正常结束长得一模一样，只有宿主原生「对话」tab 能看出区别。
+ * 因此这里用醒目样式（而非“过程”折叠）把结局摆到轮末，并带上宿主错误码。
+ * 正文默认收起：宿主原文可能很长（判据、额度估算等），需要时可展开。
+ */
+function TurnNoticeRow({ notice }: { notice: NonNullable<StreamMsg['notice']> }) {
+  const [open, setOpen] = useState(false)
+  const fatal = notice.kind === 'error' || notice.kind === 'blocked'
+  const label = notice.kind === 'max-tokens'
+    ? '输出被截断'
+    : notice.kind === 'aborted'
+      ? '本轮已中止'
+      : notice.kind === 'interrupted'
+        ? '本轮已中断'
+        : notice.kind === 'blocked'
+          ? '本轮被阻断'
+          : '本轮运行失败'
+  return (
+    <div className={`ts-turn-notice${fatal ? ' ts-turn-notice-fatal' : ''}`}>
+      <div className="ts-turn-notice-head">
+        <span className="ts-turn-notice-icon" aria-hidden="true">{fatal ? '⛔' : '⚠️'}</span>
+        <span className="ts-turn-notice-label">{label}</span>
+        {notice.code && <span className="ts-turn-notice-code">{notice.code}</span>}
+        <button
+          className="ts-icon-btn ts-msg-toggle"
+          onClick={() => setOpen((v) => !v)}
+          title={open ? '收起详情' : '展开完整说明'}
+        >{open ? '▴' : '▾'}</button>
+      </div>
+      {open
+        ? <div className="ts-turn-notice-body"><RichText text={notice.message} /></div>
+        : <div className="ts-turn-notice-preview">{oneLine(notice.message)}</div>}
+    </div>
+  )
 }
 
 export function MsgList({
@@ -204,10 +291,93 @@ export function MsgList({
   hasMore = false,
   loadingOlder = false,
   onLoadOlder,
+  followKey = '',
 }: MsgListProps) {
   const ref = useRef<HTMLDivElement>(null)
   // 当前展示的轮数窗口：瀑布式回翻时逐步放大（只放大，不缩回去）
   const [windowTurns, setWindowTurns] = useState(MAX_TURNS)
+  // —— 滚动跟随（反馈 #2）——
+  //
+  // 旧行为：内容一变就 `scrollTop = scrollHeight`。后果是用户展开过程、
+  // 滚上去看细节时，一有新动态就被拉回底部，读不了。
+  //
+  // 新行为（粘性跟随）：只有用户**本来就在底部附近**时才跟随新内容；
+  // 一旦手动往上滚，就不再自动调整，直到他自己滚回底部。
+  const pinnedRef = useRef(true)
+  const [pinned, setPinned] = useState(true)
+  /** 回翻前的滚动锚点：内容变高后用它把视口钉回原处 */
+  const anchorRef = useRef<{ height: number; top: number } | null>(null)
+  /** 刚做过视口锤定的时间戳：程序化改 scrollTop 会触发 scroll 事件，
+      需短时间内忽略它，避免连锁把整段历史一口气拉完 */
+  const restoredAtRef = useRef(0)
+  /** 距底部多少像素内仍算“在底部”（给流式追加留余量）。 */
+  const NEAR_BOTTOM = 24
+  /**
+   * 记住当前滚动位置（卸载前 / 用户滚动时调用）。
+   *
+   * 为什么要模块级 SCROLL_MEMO 而不是组件内 ref：位置就在**被卸载的那个
+   * 组件实例**里，重挂后新实例读不到。用 followKey（= sessionId）作键才能接上。
+   */
+  const rememberScroll = useCallback(() => {
+    const el = ref.current
+    if (!el || !followKey) return
+    // 以 pinnedRef 为准（它由真实滚动事件维护）。
+    // 不在这里重算：布局切换会改变 scrollHeight（输入条重新停靠→padding-bottom 变），
+    // 那会让 gap 瞬间变大，若拿它当真值就会把「贴底」误记成「用户翻上去了」，
+    // 重挂后反而把他带到中间——正是要修的那个「跳回更早」。
+    const bottom = pinnedRef.current
+    SCROLL_MEMO.set(followKey, { bottom, top: el.scrollTop })
+    // 只增不减会随会话数缓慢膨胀
+    if (SCROLL_MEMO.size > SCROLL_MEMO_MAX) {
+      const oldest = SCROLL_MEMO.keys().next().value
+      if (oldest !== undefined) SCROLL_MEMO.delete(oldest)
+    }
+  }, [followKey])
+
+  // 卸载前记下位置，供重挂时恢复（组件重挂是「跳回更早」的直接成因）。
+  useEffect(() => rememberScroll, [rememberScroll])
+
+  /** 待恢复的滚动位置：重挂时内容往往还没到位，先存着，等内容来了再套用。 */
+  const pendingRestoreRef = useRef<ScrollMemo | null>(null)
+
+  /**
+   * 挂载 / 切会话：按记忆恢复滚动位置（绘制前执行，不会先闪一下再跳）。
+   *   - 上次就在底部 → 贴底并继续跟随流式输出；
+   *   - 上次在往上翻 → 回到原处，且**不**自动跟随（不把用户拽回底部）。
+   *
+   * 切到**另一个**会话（followKey 变了）时不该沿用旧会话的位置——
+   * 那是宿主切会话，应由下面「切会话重新贴底」的 effect 接管。
+   */
+  const memoKeyRef = useRef(followKey)
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const sameSession = memoKeyRef.current === followKey
+    memoKeyRef.current = followKey
+    const memo = sameSession && followKey ? SCROLL_MEMO.get(followKey) : undefined
+    if (memo && !memo.bottom) {
+      pinnedRef.current = false
+      setPinned(false)
+      pendingRestoreRef.current = memo
+      el.scrollTop = Math.min(memo.top, Math.max(0, el.scrollHeight - el.clientHeight))
+      return
+    }
+    pinnedRef.current = true
+    setPinned(true)
+    pendingRestoreRef.current = null
+    el.scrollTop = el.scrollHeight
+  }, [followKey])
+
+  // 内容到位后把「待恢复」的位置真正套用一次（重挂时消息通常是异步到达的）。
+  useLayoutEffect(() => {
+    const p = pendingRestoreRef.current
+    const el = ref.current
+    if (!p || !el) return
+    if (el.scrollHeight <= el.clientHeight) return   // 还没内容，等下一次渲染
+    pendingRestoreRef.current = null
+    el.scrollTop = Math.min(p.top, Math.max(0, el.scrollHeight - el.clientHeight))
+    restoredAtRef.current = Date.now()
+  })
 
   const turns = useMemo(() => {
     const out: StreamMsg[][] = []
@@ -227,22 +397,6 @@ export function MsgList({
   const hasHiddenInDom = hiddenTurns > 0
   const canLoadOlder = hasHiddenInDom || (hasMore && !!onLoadOlder)
 
-  // —— 滚动跟随（反馈 #2）——
-  //
-  // 旧行为：内容一变就 `scrollTop = scrollHeight`。后果是用户展开过程、
-  // 滚上去看细节时，一有新动态就被拉回底部，读不了。
-  //
-  // 新行为（粘性跟随）：只有用户**本来就在底部附近**时才跟随新内容；
-  // 一旦手动往上滚，就不再自动调整，直到他自己滚回底部。
-  const pinnedRef = useRef(true)
-  const [pinned, setPinned] = useState(true)
-  /** 回翻前的滚动锚点：内容变高后用它把视口钉回原处 */
-  const anchorRef = useRef<{ height: number; top: number } | null>(null)
-  /** 刚做过视口锤定的时间戳：程序化改 scrollTop 会触发 scroll 事件，
-      需短时间内忽略它，避免连锁把整段历史一口气拉完 */
-  const restoredAtRef = useRef(0)
-  /** 距底部多少像素内仍算“在底部”（给流式追加留余量）。 */
-  const NEAR_BOTTOM = 24
 
   /**
    * 回翻一页更早的历史（瀑布式）。
@@ -267,33 +421,118 @@ export function MsgList({
     void onLoadOlder()
   }, [hasHiddenInDom, hasMore, loadingOlder, onLoadOlder])
 
+  /**
+   * 用户「主动滚动」的时间戳（滚轮 / 触控 / 键盘 / 按下鼠标——含拖滚动条）。
+   *
+   * 为何必须有它：布局切换时宿主输入条会重新停靠，`.ts-chat-msgs` 的
+   * padding-bottom / 高度会**分几步异步变化**，中间态把 scrollTop 夹到一个
+   * 较小的值，尺寸恢复后浏览器**不会**把它放回去。于是产生一个「离开了底部」
+   * 的 scroll 事件，与用户往上翻长得一模一样——不加区分就会把贴底状态
+   * 误清掉（实测 98px 偏差且不再自愈）。
+   *
+   * 只有真实输入才算用户意图；程序化改 scrollTop 不算。
+   */
+  const userIntentAtRef = useRef(0)
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const mark = () => { userIntentAtRef.current = Date.now() }
+    const opts = { passive: true, capture: true } as AddEventListenerOptions
+    const types = ['wheel', 'touchstart', 'touchmove', 'keydown', 'pointerdown', 'mousedown'] as const
+    for (const t of types) el.addEventListener(t, mark, opts)
+    return () => { for (const t of types) el.removeEventListener(t, mark, opts) }
+  }, [])
+
+  /** 上一次量到的尺寸（仅用于识别布局过渡期）。 */
+  const metricsRef = useRef<{ sh: number; ch: number } | null>(null)
+
+  /** 强制滚到底部（不改变 pinned 状态；调用方自己决定是否恢复跟随）。 */
+  const forceBottom = useCallback(() => {
+    const node = ref.current
+    if (!node) return
+    node.scrollTop = node.scrollHeight
+    metricsRef.current = { sh: node.scrollHeight, ch: node.clientHeight }
+  }, [])
+
+  /** 用户主动回到最新：滚到底并恢复跟随。 */
+  const scrollToBottom = useCallback(() => {
+    forceBottom()
+    pinnedRef.current = true
+    setPinned(true)
+  }, [forceBottom])
+  /**
+   * 贴底稳定化：布局变动后的一小段时间内反复贴底。
+   *
+   * 为何要反复而不是补一次：输入条高度由 HDesk 分几步异步写入
+   * （layout effect + ResizeObserver + 300ms 轮询），补一次往往赶在最终
+   * 尺寸之前，于是留下几十像素偏差。用有界 rAF 窗口盯到尺寸稳定为止。
+   */
+  const settleUntilRef = useRef(0)
+  const settleRafRef = useRef(0)
+  const runSettle = useCallback(() => {
+    settleRafRef.current = 0
+    if (performance.now() >= settleUntilRef.current) return
+    // 用**实时**的 pinned 状态，不能用渲染时的快照：用户一旦往上翻，
+    // onScroll 会当场把 pinned 置为 false，循环必须立即停手。
+    if (pinnedRef.current) forceBottom()
+    settleRafRef.current = requestAnimationFrame(runSettle)
+  }, [forceBottom])
+  /** 开启（或延长）一段贴底稳定化窗口。 */
+  const scheduleSettle = useCallback(() => {
+    settleUntilRef.current = performance.now() + 1500
+    if (!settleRafRef.current) settleRafRef.current = requestAnimationFrame(runSettle)
+  }, [runSettle])
+  useEffect(() => () => { if (settleRafRef.current) cancelAnimationFrame(settleRafRef.current) }, [])
+
+
   const onScroll = () => {
     const el = ref.current
     if (!el) return
-    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight <= NEAR_BOTTOM
-    if (atBottom !== pinnedRef.current) {
-      pinnedRef.current = atBottom
-      setPinned(atBottom)
+    const sh = el.scrollHeight
+    const ch = el.clientHeight
+    const prev = metricsRef.current
+    const sizeChanged = prev !== null && (prev.sh !== sh || prev.ch !== ch)
+    metricsRef.current = { sh, ch }
+
+    if (sh - el.scrollTop - ch <= NEAR_BOTTOM) {
+      // 到了底部：恢复跟随（不论是怎么到这里的）。
+      if (!pinnedRef.current) {
+        pinnedRef.current = true
+        setPinned(true)
+      }
+      return
     }
-    // 滚到顶部就往下回翻（滚轮/拖到顶都会命中）
-    if (el.scrollTop <= TOP_LOAD_THRESHOLD) requestOlder()
+    // 离开了底部：只有真实用户输入才算「用户自己往上翻」。
+    // 否则（布局钳位 / 回翻锚定）不动贴底状态，由稳定化循环补回去。
+    if (!sizeChanged && Date.now() - userIntentAtRef.current < 900) {
+      if (pinnedRef.current) {
+        pinnedRef.current = false
+        setPinned(false)
+      }
+      rememberScroll()
+      // 滚到顶部就往下回翻（只认真实用户滚动）
+      if (el.scrollTop <= TOP_LOAD_THRESHOLD) requestOlder()
+    }
   }
 
   const jumpToBottom = () => {
-    const el = ref.current
-    if (!el) return
-    el.scrollTop = el.scrollHeight
-    pinnedRef.current = true
-    setPinned(true)
+    scrollToBottom()
+    rememberScroll()
   }
 
-  // 末条内容变化时跟随（覆盖流式追加）；用户已滚上去则不动。
-  const tailLen = messages.length > 0 ? messages[messages.length - 1].content.length : 0
-  useEffect(() => {
-    if (!pinnedRef.current) return
-    const el = ref.current
-    if (el) el.scrollTop = el.scrollHeight
-  }, [messages.length, tailLen, shownTurns.length])
+  /**
+   * 每次渲染后：贴底一次并开一段稳定化窗口。
+   *
+   * 为什么选“渲染后”做挂钩点：布局切换会让 HDesk 重渲染（actions 每次
+   * 都是新元素），MainChat/MsgList 随之重渲染；而输入条高度的异步写入
+   * 恰恰也发生在这段时间。在这里开窗，就能把随后的几次尺寸变化都盖住。
+   *
+   * 只在 pinnedRef 为真（用户本来就在底部）时动手，不会抢用户往上翻的视口。
+   */
+  useLayoutEffect(() => {
+    if (pinnedRef.current) forceBottom()
+    scheduleSettle()
+  })
 
   // 回翻后恢复视口：新增内容在**顶部**，因此把 scrollTop 加上「长高的那部分」，
   // 用户眼前的旧内容原地不动（典型瀑布流锚定）。无锚点时 no-op。
@@ -306,15 +545,11 @@ export function MsgList({
     el.scrollTop = el.scrollHeight - a.height + a.top
   })
 
-  // 切换会话时重新贴底（新会话应从头看最新）
+  // 切换会话时重置轮数窗口（新会话从头开始；位置由上面 followKey 的 layout effect 接管，
+  // 那里已经处理了「贴底 / 恢复原处」，所以这里不再碰 scrollTop——否则会把恢复覆盖掉）。
   useEffect(() => {
-    pinnedRef.current = true
-    setPinned(true)
     setWindowTurns(MAX_TURNS)
-    const el = ref.current
-    if (el) el.scrollTop = el.scrollHeight
-  }, [emptyText])
-
+  }, [followKey])
   return (
     <div className="ts-chat-msgs" ref={ref} onScroll={onScroll}>
       {messages.length === 0 && (
@@ -344,6 +579,7 @@ export function MsgList({
               <RichText text={t.answer.content} />
             </div>
           )}
+          {t.notice && <TurnNoticeRow notice={t.notice.notice!} />}
         </div>
       ))}
       {/* 用户滚上去看细节时给一个“回到最新”入口（不自动抢滚动） */}

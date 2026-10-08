@@ -270,7 +270,6 @@ export function SessionPicker({ sessions, currentId, onPick, onNew }: SessionPic
                         <span className="ts-sess-slot">
                           {relTime(s.updatedAt) !== '' && (
                             <span className="ts-sess-time">
-                              <span className="ts-sess-sep" aria-hidden="true">·</span>
                               {relTime(s.updatedAt)}
                             </span>
                           )}

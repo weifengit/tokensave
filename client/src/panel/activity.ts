@@ -46,7 +46,7 @@ interface SessionStatusRow {
 type SessionStatusMap = ReadonlyMap<string, SessionStatusRow> | Map<string, SessionStatusRow> | undefined
 
 /** 读 uiSession.sessionStatus 的当前快照（服务不可用时返回 undefined）。 */
-function statusSnapshot(ctx: any): SessionStatusMap {
+export function statusSnapshot(ctx: any): SessionStatusMap {
   try {
     const svc = readService<any>(ctx, 'uiSession')
     const src = svc?.sessionStatus
