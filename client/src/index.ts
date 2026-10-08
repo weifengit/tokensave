@@ -20,7 +20,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { useEffect } from 'react'
 import { getClientContext, setClientContext, subscribeSession, readService } from './session-subscribe'
 import {
-  sweepProjectSessionBindings, bindSessionToItsProject, wrapSessionCreate, setCurrentSessionId,
+  sweepProjectSessionBindings, bindSessionToItsProject, bindSessionEventually, wrapSessionCreate, setCurrentSessionId,
   VIEW_ID, WORKBENCH_LABEL, PROJECT_CENTER_VIEW_ID, PROJECT_CENTER_LABEL,
 } from './panel/sessions'
 import { mountBriefWindow, mountedExplorerCount } from './float/mount'
@@ -146,7 +146,9 @@ function wrapSessionNavigation(): void {
       // 拿到**已解析**的会话 id（target 可能是 workspaceId 或会话 id）。
       const hooked = (resolvedId: string) => {
         try {
-          if (resolvedId) bindSessionToItsProject(String(resolvedId))
+          // 用带重试的绑定：新建会话刚返回时可能还没进列表快照（cwd 读不到），
+          // 当场绑不上就排一串重试，等列表刷新后按 cwd 命中项目。
+          if (resolvedId) bindSessionEventually(String(resolvedId))
         } catch (e) {
           console.warn('[tokensave] 会话→工作台绑定失败', e)
         }
@@ -184,7 +186,7 @@ function wrapOpenSession(ui: any): boolean {
       const id = typeof target === 'string'
         ? target
         : String(target?.sessionId ?? target?.id ?? '')
-      if (id) bindSessionToItsProject(id)
+      if (id) bindSessionEventually(id)
     } catch (e) {
       // 绑定失败不能阻断导航本身
       console.warn('[tokensave] 会话→工作台绑定失败', e)

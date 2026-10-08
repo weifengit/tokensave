@@ -163,6 +163,178 @@ export function openSession(sessionId: string): boolean {
 }
 
 /**
+ * 归档一个会话（宿主 uiWorkspace.archiveSession）。
+ *
+ * 镜像原生左侧边栏的流程：先不带 stopActivity 试一次；宿主对**正在运行**的会话会
+ * 拒绝（错误码 workspace/session-active），此时返回 active=true，由调用方弹确认后再用
+ * stopActivity=true 重试（宿主会先停掉它的工作再归档）。
+ *
+ * 归档后该会话从工作区的会话列表里消失（readProjectSessions 已过滤 archivedSessionIds），
+ * 若它正好是当前选中会话，宿主会同时清掉选中。
+ * @param sessionId - 要归档的会话
+ * @param stopActivity - 是否先停止它的运行中工作再归档
+ * @returns ok 或失败原因（active 标记“因正在运行被拒”）
+ */
+export async function archiveSession(
+  sessionId: string,
+  stopActivity = false,
+): Promise<{ ok: true } | { ok: false; active: boolean; error: string }> {
+  if (!sessionId) return { ok: false, active: false, error: '缺少会话 id' }
+  const ctx: any = getClientContext()
+  const ui = ctx ? svc(ctx, 'uiWorkspace') : undefined
+  if (!ui || typeof ui.archiveSession !== 'function') {
+    return { ok: false, active: false, error: '归档服务不可用' }
+  }
+  try {
+    await ui.archiveSession(sessionId, stopActivity ? { stopActivity: true } : undefined)
+    return { ok: true }
+  } catch (e: any) {
+    const code = String(e?.code ?? e?.data?.code ?? '')
+    const text = `${code} ${String(e?.message ?? e ?? '')}`
+    const active = code.includes('session-active') || /session-active|running work/i.test(text)
+    return { ok: false, active, error: String(e?.message ?? e ?? '归档被拒绝') }
+  }
+}
+
+/**
+ * 取消归档（宿主 uiWorkspace.unarchiveSession）：把会话恢复回它原来的工作区位置。
+ * @param sessionId - 要恢复的会话
+ * @returns 是否成功
+ */
+export async function unarchiveSession(sessionId: string): Promise<boolean> {
+  const ctx: any = getClientContext()
+  const ui = ctx ? svc(ctx, 'uiWorkspace') : undefined
+  if (!sessionId || !ui || typeof ui.unarchiveSession !== 'function') return false
+  try {
+    await ui.unarchiveSession(sessionId)
+    return true
+  } catch (e) {
+    console.warn('[tokensave] 取消归档失败', e)
+    return false
+  }
+}
+
+/** 置顶一个会话（宿主 uiWorkspace.pinSession）。 */
+export async function pinSession(sessionId: string): Promise<boolean> {
+  const ctx: any = getClientContext()
+  const ui = ctx ? svc(ctx, 'uiWorkspace') : undefined
+  if (!sessionId || !ui || typeof ui.pinSession !== 'function') return false
+  try {
+    await ui.pinSession(sessionId)
+    return true
+  } catch (e) {
+    console.warn('[tokensave] 置顶会话失败', e)
+    return false
+  }
+}
+
+/** 取消置顶（宿主 uiWorkspace.unpinSession）。 */
+export async function unpinSession(sessionId: string): Promise<boolean> {
+  const ctx: any = getClientContext()
+  const ui = ctx ? svc(ctx, 'uiWorkspace') : undefined
+  if (!sessionId || !ui || typeof ui.unpinSession !== 'function') return false
+  try {
+    await ui.unpinSession(sessionId)
+    return true
+  } catch (e) {
+    console.warn('[tokensave] 取消置顶失败', e)
+    return false
+  }
+}
+
+/**
+ * 重命名一个会话（写会话标题）。
+ *
+ * 与原生侧边栏同口径：经 `sessions.using(id, { source }, ref => ref.binding.session.rename(title))`
+ * —— using 会自行 retain / 释放引用，不依赖本插件已经订阅过该会话。
+ * @returns ok 或失败原因
+ */
+export async function renameSession(
+  sessionId: string,
+  title: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const next = String(title ?? '').trim()
+  if (!sessionId || !next) return { ok: false, error: '标题不能为空' }
+  const ctx: any = getClientContext()
+  const sessions = ctx ? svc(ctx, 'sessions') : undefined
+  if (!sessions) return { ok: false, error: '会话服务不可用' }
+  try {
+    if (typeof sessions.using === 'function') {
+      const result: any = await sessions.using(sessionId, { source: 'tokensave' }, (ref: any) =>
+        ref?.binding?.session?.rename(next),
+      )
+      if (result && result.ok === false) {
+        return { ok: false, error: String(result.error?.message ?? '重命名被拒绝') }
+      }
+      return { ok: true }
+    }
+    // 降级：已物化 binding 直接改
+    const face: any = sessions.binding?.(sessionId)?.session
+    if (face && typeof face.rename === 'function') {
+      const result: any = await face.rename(next)
+      if (result && result.ok === false) return { ok: false, error: String(result.error?.message ?? '重命名被拒绝') }
+      return { ok: true }
+    }
+    return { ok: false, error: '重命名服务不可用' }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : '重命名失败' }
+  }
+}
+
+/**
+ * 分叉一个会话（宿主 uiWorkspace.forkSession）：不改当前选中，只生成一个子会话。
+ * @returns 子会话 id（失败返回 null）
+ */
+export async function forkSession(sessionId: string): Promise<string | null> {
+  const ctx: any = getClientContext()
+  const ui = ctx ? svc(ctx, 'uiWorkspace') : undefined
+  if (!sessionId || !ui || typeof ui.forkSession !== 'function') return null
+  try {
+    const child = await ui.forkSession(sessionId)
+    return child ? String(child) : null
+  } catch (e) {
+    console.warn('[tokensave] 分叉会话失败', e)
+    return null
+  }
+}
+
+/** 已置顶会话 id 集合（宿主 workspaces.list 的 pinnedSessionIds）。 */
+export function readPinnedSessionIds(ctx: any): string[] {
+  const snap = readWorkspaceSnapshot(ctx)
+  const ids = snap && Array.isArray(snap.pinnedSessionIds) ? snap.pinnedSessionIds : []
+  return ids.map((x: any) => String(x))
+}
+
+/**
+ * 订阅“已置顶会话”集合（置顶/取消置顶后自动刷新）。
+ * @returns 当前置顶的会话 id 集合
+ */
+export function usePinnedSessions(): Set<string> {
+  const [pinned, setPinned] = useState<Set<string>>(() => new Set())
+  useEffect(() => {
+    const ctx: any = getClientContext()
+    const read = () => {
+      try {
+        setPinned(new Set(readPinnedSessionIds(ctx)))
+      } catch {
+        setPinned(new Set())
+      }
+    }
+    read()
+    const src = ctx ? svc(ctx, 'workspaces')?.list : undefined
+    if (src && typeof src.subscribe === 'function') {
+      try {
+        return src.subscribe(read)
+      } catch {
+        return
+      }
+    }
+    return
+  }, [])
+  return pinned
+}
+
+/**
  * 「展示」：跳到该项目的**宿主 UI 界面**（DSH 默认对话窗口，带左侧工作区）。
  *
  * 与「进入工作台」的区别：工作台是本插件视图；展示是把宿主拉回它自己的界面，
@@ -241,13 +413,18 @@ export async function startProjectSession(
     const reuse = readProjectSessions(ctx, projectPath).find((s) => s.blank)
     const id = reuse?.id
       ?? String(await sessions.create(workspaceId ? { workspaceId } : { cwd: projectPath }))
-    // 顺序很关键：先写好「视图偏好 + 项目记忆」，再导航。
+    // 顺序很关键：先写好「视图偏好 + 项目记忆 + 立即激活工作台视图」，再导航。
     // 导航会让宿主动用新会话的 binding，ControlRoom 随之重挂并立即读这两项；
     // 若先导航后写，重挂时读到的还是空值 → 落到项目列表（即用户看到的「脱离工作台」）。
-    primeViewPreference(id)
-    if (projectId) rememberOpenedProject(id, projectId)
+    //
+    // 用 bindToProject 而不是只写偏好：**复用的空白会话**的 binding 往往早已物化
+    // （例如上次停在「对话」tab），那种情况下宿主不会再读偏好，必须显式激活视图。
+    if (projectId) bindToProject(id, projectId)
+    else primeViewPreference(id)
     if (ui && typeof ui.openSession === 'function') ui.openSession(id)
     else if (workspaceId && typeof ui?.openWorkspace === 'function') await ui.openWorkspace(workspaceId)
+    // 兜底：刚创建的会话可能还没进会话列表快照（cwd 读不到）→ 等它就绪后再绑一次
+    bindSessionEventually(id)
     return { ok: true, id }
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : '新建会话失败' }
@@ -653,7 +830,38 @@ export function bindToProject(sessionId: string, projectId: string): boolean {
   // 偏好定成 chat），只写 localStorage 不会重激活——必须显式把视图切回来。
   // 延后多次尝试激活（见 scheduleActivate 注释：新建的空白会话 binding 尚未物化）。
   scheduleActivate(sessionId)
+  // 记下“已绑过”：重试链见到它就不再重复激活/点 tab
+  boundSessions.add(sessionId)
+  if (boundSessions.size > 500) boundSessions.clear()
   return true
+}
+
+/** 已成功绑到工作台的会话（防止重试链反复激活/点 tab） */
+const boundSessions = new Set<string>()
+
+/**
+ * 尽力把一个会话绑到它所属项目的工作台（幂等，可多次调用）。
+ *
+ * 为什么需要“等一等”：`sessions.create` 返回时，新会话往往**还没进**
+ * sessions.list 快照，`sessionCwd` 读不到 cwd，绑定会当场失败（于是宿主只能
+ * 回落到默认的「对话」tab）。入参不足以定位项目时，就靠这串重试等列表刷新。
+ * @param sessionId - 目标会话
+ * @returns 是否当场绑定成功（false 表示已排好重试）
+ */
+export function bindSessionEventually(sessionId: string): boolean {
+  if (!sessionId) return false
+  const attempt = (): boolean => {
+    if (boundSessions.has(sessionId)) return true
+    try {
+      return bindSessionToItsProject(sessionId)
+    } catch {
+      return false
+    }
+  }
+  if (attempt()) return true
+  if (typeof window === 'undefined') return false
+  for (const d of [120, 300, 700, 1500, 3000]) window.setTimeout(attempt, d)
+  return false
 }
 
 /**
@@ -737,7 +945,9 @@ export function wrapSessionCreate(): void {
           // 靠 sessionCwd 查不到（这正是侧边栏「新建会话」绑定失败的原因）。
           const bound = bindByCreateOptions(String(id), opts)
           // 入参不足以判定时（例如未传 workspaceId），再退回按已写入的 cwd 查
-          if (!bound) bindSessionToItsProject(String(id))
+          // 入参不足以判定时（例如未传 workspaceId），再退回按 cwd 查；
+          // 刚创建的会话可能还没进列表快照，交给 bindSessionEventually 重试。
+          if (!bound) bindSessionEventually(String(id))
         }
       } catch (e) {
         console.warn('[tokensave] 新建会话绑定失败', e)

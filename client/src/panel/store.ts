@@ -1,7 +1,8 @@
 /**
- * 项目中心项目仓库（localStorage 持久化）
+ * 项目中心项目仓库（服务端注册表 + 本地缓存）
  * 项目 = { id, 名称, 文件夹路径, 项目介绍, 创建时间, 上次更新时间 }
  */
+import { fetchProjects, publishProjects } from './api'
 export type LayoutMode = 'h-desk'
 
 export interface ProjectRecord {
@@ -26,39 +27,127 @@ function genId(): string {
   return `prj-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`
 }
 
+/** 校验 / 归一化任意来源（localStorage 缓存或服务端注册表）的项目数组。 */
+export function normalizeProjects(parsed: any): ProjectRecord[] {
+  if (!Array.isArray(parsed)) return []
+  return parsed
+    .filter((p: any) => p && typeof p.id === 'string' && typeof p.path === 'string')
+    .map((p: any) => {
+      const createdAt = Number(p.createdAt) || Date.now()
+      return {
+        id: String(p.id),
+        name: String(p.name || ''),
+        path: String(p.path),
+        description: typeof p.description === 'string' ? p.description : '',
+        layout: 'h-desk' as LayoutMode,
+        createdAt,
+        // 旧记录没有 updatedAt：回退到 createdAt，保证排序/展示不缺值
+        updatedAt: Number(p.updatedAt) || createdAt,
+      }
+    })
+}
+
+/**
+ * 读项目列表（同步）：返回**本地缓存**。
+ *
+ * localStorage 按来源（origin）隔离——桌面端 127.0.0.1 与手机端（经
+ * dsh-remote-mobile 网关的局域网 / Tailscale IP）是两个来源，缓存可能为空。
+ * 真正的真相在服务端注册表，由 syncProjectsFromServer() 水合进这份缓存。
+ */
 export function loadProjects(): ProjectRecord[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (!raw) return []
-    const parsed = JSON.parse(raw)
-    if (!Array.isArray(parsed)) return []
-    return parsed
-      .filter((p: any) => p && typeof p.id === 'string' && typeof p.path === 'string')
-      .map((p: any) => {
-        const createdAt = Number(p.createdAt) || Date.now()
-        return {
-          id: String(p.id),
-          name: String(p.name || ''),
-          path: String(p.path),
-          description: typeof p.description === 'string' ? p.description : '',
-          layout: 'h-desk' as LayoutMode,
-          createdAt,
-          // 旧记录没有 updatedAt：回退到 createdAt，保证排序/展示不缺值
-          updatedAt: Number(p.updatedAt) || createdAt,
-        }
-      })
+    return normalizeProjects(JSON.parse(raw))
   } catch {
     return []
   }
 }
 
-function saveProjects(list: ProjectRecord[]): void {
+// —— 变更广播（组件据此在服务端数据到达 / 本地增删后重渲染）——
+const projectsListeners = new Set<(list: ProjectRecord[]) => void>()
+
+/** 订阅项目列表变化；返回退订函数。 */
+export function subscribeProjects(cb: (list: ProjectRecord[]) => void): () => void {
+  projectsListeners.add(cb)
+  return () => { projectsListeners.delete(cb) }
+}
+
+function emitProjects(list: ProjectRecord[]): void {
+  for (const cb of [...projectsListeners]) {
+    try { cb(list) } catch { /* 单个订阅者出错不影响其他 */ }
+  }
+}
+
+/** 只写本地缓存（不广播、不回推服务端）。服务端 → 客户端的水合用。 */
+function writeCache(list: ProjectRecord[]): void {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(list))
   } catch (e) {
-    console.warn('[tokensave] 项目列表保存失败', e)
+    console.warn('[tokensave] 项目列表缓存写入失败', e)
   }
 }
+
+// 服务端回推串行化：连续增删时保证最后一次快照最终落库，避免并发互相覆盖。
+let pushChain: Promise<unknown> = Promise.resolve()
+let lastPushAt = 0
+
+/** 把整表推回服务端注册表（跨来源 / 跨设备共享的真相）。失败静默，缓存仍可用。 */
+function pushProjects(list: ProjectRecord[]): void {
+  const snapshot = list.map((p) => ({ ...p }))
+  lastPushAt = Date.now()
+  pushChain = pushChain.then(() => publishProjects(snapshot)).catch(() => { /* 离线时以缓存兜底 */ })
+}
+
+function saveProjects(list: ProjectRecord[]): void {
+  writeCache(list)
+  emitProjects(list)
+  pushProjects(list)
+}
+
+let syncInflight: Promise<boolean> | null = null
+
+/**
+ * 从服务端注册表同步项目列表（跨来源 / 跨设备共享）。
+ *
+ * 规则：
+ *  - 服务端尚未初始化（首次运行，~/.dsh/tokensave/projects.json 不存在）而本地缓存
+ *    有数据 → 用本地缓存**反向播种**服务端，避免把桌面端既有项目清空；
+ *  - 否则以服务端为准 → 写入本地缓存并广播，手机端由此看到桌面端登记的项目；
+ *  - 拉取失败（离线 / 未授权）→ 返回 false，保持本地缓存不丢。
+ *
+ * @returns 是否成功完成一次同步
+ */
+export function syncProjectsFromServer(): Promise<boolean> {
+  if (syncInflight) return syncInflight
+  syncInflight = doSyncProjects().finally(() => { syncInflight = null })
+  return syncInflight
+}
+
+async function doSyncProjects(): Promise<boolean> {
+  // 刚推送过就先不回拉，避免用尚未落库的旧快照覆盖本地刚做的修改。
+  if (Date.now() - lastPushAt < 1500) return false
+  const local = loadProjects()
+  let payload: { initialized: boolean; projects: ProjectRecord[] }
+  try {
+    payload = await fetchProjects()
+  } catch {
+    return false
+  }
+  const remote = normalizeProjects(payload.projects)
+  if (!payload.initialized && local.length > 0) {
+    // 服务端还没有注册表：播种本机既有项目 → 其它来源随后即可见
+    pushProjects(local)
+    return true
+  }
+  if (JSON.stringify(remote) === JSON.stringify(local)) return true
+  writeCache(remote)
+  emitProjects(remote)
+  return true
+}
+
+// 模块一加载即开始水合（早于 React 挂载），把「增删早于水合」的竞态窗口压到最小。
+void syncProjectsFromServer()
 
 export function addProject(name: string, path: string, description = ''): ProjectRecord {
   const layout: LayoutMode = 'h-desk' // 固定唯一布局

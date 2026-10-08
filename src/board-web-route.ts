@@ -2,11 +2,12 @@
  * tokensave 控制室 Web 路由
  *  - /plugins/dsh-tokensave/board  按工作区过滤的黑板条目（中文标签）
  *  - /plugins/dsh-tokensave/fs     目录浏览（供「添加项目」选择项目文件夹）
+ *  - /plugins/dsh-tokensave/mkdir  新建 / 重命名文件夹（供「添加项目」直接开新项目目录）
  *
  * 宿主 WebServer 注册的是 Node 风格 handler(req, res)；原始路由不继承
  * Connection 鉴权栅栏，因此每个请求先过 connection.requestRejection（与
  * dsh-call-session web-telemetry-route 的 authenticatedWebRoutes 同款闸门）。
- * GET-only：两个路由都是纯只读观测面，不暴露写通道。
+ * 读接口只读（GET-only）；/scope、/projects、/mkdir 是写通道，各自鉴权 + 方法判定。
  */
 import fs from 'node:fs'
 import net from 'node:net'
@@ -18,6 +19,7 @@ export const FS_ROUTE_PATH = '/plugins/dsh-tokensave/fs'
 export const EXPLORERS_ROUTE_PATH = '/plugins/dsh-tokensave/explorers'
 export const SCOPE_ROUTE_PATH = '/plugins/dsh-tokensave/scope'
 export const PROJECT_INFO_ROUTE_PATH = '/plugins/dsh-tokensave/project-info'
+export const MKDIR_ROUTE_PATH = '/plugins/dsh-tokensave/mkdir'
 
 // —— 当前「打开的工作台项目」（探索者归属的真相）————————————
 //
@@ -270,6 +272,103 @@ function handleFs(req: any, res: any): void {
   }
 }
 
+// —— 新建 / 重命名文件夹（「添加项目」里直接开一个新项目目录）—————
+
+/** 目录名合法性：单段（不含路径分隔符、控制字符、Windows 保留字符），不是 . 或 .. */
+const FOLDER_NAME_RE = /^[^/\\:*?"<>|\u0000-\u001f]{1,64}$/
+
+/**
+ * 新建或重命名一个文件夹。
+ *
+ * 请求体：{ parent: string, name: string, from?: string }
+ *   - 不带 from：在 parent 下新建 name 目录；
+ *   - 带 from：把 parent/from 重命名为 parent/name。
+ * 只接受**单层**目录名（禁止路径分隔符与 ..），parent 必须是已存在的目录；
+ * 目标已存在时报 409，绝不覆盖。
+ * 成功返回 { path }（新目录的绝对路径，客户端拿它直接当项目路径）。
+ */
+export function handleMkdir(req: any, res: any): void {
+  if (typeof req.on !== 'function') {
+    writeJson(res, 501, { error: 'request stream unavailable' })
+    return
+  }
+  let body = ''
+  req.on('data', (c: any) => { body += String(c) })
+  req.on('end', () => {
+    let parsed: any = null
+    try {
+      parsed = body ? JSON.parse(body) : {}
+    } catch {
+      writeJson(res, 400, { error: 'invalid json' })
+      return
+    }
+    try {
+      const parentRaw = String(parsed?.parent ?? '').trim()
+      const name = String(parsed?.name ?? '').trim()
+      const from = parsed?.from === undefined || parsed?.from === null ? '' : String(parsed.from).trim()
+      if (!parentRaw || !path.isAbsolute(parentRaw)) {
+        writeJson(res, 400, { error: '父目录必须是绝对路径' })
+        return
+      }
+      if (name === '' || name === '.' || name === '..' || !FOLDER_NAME_RE.test(name)) {
+        writeJson(res, 400, { error: '文件夹名不合法（不能包含路径分隔符）' })
+        return
+      }
+      const parent = path.resolve(parentRaw)
+      let parentStat: fs.Stats
+      try {
+        parentStat = fs.statSync(parent)
+      } catch {
+        writeJson(res, 404, { error: '父目录不存在' })
+        return
+      }
+      if (!parentStat.isDirectory()) {
+        writeJson(res, 400, { error: '父路径不是目录' })
+        return
+      }
+      const target = path.join(parent, name)
+      if (from !== '') {
+        if (from === '.' || from === '..' || !FOLDER_NAME_RE.test(from)) {
+          writeJson(res, 400, { error: '原文件夹名不合法' })
+          return
+        }
+        const source = path.join(parent, from)
+        try {
+          if (!fs.statSync(source).isDirectory()) {
+            writeJson(res, 400, { error: '原路径不是文件夹' })
+            return
+          }
+        } catch {
+          writeJson(res, 404, { error: '原文件夹不存在' })
+          return
+        }
+        if (fs.existsSync(target)) {
+          writeJson(res, 409, { error: '同名文件夹已存在' })
+          return
+        }
+        fs.renameSync(source, target)
+        console.log(`[dsh-tokensave] 文件夹已重命名: ${source} → ${target}`)
+        writeJson(res, 200, { timestamp: Date.now(), path: normalizeWorkspace(target), name, renamedFrom: normalizeWorkspace(source) })
+        return
+      }
+      if (fs.existsSync(target)) {
+        writeJson(res, 409, { error: '同名文件夹已存在' })
+        return
+      }
+      fs.mkdirSync(target, { recursive: false })
+      console.log(`[dsh-tokensave] 文件夹已创建: ${target}`)
+      writeJson(res, 200, { timestamp: Date.now(), path: normalizeWorkspace(target), name })
+    } catch (error: any) {
+      if (error?.code === 'EACCES' || error?.code === 'EPERM') {
+        writeJson(res, 403, { error: '没有权限在此处创建文件夹' })
+      } else {
+        console.error('[dsh-tokensave] mkdir route failed:', error)
+        writeJson(res, 500, { error: '文件夹操作失败' })
+      }
+    }
+  })
+}
+
 // —— 项目信息：文件修改时间（真实 mtime）+ 开发服务器地址 —————
 //
 // 「上次更新」用户要求以**内部文件最后一次修改**为准（不是我们记的使用时间）。
@@ -286,12 +385,18 @@ const IGNORE_DIRS = new Set([
 ])
 
 /**
- * 取项目目录下**最近一次文件修改时间**。
+ * 扫一遍项目目录，同时取**最新**与**最老**的文件修改时间。
+ *
+ * 「上次更新」= 最新（项目是否还在动）；「创建于」= 最老（项目里第一个文件是什么时候写的，
+ * 比“加入项目中心的时间”更接近“项目创建时间”——用户要求两者同口径）。
+ * 忽略同一组噪声目录（node_modules/.git/dist…）与点文件，不跟随符号链接，
+ * 20000 条上限防止在大目录上卡死。
  * @param root - 项目根目录
- * @returns mtimeMs（毫秒）；扫不到时返回 0
+ * @returns newest / oldest（mtimeMs，毫秒）；扫不到时两者均为 0
  */
-function latestMtimeMs(root: string): number {
+function scanProjectMtimes(root: string): { newest: number; oldest: number } {
   let newest = 0
+  let oldest = 0
   const stack: string[] = [root]
   let guard = 0
   while (stack.length > 0 && guard < 20000) {
@@ -317,12 +422,18 @@ function latestMtimeMs(root: string): number {
       try {
         const st = fs.statSync(full)
         if (st.mtimeMs > newest) newest = st.mtimeMs
+        if (oldest === 0 || st.mtimeMs < oldest) oldest = st.mtimeMs
       } catch {
         /* 单个文件读不到：跳过 */
       }
     }
   }
-  return newest
+  return { newest, oldest }
+}
+
+/** 只取最新（保留原入口，供其它调用点使用）。 */
+function latestMtimeMs(root: string): number {
+  return scanProjectMtimes(root).newest
 }
 
 /**
@@ -399,7 +510,7 @@ function probeUrl(url: string): Promise<boolean> {
   })
 }
 
-async function handleProjectInfo(req: any, res: any): Promise<void> {
+export async function handleProjectInfo(req: any, res: any): Promise<void> {
   let params: URLSearchParams
   try {
     params = new URL(req.url ?? '/', 'http://localhost').searchParams
@@ -428,10 +539,13 @@ async function handleProjectInfo(req: any, res: any): Promise<void> {
     // 相对路径（/…）由宿主 DSH 自己托管：本页能打开就说明宿主在跑，没有可探
     // 的独立端口，直接视为可用。
     const devRunning = devUrl.startsWith('/') ? true : await probeUrl(devUrl)
+    // 一次扫描同时得到「最新」（更新于）与「最老」（创建于）文件时间。
+    const mtimes = scanProjectMtimes(target)
     writeJson(res, 200, {
       timestamp: Date.now(),
       path: target,
-      mtimeMs: latestMtimeMs(target),
+      mtimeMs: mtimes.newest,
+      oldestMtimeMs: mtimes.oldest,
       devUrl,
       devRunning,
     })
@@ -493,6 +607,123 @@ function handleExplorers(ctx: Context, req: any, res: any): void {
     console.error('[dsh-tokensave] explorers route failed:', error)
     writeJson(res, 500, { error: 'explorers unavailable' })
   }
+}
+// —— 项目注册表（跨来源 / 跨设备共享）——————————————————————
+//
+// 背景：项目列表原先是「浏览器 localStorage」单一存储，而 localStorage 按
+// **来源（origin）** 隔离。桌面端以 http://127.0.0.1:3080 打开，手机经
+// dsh-remote-mobile 网关以 http://<局域网/Tailscale IP>:3080 打开——同一个服务、
+// 同一份代码，却是两个 origin，于是手机读到空列表（项目中心空白、工作台无项目可开）。
+// 把注册表落到**服务端文件**（~/.dsh/tokensave/projects.json）即可让所有来源共享同
+// 一份数据；localStorage 退化为本机缓存，仅用于离线兜底与首次启动播种。
+export const PROJECTS_ROUTE_PATH = '/plugins/dsh-tokensave/projects'
+
+const PROJECTS_FILE_VERSION = 1
+
+interface StoredProject {
+  id: string
+  name: string
+  path: string
+  description: string
+  layout: string
+  createdAt: number
+  updatedAt: number
+}
+
+/** DSH 主目录（与 dsh-remote-mobile 的 ~/.dsh/<plugin> 落库约定一致）。 */
+function dshHomeDir(): string {
+  const fromEnv = process.env.DSH_HOME || process.env.DSH_HOME_DIR
+  if (fromEnv) return fromEnv
+  return path.join(process.env.HOME || process.cwd(), '.dsh')
+}
+
+function projectsFilePath(): string {
+  return path.join(dshHomeDir(), 'tokensave', 'projects.json')
+}
+
+/** 逐字段校验并归一化一条项目记录；不合法返回 null（丢弃）。 */
+function sanitizeProject(raw: any): StoredProject | null {
+  if (!raw || typeof raw !== 'object') return null
+  const id = typeof raw.id === 'string' ? raw.id.trim() : ''
+  const target = normalizeWorkspace(typeof raw.path === 'string' ? raw.path : '')
+  if (!id || !target) return null
+  const createdAt = Number(raw.createdAt) || Date.now()
+  const name = typeof raw.name === 'string' && raw.name.trim()
+    ? raw.name.trim()
+    : (target.split('/').filter(Boolean).pop() || target)
+  return {
+    id,
+    name,
+    path: target,
+    description: typeof raw.description === 'string' ? raw.description : '',
+    layout: raw.layout === 'h-desk' ? 'h-desk' : 'h-desk',
+    createdAt,
+    updatedAt: Number(raw.updatedAt) || createdAt,
+  }
+}
+
+function readProjectsFile(): { initialized: boolean; projects: StoredProject[] } {
+  let raw: string
+  try {
+    raw = fs.readFileSync(projectsFilePath(), 'utf8')
+  } catch {
+    // 文件不存在 = 首次运行：客户端据此以本地缓存播种，而非误判为空表
+    return { initialized: false, projects: [] }
+  }
+  try {
+    const data = JSON.parse(raw)
+    const list = Array.isArray(data) ? data : data?.projects
+    const projects = Array.isArray(list)
+      ? (list.map(sanitizeProject).filter(Boolean) as StoredProject[])
+      : []
+    return { initialized: true, projects }
+  } catch {
+    return { initialized: true, projects: [] }
+  }
+}
+
+function writeProjectsFile(projects: StoredProject[]): StoredProject[] {
+  // 同一路径只留一条（后写覆盖），与客户端 addProject 的去重语义一致
+  const byPath = new Map<string, StoredProject>()
+  for (const p of projects) byPath.set(p.path, p)
+  const deduped = [...byPath.values()]
+  const file = projectsFilePath()
+  fs.mkdirSync(path.dirname(file), { recursive: true })
+  const tmp = `${file}.tmp-${process.pid}`
+  fs.writeFileSync(
+    tmp,
+    JSON.stringify({ version: PROJECTS_FILE_VERSION, updatedAt: Date.now(), projects: deduped }, null, 2),
+    'utf8'
+  )
+  fs.renameSync(tmp, file) // 原子替换：读方永远看到完整 JSON
+  return deduped
+}
+
+function handleProjectsRead(res: any): void {
+  const state = readProjectsFile()
+  writeJson(res, 200, { timestamp: Date.now(), ...state })
+}
+
+function handleProjectsWrite(req: any, res: any): void {
+  // 防挂死：拿不到请求流就明确报错，而不是既不读也不回应
+  if (typeof req.on !== 'function') {
+    writeJson(res, 501, { error: 'request stream unavailable' })
+    return
+  }
+  let body = ''
+  req.on('data', (c: any) => { body += String(c) })
+  req.on('end', () => {
+    try {
+      const parsed = body ? JSON.parse(body) : {}
+      const list = Array.isArray(parsed?.projects) ? parsed.projects : []
+      const projects = list.map(sanitizeProject).filter(Boolean) as StoredProject[]
+      const saved = writeProjectsFile(projects)
+      writeJson(res, 200, { timestamp: Date.now(), initialized: true, projects: saved })
+    } catch (error) {
+      console.error('[dsh-tokensave] projects route failed:', error)
+      writeJson(res, 400, { error: 'invalid projects payload' })
+    }
+  })
 }
 // —— 挂载 ————————————————————————————————————————
 
@@ -576,25 +807,68 @@ export function mountTokensaveWebRoutes(ctx: Context): void {
     })
   }
 
+  // 项目注册表路由：GET 读、POST 整表写（跨来源 / 跨设备共享；同样过鉴权）。
+  const projectsGuard = (req: any, res: any) => {
+    const rejection = rejectionFor(ctx, req)
+    if (rejection !== undefined) {
+      writeJson(res, rejection, {
+        error: rejection === 503 ? 'authentication unavailable' : 'unauthorized'
+      })
+      return
+    }
+    if (req.method === 'GET') return handleProjectsRead(res)
+    if (req.method !== 'POST') return methodNotAllowed(res)
+    handleProjectsWrite(req, res)
+  }
+
+  // 文件夹写通道（新建 / 重命名）：同样自行鉴权 + 方法判定，
+  // 不能套 makeGuard——它会把所有非 GET 请求 405 掉。
+  const mkdirGuard = (req: any, res: any) => {
+    const rejection = rejectionFor(ctx, req)
+    if (rejection !== undefined) {
+      writeJson(res, rejection, {
+        error: rejection === 503 ? 'authentication unavailable' : 'unauthorized'
+      })
+      return
+    }
+    if (req.method !== 'POST') return methodNotAllowed(res)
+    handleMkdir(req, res)
+  }
+
   const mount = (server: any): { server: any; dispose: () => void } => {
-    const routes: Array<[string, (req: any, res: any) => void]> = [
+    // 只读观测面：统一走 GET-only 闸门（makeGuard）。
+    const readRoutes: Array<[string, (req: any, res: any) => void]> = [
       [BOARD_ROUTE_PATH, (req, res) => handleBoard(ctx, req, res)],
       [FS_ROUTE_PATH, (req, res) => handleFs(req, res)],
       [EXPLORERS_ROUTE_PATH, (req, res) => handleExplorers(ctx, req, res)],
       [PROJECT_INFO_ROUTE_PATH, (req, res) => { void handleProjectInfo(req, res) }],
-      [SCOPE_ROUTE_PATH, scopeGuard]
+    ]
+    // 写通道：**不能**再套 makeGuard——它把所有非 GET 请求 405 掉，会让
+    // POST /scope（项目作用域发布）与 POST /projects（注册表写入）永远不可达。
+    // 这两条由各自的 guard 自行鉴权 + 方法判定。
+    const writeRoutes: Array<[string, (req: any, res: any) => void]> = [
+      [SCOPE_ROUTE_PATH, scopeGuard],
+      [PROJECTS_ROUTE_PATH, projectsGuard],
+      [MKDIR_ROUTE_PATH, mkdirGuard],
     ]
     const offs: Array<(() => void) | undefined> = []
-    for (const [path, handler] of routes) {
-      try {
-        offs.push(server.register({ kind: 'exact', path, handler: makeGuard(handler) }))
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
-        if (!/duplicate exact route/i.test(message)) throw error
-        console.warn(`[dsh-tokensave] 路由已存在，跳过重复注册: ${path}`)
+    const registerAll = (
+      list: Array<[string, (req: any, res: any) => void]>,
+      wrapWithGate: boolean
+    ) => {
+      for (const [path, handler] of list) {
+        try {
+          offs.push(server.register({ kind: 'exact', path, handler: wrapWithGate ? makeGuard(handler) : handler }))
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error)
+          if (!/duplicate exact route/i.test(message)) throw error
+          console.warn(`[dsh-tokensave] 路由已存在，跳过重复注册: ${path}`)
+        }
       }
     }
-    console.log(`[dsh-tokensave] 路由已挂载: ${BOARD_ROUTE_PATH}, ${FS_ROUTE_PATH}, ${EXPLORERS_ROUTE_PATH}, ${PROJECT_INFO_ROUTE_PATH}`)
+    registerAll(readRoutes, true)
+    registerAll(writeRoutes, false)
+    console.log(`[dsh-tokensave] 路由已挂载: ${BOARD_ROUTE_PATH}, ${FS_ROUTE_PATH}, ${EXPLORERS_ROUTE_PATH}, ${PROJECT_INFO_ROUTE_PATH}, ${PROJECTS_ROUTE_PATH}`)
     const registration = {
       server,
       dispose: () => {

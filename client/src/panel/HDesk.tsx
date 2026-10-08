@@ -450,8 +450,19 @@ export function HDesk({ project, sessionId, onBack }: Props) {
   useDockNativeComposer(
     chatMaximized ? overlayChatRef : chatCellRef,
     chatDocked,
-    [rows, idle, sessionId, visible.length, chatMaximized, previewH, previewInStrip],
+    // 不再把 previewH 放进依赖：拖分隔条时 chat cell 尺寸变化会经它自己的
+    // ResizeObserver 触发重定位；把高度写进依赖会让每次拖动都重建观察器（拖拽发卡）。
+    [rows, idle, sessionId, visible.length, chatMaximized, previewInStrip],
   )
+
+  // 停靠期间给 body 加标记：宿主输入条**座位**自带「透明 → 宿主底色」渐变，
+  // 底部 36px 完全不透明，会在输入框下方压出一块深色背景板；用这个标记把它置透明
+  // （样式见 styles.ts 的 body.ts-hdesk-dock）。
+  useEffect(() => {
+    if (!chatDocked) return
+    document.body.classList.add('ts-hdesk-dock')
+    return () => document.body.classList.remove('ts-hdesk-dock')
+  }, [chatDocked])
 
   /** 卡片三键：构造后交给各卡片渲染进自己的标题条 */
   const actionsFor = (id: string, label: string) => {
@@ -507,28 +518,72 @@ export function HDesk({ project, sessionId, onBack }: Props) {
 
   /**
    * 拖动预览条与下方工作台之间的分隔条：总高度不变，上面变高下面就变矮。
-   * 用 window 上的 pointermove/pointerup（而非元素指针捕获），拖出元素也不断。
+   *
+   * 性能：pointermove 的触发频率可达 100–1000Hz（高刷鼠标/触控板），而工作台是
+   * 一棵很重的树（黑板/主对话/探索者/iframe）。所以：
+   *   1. **按帧合并**：一帧最多 setState 一次，而不是每个事件一次；
+   *   2. 拖动期间给 body 加 .ts-vsplit-dragging：iframe 屏蔽指针事件 + 禁止选中文字
+   *      —— 这两者是拖拽时的主要闪屏源（iframe 频繁重绘 + 命中区抢事件导致抖动）。
+   *
+   * 结束拖拽必须**万无一失**（Bug 反馈：往上拖松手后，鼠标再往下动，分界线又跟着走，
+   * 说明拖动没结束——pointerup 丢了而监听还挂着）。因此三重保险：
+   *   A. `setPointerCapture`：指针滑出分隔条/窗口，pointerup 也一定回到这里；
+   *   B. pointerup/pointercancel 用**捕获阶段**监听（+ window blur / visibilitychange）：
+   *      即使某个中间元素对指针事件做了 stopPropagation 也能收到；
+   *   C. **buttons 兜底**：松手后再来的 pointermove 带 `buttons === 0`（没有任何键按下）——
+   *      那就是“已松手”的铁证，立即结束，不再跟随鼠标。
    */
   const onSplitDown = (e: React.PointerEvent<HTMLDivElement>) => {
     e.preventDefault()
+    const el = e.currentTarget
+    const pointerId = e.pointerId
     const startY = e.clientY
     const startH = previewH
     const rootH = rootRef.current?.getBoundingClientRect().height ?? 0
     const maxH = Math.max(PREVIEW_H_MIN, rootH - PREVIEW_DESK_MIN)
     let last = startH
-    const move = (ev: PointerEvent) => {
-      last = Math.min(maxH, Math.max(PREVIEW_H_MIN, startH + (ev.clientY - startY)))
+    let raf = 0
+    let done = false
+    const flush = () => {
+      raf = 0
       setPreviewH(last)
     }
-    const up = () => {
+    const move = (ev: PointerEvent) => {
+      // C. 已经松手了（例如在窗口外/被别的元素吃掉 pointerup）：不再跟随鼠标。
+      if (ev.buttons === 0) { end(); return }
+      last = Math.min(maxH, Math.max(PREVIEW_H_MIN, startH + (ev.clientY - startY)))
+      // 一帧只提交一次（下一次帧回调前到达的事件直接合并）
+      if (!raf) raf = requestAnimationFrame(flush)
+    }
+    const end = () => {
+      if (done) return   // 多重结束信号（up/cancel/blur/buttons）只跑一次
+      done = true
       window.removeEventListener('pointermove', move)
-      window.removeEventListener('pointerup', up)
-      window.removeEventListener('pointercancel', up)
+      window.removeEventListener('pointerup', end, true)
+      window.removeEventListener('pointercancel', end, true)
+      window.removeEventListener('blur', end)
+      document.removeEventListener('visibilitychange', onVisibility)
+      try { el.releasePointerCapture(pointerId) } catch { /* 已自动释放 */ }
+      document.body.classList.remove('ts-vsplit-dragging')
+      if (raf) {
+        cancelAnimationFrame(raf)
+        raf = 0
+      }
+      // 无条件提交最终值：拖着一半松手（或被系统 cancel）也要停在松手处；
+      // 值未变时 React 会自己跳过重渲染，无额外开销。
+      setPreviewH(last)
       savePreviewHeight(last)
     }
+    const onVisibility = () => { if (document.hidden) end() }
+    // A. 指针捕获：拖出元素/窗口也不丢事件
+    try { el.setPointerCapture(pointerId) } catch { /* 合成事件或旧浏览器 */ }
+    document.body.classList.add('ts-vsplit-dragging')
     window.addEventListener('pointermove', move)
-    window.addEventListener('pointerup', up)
-    window.addEventListener('pointercancel', up)
+    // B. 捕获阶段：中间元素 stopPropagation 也不影响结束
+    window.addEventListener('pointerup', end, true)
+    window.addEventListener('pointercancel', end, true)
+    window.addEventListener('blur', end)
+    document.addEventListener('visibilitychange', onVisibility)
   }
 
   return (

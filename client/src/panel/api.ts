@@ -5,6 +5,7 @@
  *  - /plugins/dsh-tokensave/explorers    探索者快照（直读 agents，不依赖第三方）
  *  - /plugins/dsh-tokensave/project-info 项目文件最后修改时间 + 开发服务器地址
  */
+import type { ProjectRecord } from './store'
 
 export interface FsEntry {
   name: string
@@ -33,6 +34,8 @@ export interface ProjectInfo {
   path: string
   /** 项目内部文件最后一次修改时间（真实 mtime，毫秒） */
   mtimeMs: number
+  /** 项目文件夹内**最老**文件的修改时间（真实 mtime，毫秒）——「创建于」用它 */
+  oldestMtimeMs: number
   /** 推断出的开发服务器地址（无则空串） */
   devUrl: string
   /** 探测结果：该地址是否真的有人在监听（= 项目已启动） */
@@ -40,7 +43,7 @@ export interface ProjectInfo {
 }
 
 /**
- * 读项目信息：真实文件 mtime + 推断的开发服务器地址。
+ * 读项目信息：真实文件 mtime（最新 = 更新于、最老 = 创建于）+ 推断的开发服务器地址。
  * 失败时返回 null（调用方退回到本地记录的 updatedAt），不抛错——
  * 这只是展示用的附加信息，不应阻断项目列表渲染。
  */
@@ -52,6 +55,7 @@ export async function fetchProjectInfo(path: string): Promise<ProjectInfo | null
     return {
       path: String(data.path || path),
       mtimeMs: Number(data.mtimeMs) || 0,
+      oldestMtimeMs: Number(data.oldestMtimeMs) || 0,
       devUrl: typeof data.devUrl === 'string' ? data.devUrl : '',
       devRunning: data.devRunning === true,
     }
@@ -135,4 +139,81 @@ export async function publishProjectScope(workspace: string): Promise<void> {
   } catch (e) {
     console.warn('[tokensave] 项目作用域发布失败', e)
   }
+}
+
+// —— 项目注册表（跨来源 / 跨设备共享）———————————————
+//
+// 项目列表若只存浏览器 localStorage，会因「来源（origin）隔离」而在手机端
+// （经 dsh-remote-mobile 网关以局域网 / Tailscale IP 访问）读不到——同一服务、
+// 不同来源 → 空列表。故宿主侧提供文件落库的注册表路由，所有来源读写同一份数据。
+
+export interface ProjectsPayload {
+  /** 服务端是否已有注册表（false = 首次运行，客户端应以本地缓存播种） */
+  initialized: boolean
+  projects: ProjectRecord[]
+}
+
+/** 读服务端项目注册表。 */
+export async function fetchProjects(): Promise<ProjectsPayload> {
+  const res = await fetch('/plugins/dsh-tokensave/projects')
+  if (!res.ok) throw new Error(`项目列表加载失败（HTTP ${res.status}）`)
+  const data = await res.json()
+  return {
+    initialized: data.initialized === true,
+    projects: Array.isArray(data.projects) ? (data.projects as ProjectRecord[]) : [],
+  }
+}
+
+/** 整表写回服务端项目注册表。失败返回 false（调用方静默兜底为本地缓存）。 */
+export async function publishProjects(projects: ProjectRecord[]): Promise<boolean> {
+  try {
+    const res = await fetch('/plugins/dsh-tokensave/projects', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ projects }),
+    })
+    if (!res.ok) {
+      console.warn(`[tokensave] 项目注册表保存失败（HTTP ${res.status}）`)
+      return false
+    }
+    return true
+  } catch (e) {
+    console.warn('[tokensave] 项目注册表保存失败', e)
+    return false
+  }
+}
+
+// —— 新建 / 重命名文件夹（「添加项目」里直接开一个新项目目录）—————
+
+/** 文件夹操作结果（新目录的绝对路径 + 名称）。 */
+export interface FolderResult {
+  path: string
+  name: string
+}
+
+/**
+ * 在 parent 下新建一个文件夹（可带 from：把 parent/from 重命名）。
+ *
+ * 服务端路由 POST /plugins/dsh-tokensave/mkdir 只接受**单层**目录名，
+ * 目标已存在会返回 409（不覆盖）。失败抛错，由调用方显示。
+ */
+async function postMkdir(body: Record<string, unknown>): Promise<FolderResult> {
+  const res = await fetch('/plugins/dsh-tokensave/mkdir', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  const data: any = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(String(data?.error || `文件夹操作失败（HTTP ${res.status}）`))
+  return { path: String(data?.path || ''), name: String(data?.name || '') }
+}
+
+/** 在 parent 下新建文件夹。 */
+export function createFolder(parent: string, name: string): Promise<FolderResult> {
+  return postMkdir({ parent, name })
+}
+
+/** 把 parent 下的 from 重命名为 name（同目录内改名）。 */
+export function renameFolder(parent: string, from: string, name: string): Promise<FolderResult> {
+  return postMkdir({ parent, from, name })
 }

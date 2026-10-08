@@ -238,6 +238,9 @@ export function MsgList({
   const [pinned, setPinned] = useState(true)
   /** 回翻前的滚动锚点：内容变高后用它把视口钉回原处 */
   const anchorRef = useRef<{ height: number; top: number } | null>(null)
+  /** 刚做过视口锤定的时间戳：程序化改 scrollTop 会触发 scroll 事件，
+      需短时间内忽略它，避免连锁把整段历史一口气拉完 */
+  const restoredAtRef = useRef(0)
   /** 距底部多少像素内仍算“在底部”（给流式追加留余量）。 */
   const NEAR_BOTTOM = 24
 
@@ -252,6 +255,8 @@ export function MsgList({
   const requestOlder = useCallback(() => {
     const el = ref.current
     if (!el) return
+    // 锤定刚发生不久：本次 scroll 是程序写的，不当作「用户滚到顶」
+    if (Date.now() - restoredAtRef.current < 150) return
     if (hasHiddenInDom) {
       anchorRef.current = { height: el.scrollHeight, top: el.scrollTop }
       setWindowTurns((v) => v + TURNS_PER_PAGE)
@@ -297,6 +302,7 @@ export function MsgList({
     const el = ref.current
     if (!a || !el) return
     anchorRef.current = null
+    restoredAtRef.current = Date.now()
     el.scrollTop = el.scrollHeight - a.height + a.top
   })
 

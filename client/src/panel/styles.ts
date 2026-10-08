@@ -70,6 +70,16 @@ body.ts-center-open [data-conversation-scroll] {
 body.ts-center-open [data-conversation-region="composer"] {
   background: transparent !important;
 }
+/* —— 工作台停靠宿主输入条时：去掉“黑色背景板” ——
+   宿主对座位（[data-conversation-region="composer"]）写了一条
+     background: linear-gradient(180deg, 透明 0px, var(--dsw-alias-bg-base) 36px)
+   即底部 36px 完全是不透明的宿主底色，用来遮住“从输入框下方滚过”的内容。
+   工作台把整条座位停靠进卡片后，这层不透明底就在输入框下面压出一块深色板，
+   与台面割裂。台面里的滚动发生在卡片内部，没有内容会从输入框下方经过，
+   因此直接置透明（类名由 HDesk 在停靠期间加到 body 上）。 */
+body.ts-hdesk-dock [data-conversation-region="composer"] {
+  background: transparent !important;
+}
 
 /* —— 通用条/按钮 —— */
 .ts-bar { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
@@ -102,7 +112,14 @@ body.ts-center-open [data-conversation-region="composer"] {
 .ts-side-entry { display:flex; align-items:center; gap:8px; width:100%; padding:7px 10px; border:1px solid rgba(127,127,127,.32); border-radius:8px; background:rgba(127,127,127,.1); color:inherit; cursor:pointer; font:inherit; font-size:12.5px; text-align:left; transition:background .15s ease, border-color .15s ease; }
 .ts-side-entry:hover { background:rgba(127,127,127,.2); border-color:rgba(127,127,127,.5); }
 .ts-side-entry:active { transform:translateY(1px); }
-.ts-side-entry.rail { justify-content:center; padding:7px 0; }
+/* rail（侧边栏收起）：与宿主的图标按钮**完全同款** —— 无边框、无底色、36×36、圆角 12、图标居中。
+   （用户反馈：收起后这个按钮还带着外框，和「设置 / 搜索」等按钮风格不一致。）
+   实测宿主 rail 图标按钮：border 0 / background transparent / 36×36 / radius 12px / padding 0。 */
+.ts-side-entry.rail { justify-content:center; padding:0; width:36px; height:36px; border:0; background:transparent; border-radius:12px; }
+.ts-side-entry.rail .ts-side-icon { font-size:16px; }
+/* 悬停也只给底色（不再出现边框）；按压不做位移（图标按钮不位移） */
+.ts-side-entry.rail:hover { background:rgba(127,127,127,.18); border:0; }
+.ts-side-entry.rail:active { transform:none; background:rgba(127,127,127,.24); }
 .ts-side-icon { flex:none; font-size:14px; line-height:1; }
 .ts-side-label { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .ts-btn-primary:hover { background:rgba(96,165,250,.4); box-shadow:0 0 12px rgba(96,165,250,.25); }
@@ -133,10 +150,36 @@ body.ts-center-open [data-conversation-region="composer"] {
 .ts-sess-pop { position:absolute; top:calc(100% + 6px); right:0; left:auto; z-index:44; width:min(520px, calc(100vw - 32px)); max-height:60vh; display:flex; flex-direction:column; border-radius:12px; border:1px solid rgba(127,127,127,.35); background:rgba(24,27,33,.97); color:#e6e8eb; box-shadow:0 14px 40px rgba(0,0,0,.5); backdrop-filter:blur(12px) saturate(1.2); overflow:hidden; }
 .ts-sess-pop-head { flex:none; padding:9px 12px; font-size:11.5px; font-weight:600; opacity:.7; border-bottom:1px solid rgba(127,127,127,.25); letter-spacing:.03em; }
 .ts-sess-list { flex:1; min-height:0; overflow:auto; padding:5px; display:flex; flex-direction:column; gap:2px; }
-.ts-sess-item { display:flex; align-items:center; gap:8px; width:100%; text-align:left; padding:7px 9px; border:none; border-radius:8px; background:transparent; color:inherit; font:inherit; font-size:12.5px; cursor:pointer; }
+/* 行容器（div）：里面是「主体按钮 + ⋯ 按钮」，外面包一层 .ts-sess-row 以便菜单另起一行 */
+.ts-sess-row { display:flex; flex-direction:column; }
+.ts-sess-item { display:flex; align-items:center; gap:2px; width:100%; border-radius:8px; color:inherit; font:inherit; font-size:12.5px; }
 .ts-sess-item:hover { background:rgba(127,127,127,.18); }
 .ts-sess-item.active { background:rgba(96,165,250,.24); box-shadow:inset 0 0 0 1px rgba(96,165,250,.5); }
+/* 主体（点选切换会话）：占满剩余宽度，内容与旧行样式一致 */
+.ts-sess-item-main { flex:1; min-width:0; display:flex; align-items:center; gap:8px; padding:7px 9px; border:0; border-radius:8px; background:transparent; color:inherit; font:inherit; font-size:12.5px; text-align:left; cursor:pointer; }
+.ts-sess-item-main:focus-visible { outline:2px solid rgba(96,165,250,.8); outline-offset:-2px; }
+/* 行右侧的悬浮按钮组（⋯ 更多、📥 归档）：宽度常驻（visibility 而非 display），
+   这样悬浮时不会把标题挤窄、跑马灯的实测宽度也不会变。 */
+.ts-sess-rowops { flex:none; display:inline-flex; align-items:center; gap:2px; padding-right:4px; visibility:hidden; }
+.ts-sess-item:hover .ts-sess-rowops, .ts-sess-item-open .ts-sess-rowops { visibility:visible; }
+.ts-sess-op { flex:none; border:0; background:transparent; color:inherit; cursor:pointer; font:inherit; font-size:13px; line-height:1; padding:5px 6px; border-radius:6px; opacity:.6; }
+.ts-sess-op:hover, .ts-sess-op.active { opacity:1; background:rgba(127,127,127,.25); }
+.ts-sess-op:disabled { cursor:default; opacity:.3; }
+/* 行内重命名：就地渲染在行下方 */
+.ts-sess-rename { display:flex; align-items:center; gap:6px; margin:2px 6px 6px 24px; }
+.ts-sess-rename-input { flex:1; min-width:0; padding:4px 8px; font-size:12.5px; }
+/* 展开的菜单：就地渲染在行下方（在 pop 的滚动区内，不会被裁） */
+.ts-sess-menu { display:flex; flex-direction:column; gap:2px; margin:2px 6px 6px 24px; padding:4px; border:1px solid rgba(127,127,127,.3); border-radius:8px; background:rgba(30,34,42,.92); }
+.ts-sess-menu-item { text-align:left; border:0; background:transparent; color:inherit; font:inherit; font-size:12px; padding:6px 8px; border-radius:6px; cursor:pointer; }
+.ts-sess-menu-item:hover { background:rgba(127,127,127,.22); }
+.ts-sess-menu-item:disabled { cursor:default; opacity:.5; }
+/* 归档失败等短提示（自动消失） */
+.ts-sess-notice { flex:none; max-width:260px; font-size:11.5px; opacity:.8; color:#fca5a5; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .ts-sess-item-title { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+/* 跑马灯：悬浮且内容超宽时左右来回滚动；位移量由 JS 实测写进 --ts-marquee-shift */
+.ts-marquee { display:inline-block; white-space:nowrap; }
+.ts-sess-item:hover .ts-marquee-move { animation: tsSessMarquee 5s ease-in-out infinite alternate; }
+@keyframes tsSessMarquee { from { transform:translateX(0); } to { transform:translateX(calc(-1 * var(--ts-marquee-shift, 0px))); } }
 .ts-sess-item-time { flex:none; font-size:10.5px; opacity:.5; font-variant-numeric:tabular-nums; }
 .ts-sess-tag { flex:none; font-size:10px; padding:1px 6px; border-radius:99px; background:rgba(127,127,127,.25); }
 .ts-sess-empty { padding:14px 12px; font-size:12px; opacity:.65; line-height:1.6; }
@@ -238,10 +281,37 @@ body.ts-center-open [data-conversation-region="composer"] {
 /* 已启动徒标（卡片上） */
 .ts-tag-live { background:rgba(74,222,128,.22); border-color:rgba(74,222,128,.55); color:#86efac; }
 
-/* 工作台顶部预览面板：在标题行之下、其它窗口之上；iframe 高度封顶不挤网格 */
-.ts-preview-panel { flex:none; display:flex; flex-direction:column; gap:8px; }
+/* 工作台顶部预览面板：在标题行之下、其它窗口之上；高度由预览条（可能被拖动）决定 */
+.ts-preview-panel { flex:1 1 auto; min-height:0; display:flex; flex-direction:column; gap:8px; }
 .ts-preview-panel .ts-preview-bar > .ts-preview-url { flex:1 1 auto; }
-.ts-preview-panel .ts-preview-frame { flex:0 0 auto; height:clamp(180px, 34vh, 420px); max-height:42vh; }
+/* iframe 填满卡片剩余高度（不再写死 vh；条高由拖动分隔条控制） */
+.ts-preview-panel .ts-preview-frame { flex:1 1 0; min-height:0; }
+/* 预览条本体：flex:none，高度由内联 style 的 previewH 控制 */
+/* 预览条本体：flex:none，高度由内联 style 的 previewH 控制；
+   自身必须是竖向 flex 容器，否则内部卡片会塔成 0 高（iframe 也跟着消失） */
+.ts-preview-strip { flex:none; min-height:0; display:flex; flex-direction:column; }
+/* 折叠（最小化）时只留标题条，iframe 不进布局 */
+.ts-card-collapsed > * > .ts-preview-frame { display:none; }
+/* —— 预览 ↔ 工作台 的上下分隔条 ——
+   默认隐形，悬停/拖动时显示一条水平握柄（与宿主左右把手的视觉同款：
+   2px 粗、约 72px 长、两端渐隐）。命中区 10px 高，用负外边距不占版面。 */
+.ts-vsplit { position:relative; flex:none; height:10px; margin:-5px 0; cursor:ns-resize; z-index:6; }
+.ts-vsplit-grip { position:absolute; left:50%; top:50%; width:72px; height:2px; border-radius:2px; transform:translate(-50%,-50%); background:var(--dsw-alias-scrollbar-bg-l1, rgba(127,127,127,.5)); opacity:0; transition:opacity .12s ease; pointer-events:none; }
+.ts-vsplit:hover .ts-vsplit-grip, .ts-vsplit:active .ts-vsplit-grip { opacity:1; }
+/* 拖动中指针会离开分隔条（甚至落在 iframe 上），握柄必须继续可见：
+   否则拖到一半“把手消失”，观感上就像闪没了 */
+body.ts-vsplit-dragging .ts-vsplit-grip { opacity:1; transition:none; }
+/* —— 拖动中（body.ts-vsplit-dragging）——
+   1) iframe 屏蔽指针事件：否则拖得快时指针会滑进 iframe，命中区丢事件、
+      拖拽一跳一跳（跨源 iframe 还会抢焦点）；
+   2) 禁选中 + 全程 ns-resize 光标：避免拖过文字时选出一片高亮（也是观感上的“闪”）。 */
+body.ts-vsplit-dragging { cursor:ns-resize; user-select:none; -webkit-user-select:none; }
+body.ts-vsplit-dragging iframe,
+body.ts-vsplit-dragging .ts-preview-frame { pointer-events:none !important; }
+/* 拖动期间不做任何过渡动画：握着拖时过渡会和指针竞争，看起来就是拖不动/抽动 */
+body.ts-vsplit-dragging .ts-preview-strip,
+body.ts-vsplit-dragging .ts-preview-frame,
+body.ts-vsplit-dragging .ts-card { transition:none !important; animation:none !important; }
 /* 工作台未选项目 / 项目中心空态 */
 .ts-center-empty { display:flex; flex-direction:column; align-items:center; gap:12px; text-align:center; padding:28px 20px; max-width:560px; }
 .ts-center-empty-title { font-size:20px; font-weight:700; }
@@ -285,6 +355,11 @@ body.ts-center-open [data-conversation-region="composer"] {
 .ts-fs-item { display:flex; align-items:center; gap:8px; padding:6px 12px; cursor:pointer; border:none; background:transparent; color:inherit; width:100%; text-align:left; font-size:13px; }
 .ts-fs-item:hover { background:rgba(127,127,127,.15); }
 .ts-fs-item .ts-tag { margin-left:auto; }
+/* 「添加项目」里的新建 / 重命名文件夹行（目录浏览器下方） */
+.ts-newfolder { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-top:8px; }
+.ts-newfolder-input { max-width:240px; padding:4px 8px; font-size:12.5px; }
+.ts-newfolder-hint { font-size:11px; opacity:.55; max-width:280px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ts-newfolder-err { font-size:11.5px; color:#fca5a5; }
 
 /* —— H 型工作台：全台共享 R 行 1fr 网格（R 由 JSX 按窗口数注入），无中横线 —— */
 /* 中列必须用 minmax(0, 1fr)：裸 1fr 的自动最小值是 min-content，
@@ -387,7 +462,9 @@ body.ts-center-open [data-conversation-region="composer"] {
 .ts-win-overlay .ts-win-head { background:rgba(255,255,255,.07); }
 .ts-win-overlay .ts-win-head:hover { background:rgba(255,255,255,.13); }
 .ts-msg-user { align-self:flex-end; background:rgba(96,165,250,.22); border:1px solid rgba(96,165,250,.4); border-radius:8px 8px 2px 8px; padding:5px 9px; max-width:88%; white-space:pre-wrap; word-break:break-word; }
-.ts-msg-assistant { align-self:flex-start; background:rgba(127,127,127,.14); border-radius:8px 8px 8px 2px; padding:5px 9px; max-width:94%; white-space:pre-wrap; word-break:break-word; }
+/* 回复区块：右边缘与用户气泡的右边缘对齐（用户气泡靠右、右边缘贴容器右端，
+   因此回复块改为拉伸满宽，不再留右侧那一小块空白） */
+.ts-msg-assistant { align-self:stretch; background:rgba(127,127,127,.14); border-radius:8px 8px 8px 2px; padding:5px 9px; max-width:none; white-space:pre-wrap; word-break:break-word; }
 .ts-msg-tool, .ts-msg-system { align-self:stretch; opacity:.62; font-size:11px; border-left:2px solid rgba(127,127,127,.5); padding:2px 8px; }
 .ts-msg-tool .ts-msg-role, .ts-msg-system .ts-msg-role { display:flex; align-items:center; gap:4px; }
 .ts-msg-toggle { padding:0 4px; font-size:11px; opacity:.7; }
@@ -552,7 +629,18 @@ body.ts-center-open [data-conversation-region="composer"] {
 .ts-preview-title { font-weight:600; font-size:13px; white-space:nowrap; }
 .ts-preview-url { flex:1 1 auto; min-width:0; font-size:11px; opacity:.65; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .ts-preview-ops { display:flex; gap:6px; flex:none; }
-.ts-preview-frame { flex:1 1 0; min-height:0; width:100%; border:1px solid rgba(127,127,127,.3); border-radius:10px; background:#fff; }
+/* 预览 iframe：不加自己的边框与底色（原先的 1px 边框 + 白底在部分项目上会显出白边，
+   与其它窗口不一致）；留白由外层卡片/标题条负责 */
+.ts-preview-frame { flex:1 1 0; min-height:0; width:100%; display:block; border:0; background:transparent; }
+/* 主对话顶部的「加载更早」行（瀑布式回翻的入口与忙碌提示） */
+.ts-msgs-topbar { flex:none; display:flex; align-items:center; justify-content:center; gap:8px; padding:2px 0 6px; }
+/* 卡片：启动情况 + 按钮同排不跨行；创建于/更新于也永远一行 */
+.ts-center-actions { flex-wrap:nowrap; }
+.ts-center-meta { flex-wrap:nowrap; }
+.ts-center-meta .ts-tag, .ts-dev-chip { white-space:nowrap; flex:none; }
+/* 启动情况小标：已启动=绿，未启动=灰（放在「进入工作台」之前） */
+.ts-dev-chip { font-size:11px; padding:2px 8px; border-radius:99px; border:1px solid rgba(127,127,127,.45); background:rgba(127,127,127,.12); opacity:.72; }
+.ts-dev-chip.on { border-color:rgba(74,222,128,.55); background:rgba(74,222,128,.18); color:#86efac; opacity:1; }
 `
 
 export function injectProjectCenterStyles(): void {

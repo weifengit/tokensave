@@ -18,7 +18,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { injectProjectCenterStyles } from './styles'
 import {
-  loadProjects, removeProject, loadViewPrefs, saveViewPrefs, sortProjects,
+  loadProjects, removeProject, loadViewPrefs, saveViewPrefs, sortProjects, subscribeProjects, syncProjectsFromServer,
   updateProjectDescription,
 } from './store'
 import type { ProjectRecord, ViewMode, SortMode } from './store'
@@ -175,17 +175,35 @@ export function ProjectCenter({ sessionId }: Props) {
     saveViewPrefs(next)
   }
   const infoOf = (p: ProjectRecord): ProjectInfo | undefined => infos[p.path]
-  /** 列表排序：时间类优先用**真实文件 mtime**，拿不到再回退到本地记录。 */
+  /**
+   * 列表排序：时间类优先用**真实文件 mtime**，拿不到再回退到本地记录。
+   * 「创建于」用文件夹内**最老**文件时间（不是加入项目中心的时间）；
+   * 「更新于」用**最新**文件时间。
+   */
   const shown = useMemo(() => {
     const withTime = projects.map((p) => {
-      const m = infos[p.path]?.mtimeMs || 0
-      return m > 0 ? { ...p, updatedAt: m } : p
+      const info = infos[p.path]
+      const newest = info?.mtimeMs || 0
+      const oldest = info?.oldestMtimeMs || 0
+      return {
+        ...p,
+        ...(newest > 0 ? { updatedAt: newest } : {}),
+        ...(oldest > 0 ? { createdAt: oldest } : {}),
+      }
     })
     return sortProjects(withTime, prefs.sort)
   }, [projects, infos, prefs.sort])
 
   const refresh = () => setProjects(loadProjects())
-  useEffect(() => { refresh() }, [])
+  useEffect(() => {
+    // 跨来源同步：手机端经 dsh-remote-mobile 网关访问时来源与桌面端不同，
+    // 据服务端注册表水合出与桌面端一致的清单——这是「手机端项目中心为空」的修复。
+    const un = subscribeProjects(setProjects)
+    const pull = () => { void syncProjectsFromServer().then(() => refresh()) }
+    pull()
+    window.addEventListener('focus', pull)
+    return () => { un(); window.removeEventListener('focus', pull) }
+  }, [])
 
   // 列表态的流光玻璃背景要覆盖到宿主的输入条座位（与视图是兄弟节点，见 styles.ts）；
   // 同时上报“当前在项目中心”，供侧边栏按钮决定切换方向。
@@ -305,7 +323,7 @@ export function ProjectCenter({ sessionId }: Props) {
                   <th className="ts-plist-idx">序号</th>
                   <th>项目名称</th>
                   <th>项目路径</th>
-                  <th className="ts-plist-time">创建时间</th>
+                  <th className="ts-plist-time" title="项目文件夹内最老文件的修改时间（不是加入项目中心的时间）">创建于</th>
                   <th className="ts-plist-time">上次更新</th>
                   <th>项目介绍</th>
                   <th className="ts-plist-active">活跃对话</th>
@@ -331,8 +349,11 @@ export function ProjectCenter({ sessionId }: Props) {
                     <td>
                       <span className="ts-plist-path" title={p.path}>{p.path}</span>
                     </td>
-                    <td className="ts-plist-time" title={new Date(p.createdAt).toLocaleString('zh-CN')}>
-                      {formatCreated(p.createdAt)}
+                    <td
+                      className="ts-plist-time"
+                      title={`项目文件夹内最老文件的修改时间：${infoOf(p)?.oldestMtimeMs ? new Date(infoOf(p)!.oldestMtimeMs).toLocaleString('zh-CN') : '（未读取到）'}`}
+                    >
+                      {infoOf(p)?.oldestMtimeMs ? formatCreated(infoOf(p)!.oldestMtimeMs) : <span className="ts-dim">（未读取到）</span>}
                     </td>
                     <td className="ts-plist-time" title={infoOf(p)?.mtimeMs ? new Date(infoOf(p)!.mtimeMs).toLocaleString('zh-CN') : '（未读取到）'}>
                       {relTime(infoOf(p)?.mtimeMs || 0)}
@@ -390,11 +411,17 @@ export function ProjectCenter({ sessionId }: Props) {
                   {p.description || <span className="ts-dim">（未填写项目介绍）</span>}
                 </div>
                 <div className="ts-center-meta">
-                  <span className="ts-tag">创建于 {formatCreated(p.createdAt)}</span>
+                  <span className="ts-tag" title="项目文件夹内最老文件的修改时间">创建于 {infoOf(p)?.oldestMtimeMs ? formatCreated(infoOf(p)!.oldestMtimeMs) : '—'}</span>
                   <span className="ts-tag ts-tag-warn">更新于 {relTime(infoOf(p)?.mtimeMs || 0)}</span>
-                  {infoOf(p)?.devRunning && <span className="ts-tag ts-tag-live">● 已启动</span>}
                 </div>
                 <div className="ts-center-actions">
+                  {/* 启动情况：直接放在「进入工作台」之前，与两个按钮同排不跨行 */}
+                  <span
+                    className={`ts-dev-chip${infoOf(p)?.devRunning ? ' on' : ''}`}
+                    title={infoOf(p)?.devRunning
+                      ? '检测到开发服务器正在监听（工作台里会直接显示预览）'
+                      : '未检测到开发服务器；在项目里跑起来后工作台会自动出现预览'}
+                  >{infoOf(p)?.devRunning ? '● 已启动' : '○ 未启动'}</span>
                   <button
                     className="ts-btn ts-btn-sm ts-btn-primary"
                     onClick={(e) => { e.stopPropagation(); enter(p) }}

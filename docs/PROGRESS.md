@@ -1066,3 +1066,120 @@ ControlRoom 的恢复逻辑第一行 `if (isForceList()) return` 就短路 → �
 - 但**探索者输出通常没有 dsh-ui 围栏**（子 agent 的纯 markdown），所以那边主要仍是我自己的
   markdown/JSON 渲染 —— 要美化得让内容带上 dsh-ui 围栏。
 - 客户端改动需**刷新页面**（当前没有 `pnpm run dev:web` 监听在跑）。
+
+## Step 39（2026-10-08）：预览 ↔ DSH 主对话 的上下分隔条卡顿/闪屏
+
+### 反馈
+拖动「预览 / DSH 主对话」之间的上下调节把手时卡顿、闪屏。
+
+### 三个真因（都在拖动路径上）
+1. **每个 pointermove 都 setState**：`onSplitDown` 里直接 `setPreviewH(last)`，
+   而 pointermove 在高刷鼠标/触控板上可达 100–1000Hz；工作台是一棵很重的树
+   （黑板 + 主对话消息流 + 探索者窗口 + iframe），每个事件重渲染一次 → 丢帧。
+2. **停靠 hook 每次都被重建**：`useDockNativeComposer` 的依赖里有 `previewH`，
+   于是每次拖动都重装 ResizeObserver / MutationObserver / 300ms 轮询并重算输入条位置。
+3. **iframe 抢事件 + 反复重绘**：拖得快时指针会滑进 iframe，命中区丢事件（一跳一跳）；
+   跨源 iframe 还会拿走焦点；加上文字被选中高亮 —— 观感上就是「闪」。
+
+### 修法
+- **按帧合并**：pointermove 只更新 `last`，用 `requestAnimationFrame` 一帧最多提交一次
+  `setPreviewH`；pointerup 时若还有未 flush 的帧，先取消再补一次提交（不会丢最后位置）。
+- **停靠依赖去掉 `previewH`**：拖动时 chat cell 自身尺寸在变，它自己的 ResizeObserver
+  会触发重定位（已实测对齐无误），不需要把高度写进依赖里反复重建观察器。
+- **拖动期间 body 加 `.ts-vsplit-dragging`**：
+  - `iframe { pointer-events:none !important }` —— 命中区不再丢事件；
+  - `user-select:none` + `cursor:ns-resize` —— 不出现选中高亮；
+  - `transition/animation:none` —— 过渡动画不再和指针竞争；
+  - **握柄保持可见**（`opacity:1`）：拖动时指针会离开分隔条，否则「把手中途消失」。
+
+### 验证（真实页面 + 真实预览）
+起了个本地站点（`package.json` 里 `vite --port 4571`）+ 临时项目，走真实
+「项目中心 → 卡片 → 工作台」，用 agent-browser 在页面里注入 200 个 pointermove：
+| 指标 | 结果 |
+|---|---|
+| 200 个 pointermove 引起的 style 写入 | **1 次**（改前 = 200 次 React 更新） |
+| 同步读 `strip.style.height` | 仍是旧值（证明没逐事件写） |
+| 拖动中 body 类 / iframe pointer-events / user-select | `true` / `none` / `none` |
+| 握柄 opacity（拖动中） | 0 → **1**（保持可见） |
+| pointerup 后 | 类移除、高度生效、**只在此时**写入 localStorage（`321`） |
+| 输入条停靠 | 卡片变高后仍对齐：`seat.position=fixed`，`delta=0` |
+
+`pnpm run check` 全绿；CSS 大括号平衡 0；bundle 262,681B + `node --check` 通过。
+
+### 附注
+验证期间观察到 `client/src/panel/sessions.ts` 被**另一个会话并发修改**
+（出现非我新增的 `bindSessionEventually`，且行号在两次读取间变化；
+中途一次 `tsc` 报的 698 行语法错是**读到写入中的半成品**，重跑即恢复）——
+本次未触碰该文件的并发改动。
+
+## Step 40（2026-10-08）：分隔条松手后没固定住（往上挤会回弹）
+
+### 反馈
+往**下**挤压：松手后停在原地 ✓；往**上**挤压：松手后鼠标落到更下的位置，分界线又跟着往下
+—— 没固定住。
+
+### 真因
+症状「松手后鼠标一动分界线又跟着走」= **拖动根本没结束**：`pointerup` 丢了，而 window 上的
+`pointermove` 监听还挂着 → 之后的每一次鼠标移动都被当成拖动。
+为什么会丢：往上拖时指针终点落在**预览 iframe / 宿主顶栏**一带，若该处有元素对指针事件
+`stopPropagation`，或者松手发生在窗口外，我们挂在 window 上（非捕获阶段）的 `pointerup`
+就收不到。往下拖时终点在主对话区，恰好没这个问题 —— 这就是「只有一个方向不回弹」的原因。
+
+### 修法：结束拖拽三重保险
+- **A. `setPointerCapture`**：在分隔条上捕获指针 —— 指针滑出元素/窗口，`pointerup` 也一定
+  回到它（再冒泡到 window）。
+- **B. 捕获阶段监听**：`pointerup` / `pointercancel` 用 `addEventListener(..., true)`，
+  中间元素 `stopPropagation` 也拦不住；再加 `window blur` 与 `visibilitychange`
+  （切走应用/最小化时收尾）。
+- **C. `buttons` 兜底**（最关键的一条）：松手后再来的 `pointermove` 必然带
+  `buttons === 0`（没有任何键按下）—— 这就是“已松手”的铁证，**立即结束**，不再跟随鼠标。
+  这条不依赖任何事件能否送达，所以即使 A/B 都失效也不会再出现「跟着走」。
+- `end()` 幂等（`done` 标志）：up / cancel / blur / buttons 多路信号只跑一次；
+  且**无条件**提交最终值（原先只在有待提交帧时才提交），保证拖到一半松手也停在松手处。
+
+### 验证（真实页面，全部用真实 pointer 事件）
+| 场景 | 结果 |
+|---|---|
+| 上拖 60px | 321 → **261**（Δ 精确） |
+| 下拖 100px | 261 → **321**（= rootH-180，正确触顶钳位） |
+| 上拖 1000px | → **120**（= PREVIEW_H_MIN，正确触底钳位） |
+| 下拖 2000px | → **321**（触顶钳位） |
+| **复现原 bug**：上拖后不派发 pointerup，直接派发 `buttons:0` 的 move 到更低处 | 高度**保持 261 不变**、`dragging=false`、持久化 261 —— 不再回弹 ✓ |
+| 正常「上拖 + pointerup」后，再派发 `buttons:0` 的远距离下移 | 高度**保持 181 不变** ✓ |
+
+每条路径都在 pointerup 时写入 localStorage，且拖动过程中不写。
+`pnpm run check` 全绿；bundle 263,357B + `node --check` 通过。
+
+## Step 41（2026-10-08）：侧边栏收起后，入口按钮去掉外框（与设置/搜索同风格）
+
+### 反馈
+左侧边栏收纳（rail）后，「项目中心 / 工作台」切换按钮还带着外框，和「设置 / 搜索」等
+图标按钮风格不一致。
+
+### 实测宿主的 rail 图标按钮
+用 agent-browser 把侧边栏收起后读计算样式：
+| | 我的按钮（改前） | 宿主图标按钮 |
+|---|---|---|
+| 尺寸 | 20×30 | **36×36** |
+| border | `1px solid rgba(127,127,127,.32)` | **`0px none`** |
+| background | `rgba(127,127,127,.1)` | **transparent** |
+| radius | 8px | **12px** |
+| padding | `7px 0` | **0** |
+
+### 修法
+组件本来就拿到了槽契约里的 `wide`（收起时 false，已加 `.rail` 类），所以只需给 rail 换一套皮：
+```css
+.ts-side-entry.rail { justify-content:center; padding:0; width:36px; height:36px;
+  border:0; background:transparent; border-radius:12px; }
+.ts-side-entry.rail .ts-side-icon { font-size:16px; }   /* 图标放大，和宿主图标同量级 */
+.ts-side-entry.rail:hover { background:rgba(127,127,127,.18); border:0; }  /* 悬停只给底色，不再冒边框 */
+.ts-side-entry.rail:active { transform:none; background:rgba(127,127,127,.24); } /* 图标按钮不做按压位移 */
+```
+（`.ts-side-entry.rail` 比 `.ts-side-entry:hover` 更具体，悬停态不会把边框又带回来。）
+
+### 验证（真实页面，收起/展开都测）
+- **收起**：我的按钮 = `36×36 / border 0px none / background transparent / radius 12px / padding 0`
+  —— 与宿主图标按钮逐项一致 ✓
+- **展开**：仍为原卡片样式（`256 宽 / border 1px solid / bg rgba(127,127,127,.1) / radius 8px /
+  文案「🗂️项目中心」）→ 无回归 ✓
+- `pnpm run check` 全绿；CSS 平衡 0；bundle 264,459B + `node --check`；线上产物含 rail 规则。

@@ -11,7 +11,7 @@
  */
 import React, { useEffect, useState } from 'react'
 import { injectProjectCenterStyles } from './styles'
-import { loadProjects, recallOpenedProject, rememberOpenedProject } from './store'
+import { loadProjects, recallOpenedProject, rememberOpenedProject, subscribeProjects, syncProjectsFromServer } from './store'
 import type { ProjectRecord } from './store'
 import {
   onRequestWorkbench, requestWorkbench, switchToView, setControlRoomScreen,
@@ -34,6 +34,15 @@ export function ControlRoom({ sessionId }: Props) {
   }, [])
 
   const [projects, setProjects] = useState<ProjectRecord[]>(() => loadProjects())
+  // 跨来源同步：手机端（经 dsh-remote-mobile 网关，来源与桌面端不同）据服务端注册表
+  // 水合出与桌面端一致的项目列表；服务端数据到达后广播 → 本组件重渲染。
+  useEffect(() => {
+    const un = subscribeProjects(setProjects)
+    const pull = () => { void syncProjectsFromServer().then(() => setProjects(loadProjects())) }
+    pull()
+    window.addEventListener('focus', pull)
+    return () => { un(); window.removeEventListener('focus', pull) }
+  }, [])
   const [openedId, setOpenedId] = useState<string | null>(null)
 
   // 恢复上次打开的工作台（记忆只是 UI 偏好；会话归属由 HDesk 自己解析）。
