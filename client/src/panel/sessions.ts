@@ -11,7 +11,8 @@
  */
 import { useEffect, useState } from 'react'
 import { getClientContext, readService } from '../session-subscribe'
-import { rememberOpenedProject, loadProjects, touchProject } from './store'
+import { rememberOpenedProject, loadProjects, touchProject, addProject } from './store'
+import type { ProjectRecord } from './store'
 
 /**
  * 「工作台」tab 的 conversation.view 条目 id。
@@ -558,6 +559,22 @@ export function sweepProjectSessionBindings(ctx: any): number {
 }
 
 /**
+ * 一次性「徽标新会话 → 项目中心列表」豁免标记。
+ *
+ * 走列表这条路时我们会先打开某个会话以取得视图上下文；但自动绑定
+ * （bindSessionToItsProject / 重试链）会把属于项目的会话改写成「工作台」，
+ * 于是界面又被拉回工作台。命中该会话时跳过绑定；带 TTL，避免长期误伤。
+ */
+let skipBindFor = ''
+let skipBindUntil = 0
+
+/** 让接下来针对该会话的自动绑定暂时跳过（用于「新会话 → 项目中心」）。 */
+export function skipNextBindFor(sessionId: string, ttlMs = 4000): void {
+  skipBindFor = sessionId ? String(sessionId) : ''
+  skipBindUntil = Date.now() + (ttlMs > 0 ? ttlMs : 4000)
+}
+
+/**
  * 把**单个**会话绑到它所属项目的工作台（命中已登记项目才生效）。
  *
  * 这是 #2 的确定性入口：在宿主导航到某个会话**之前**调用（见 client/src/index.ts
@@ -568,6 +585,8 @@ export function sweepProjectSessionBindings(ctx: any): number {
 export function bindSessionToItsProject(sessionId: string): boolean {
   const ctx: any = getClientContext()
   if (!ctx || !sessionId) return false
+  // 「新会话 → 项目中心」路径的豁免：本次导航不要把该会话绑到工作台
+  if (skipBindFor && skipBindFor === sessionId && Date.now() < skipBindUntil) return false
   const cwd = sessionCwd(ctx, sessionId)
   if (!cwd) return false
   const project = loadProjects().find((p) => sameDir(cwd, p.path))
@@ -969,6 +988,209 @@ export function wrapSessionCreate(): void {
     ctx.inject?.(['sessions'], () => { attempt() })
   } catch (e) {
     console.warn('[tokensave] 等待 sessions 失败', e)
+  }
+}
+
+// —— 宿主「新会话」入口接管 ———————————————
+/**
+ * 宿主侧边栏「新会话」的**总入口**（uiWorkspace.startSession）——tokensave 接管。
+ *
+ * 宿主的全部「新会话」按钮最终都汇到这里（已核对 ui-sidebar / ui-workspace 客户端源码）：
+ *   - 徽标下的「新会话」、收起态 rail 的新建图标、快捷键 Mod+N：`startSession()`（无 workspaceId）；
+ *   - 项目文件夹行悬浮出现的「新会话」：`startSession(workspaceId)`。
+ *
+ * 用户要求的分流：
+ *   - **无 workspaceId** → 不新建会话，直接把当前视图切到「项目中心」（项目列表），
+ *     由用户在列表里选一个项目（或添加项目）后再进入它的工作台；
+ *   - **带 workspaceId** → 该工作区对应的 tokensave 项目（未登记则自动登记）下
+ *     新建（或复用空白）会话，并直接进入其工作台；
+ *   - 没有项目、没有会话上下文等异常 → 原样交回宿主，绝不阻断原生能力。
+ */
+export function wrapSessionStart(): void {
+  const ctx: any = getClientContext()
+  if (!ctx) return
+  const attempt = (): boolean => {
+    const ui = svc(ctx, 'uiWorkspace')
+    if (!ui || typeof ui.startSession !== 'function') return false
+    if ((ui.startSession as any).__tokensaveWrapped) return true
+    const original = ui.startSession.bind(ui)
+    const wrapped = (workspaceId?: any) => {
+      const explicit = workspaceId !== undefined && workspaceId !== null && workspaceId !== ''
+      if (!explicit) {
+        // 徽标下的「新会话」→ 项目中心（项目列表）
+        try {
+          if (openProjectCenterList()) return
+        } catch (e) {
+          console.warn('[tokensave] 引导到项目中心失败，回落宿主原生行为', e)
+        }
+        return original(workspaceId)
+      }
+      // 项目文件夹悬浮的「新会话」→ 该项目的工作台
+      let handled = false
+      try {
+        const project = ensureProjectForWorkspace(ctx, String(workspaceId))
+        if (project) {
+          handled = true
+          void startProjectSession(project.path, project.id).then((res) => {
+            if (!res.ok) {
+              console.warn('[tokensave] 新会话进工作台失败，回落宿主原生行为', res.error)
+              try { original(workspaceId) } catch (e) { console.warn('[tokensave] 回落失败', e) }
+            }
+          })
+        }
+      } catch (e) {
+        console.warn('[tokensave] 「新会话」接管失败，回落宿主原生行为', e)
+      }
+      if (handled) return
+      return original(workspaceId)
+    }
+    ;(wrapped as any).__tokensaveWrapped = true
+    try {
+      ui.startSession = wrapped
+      console.log('[tokensave] 已接管 uiWorkspace.startSession（新会话 → 项目中心 / 工作台）')
+      return true
+    } catch (e) {
+      console.warn('[tokensave] 无法替换 uiWorkspace.startSession（只读？）', e)
+      return false
+    }
+  }
+  if (attempt()) return
+  try {
+    ctx.inject?.(['uiWorkspace'], () => { attempt() })
+  } catch (e) {
+    console.warn('[tokensave] 等待 uiWorkspace 失败（新会话接管退化为原生）', e)
+  }
+}
+
+/** 工作区 id → 已登记项目（未登记返回 undefined）。 */
+export function projectByWorkspaceId(ctx: any, workspaceId: string): ProjectRecord | undefined {
+  if (!ctx || !workspaceId) return undefined
+  return loadProjects().find((p) => readProjectWorkspaceId(ctx, p.path) === workspaceId)
+}
+
+/** 宿主工作区行（侧栏的「项目文件夹」）的路径与标题。 */
+function workspaceRowById(ctx: any, workspaceId: string): { path: string; title: string } | null {
+  if (!ctx || !workspaceId) return null
+  const hit = readWorkspaceItems(ctx).find((w: any) => String(w?.workspaceId) === workspaceId)
+  const path = typeof hit?.path === 'string' ? hit.path : ''
+  if (!path) return null
+  return { path, title: String(hit?.title || '') }
+}
+
+/**
+ * 工作区 → tokensave 项目：已登记直接返回；未登记则按工作区路径/标题**自动登记**。
+ *
+ * 用户选择「自动登记」，让侧边栏每一个「新会话」按钮都落到 tokensave 工作台；
+ * 自动登记的项目在「项目中心」里可见、可移除。
+ * @returns 对应项目（拿不到工作区路径时返回 undefined，调用方回落宿主原生行为）
+ */
+export function ensureProjectForWorkspace(ctx: any, workspaceId: string): ProjectRecord | undefined {
+  const existing = projectByWorkspaceId(ctx, workspaceId)
+  if (existing) return existing
+  const row = workspaceRowById(ctx, workspaceId)
+  if (!row) return undefined
+  const name = row.title || row.path.split('/').pop() || row.path
+  return addProject(name, row.path)
+}
+
+/**
+ * 把当前视图切到「项目中心」的**项目列表**屏（不新建会话）。
+ *
+ * 有当前会话时：写该会话的视图偏好 + 点宿主 tab，即可落到列表。
+ * 没有当前会话（应用刚启动、停在 New Session 纯视图）时：先打开一个已登记项目的
+ * 最新会话以取得会话上下文，再切列表（这次导航不做工作台绑定，见 skipNextBindFor）。
+ * @returns 是否发起了导航（false 表示应回落宿主原生的「新会话」）
+ */
+export function openProjectCenterList(): boolean {
+  const ctx: any = getClientContext()
+  if (!ctx) return false
+  const current = getCurrentSessionId()
+  if (current) {
+    requestProjectList()
+    return switchToView(PROJECT_CENTER_VIEW_ID, PROJECT_CENTER_LABEL)
+  }
+  const ordered = loadProjects().slice().sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
+  for (const project of ordered) {
+    const s = latestProjectSession(ctx, project.path)
+    if (!s) continue
+    // 这次导航只为了拿会话上下文，随后切到项目列表；不绑工作台（否则又被拉回去）
+    skipNextBindFor(s.id)
+    primeViewPreference(s.id, PROJECT_CENTER_VIEW_ID)
+    rememberOpenedProject(s.id, null)
+    const ok = openSession(s.id)
+    if (typeof window !== 'undefined') {
+      for (const d of [0, 150, 500, 1200]) {
+        window.setTimeout(() => selectHostView(PROJECT_CENTER_LABEL), d)
+      }
+    }
+    return ok
+  }
+  return false
+}
+
+// —— conversation.view target 注册（空白会话可渲染的钥匙）——————
+/**
+ * 为 tokensave 的两个 `conversation.view` 注册**视图 target**，让它们在「空白会话」下也能显示。
+ *
+ * 宿主 `conversationPhase()` 对空白会话（`session.blank` 且还没发过首轮）只在
+ * `conversation.activeTargets.size > 0` 时才返回 `'active'`，否则 ConversationRoot
+ * 直接 `return null`（显示 Hero「选择一个工作区」）。而 activeTargets 只装
+ * **注册过 target 且 `isActive()` 为真**的视图（ui-chat 的 `'chat'`、ui-trajectory 的
+ * `'trajectory'` 都自带定义）；只用 slot 注册的视图没有 target，
+ * `binding(sessionId).activate(viewId)` 是空操作 → 空白会话永远不渲染我们的视图。
+ *
+ * 这就是「点新建会话/新会话后进不了工作台、只看到『选择一个工作区』」的根因：
+ * 新建出来的是**空白会话**。补上 target 后，宿主自己的 `restoreView`（读视图偏好）
+ * 与本插件的 `scheduleActivate` 就能把会话拉成 'active'，工作台/项目中心随即渲染。
+ */
+export function registerViewTargets(ctx: any): void {
+  if (!ctx) return
+  const install = (): boolean => {
+    const uiConv = readService<any>(ctx, 'uiConversation')
+    if (!uiConv || typeof uiConv.views?.register !== 'function') return false
+    // 视图本体由 slot 渲染；target 只参与 activeTargets/phase 计算，
+    // 因此给一个最小快照构造器（replace/apply 返回空快照即可）。
+    const definitions = [VIEW_ID, PROJECT_CENTER_VIEW_ID].map((target) => ({
+      target,
+      create: () => ({
+        replace: () => ({ order: [], nodes: new Map() }),
+        apply: () => ({ order: [], nodes: new Map() }),
+      }),
+      // 只要被 activate 就计为“有可见活动”（空白会话由此进入 active 阶段）
+      isActive: () => true,
+    }))
+    const registerAll = () => {
+      const disposers: Array<() => void> = []
+      for (const definition of definitions) {
+        try {
+          disposers.push(uiConv.views.register(definition))
+        } catch (e) {
+          // 已注册（HMR / 重入）：不重复注册，也不影响其它定义
+          console.warn(`[tokensave] 视图 target "${definition.target}" 注册跳过`, e)
+        }
+      }
+      return () => {
+        for (const off of disposers) {
+          try { off() } catch { /* noop */ }
+        }
+      }
+    }
+    try {
+      // 挂在 fiber 生命周期上：dsh-hmr full reload 时先注销再重装，避免“已注册”残留
+      if (typeof ctx.effect === 'function') ctx.effect(registerAll, 'tokensave: conversation view targets')
+      else registerAll()
+      console.log('[tokensave] 已注册工作台 / 项目中心视图 target（空白会话也能显示）')
+      return true
+    } catch (e) {
+      console.warn('[tokensave] 注册视图 target 失败（空白会话可能只看到 Hero）', e)
+      return false
+    }
+  }
+  if (install()) return
+  try {
+    ctx.inject?.(['uiConversation'], () => { install() })
+  } catch (e) {
+    console.warn('[tokensave] 等待 uiConversation 失败（视图 target 未注册）', e)
   }
 }
 

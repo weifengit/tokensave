@@ -1183,3 +1183,79 @@ ControlRoom 的恢复逻辑第一行 `if (isForceList()) return` 就短路 → �
 - **展开**：仍为原卡片样式（`256 宽 / border 1px solid / bg rgba(127,127,127,.1) / radius 8px /
   文案「🗂️项目中心」）→ 无回归 ✓
 - `pnpm run check` 全绿；CSS 平衡 0；bundle 264,459B + `node --check`；线上产物含 rail 规则。
+
+## Step 42（2026-10-08）：三处「新建会话」按钮全部接管 —— 徽标 → 项目中心，项目文件夹 → 工作台
+
+### 反馈（多次修复无果）
+用户要求 tokensave 接管 DSH 原生全部「新建会话」入口：
+1. 侧边栏**徽标下**的「新会话」→ 进 tokensave「项目中心」（选/建项目后再进工作台）；
+2. **项目文件夹行悬浮**出现的「新会话」→ 直接进对应项目的工作台（未登记的工作区自动登记为项目）；
+3. 工作台顶部「＋ 新建会话」→ 就在当前工作台的项目下开新对话，不跳走。
+
+### 先查清宿主的真实实现（不再靠猜）
+读 `@deepseek-ai/dsh-client-ui-sidebar` 与 `@deepseek-ai/dsh-client-ui-workspace` 的 client 源码：
+- 侧边栏拥有 brand 行与 New Session，**没有 slot 可以替换**它们；点击一律走
+  `workspaceNavigation.startSession(workspaceId)`（`workspaceNavigation = ctx.get('uiWorkspace')`）；
+- 徽标下 / 收起态 rail 图标 / 快捷键 Mod+N：`startSession()`（**无** workspaceId）；
+- 项目文件夹行（`Rows` 组件）的悬浮图标：`onCreate()` → `startSession(group.workspaceId)`；
+- 宿主 `startSession(wid)`：`target = wid ?? 当前会话工作区 ?? 最近工作区` → `openWorkspace(target)`
+  → `reuseOrCreateBlank` → `replaceMain`。
+→ 两处按钮的**唯一汇合点**就是 `uiWorkspace.startSession`，包住它即可分流。
+
+### 真因 2：空白会话根本不渲染任何 conversation.view（最关键，之前的修补全部落在这里）
+宿主 `conversationPhase(session, conversation)`：
+```js
+conversation.activeTargets.size > 0 || (!session.blank && !session.awaitingFirstTurn) || session.running
+  ? 'active' : session.promptAttempted ? 'engaging' : 'blank'
+```
+而 ConversationRoot 里 `if (session.blank && conversationPhase(...) === 'blank') return null;`。
+`activeTargets` 来自 `activityTargets()`：**只装注册过 view target 且 `isActive()` 为真**的视图
+（ui-chat 注册 `'chat'`、ui-trajectory 注册 `'trajectory'`）。
+
+**tokensave 只做了 slot 注册（`conversation.view`），没有注册 target** →
+`uiConversation.binding(sid).activate('tokensave-control-room')` 是**空操作** →
+新建出来的**空白会话**永远停在 Hero「选择一个工作区」——这正是用户看到的
+「新建会话后进不了工作台」。浏览器实测：`views.entries()` 只有
+`tool-todo-history / trajectory / chat`，没有我们的两个 id；手工补一个 target 后
+同一个会话立即渲染出工作台。
+
+### 修法（`client/src/panel/sessions.ts` + `client/src/index.ts`）
+1. **`wrapSessionStart()`**：包装 `uiWorkspace.startSession`（与已有 `replaceMain`/`sessions.create`
+   包装同一套思路，幂等 + `ctx.inject` 等就绪）：
+   - **无 workspaceId** → `openProjectCenterList()`（不建会话，直接把视图切到「项目中心」列表）；
+   - **有 workspaceId** → `ensureProjectForWorkspace()`（已登记直接用；**未登记则按工作区路径/标题
+     自动 `addProject` 登记**）→ `startProjectSession(project.path, project.id)` 进工作台；
+   - 拿不到项目 / 无项目 / 服务不可用 → **原样回落** `original(workspaceId)`，绝不阻断原生能力。
+2. **`registerViewTargets()`**：用 `ctx.uiConversation.views.register` 为 `tokensave-control-room` 与
+   `tokensave-project-center` 注册 target（`isActive: () => true`，`create()` 给最小快照构造器），
+   挂在 `ctx.effect` 上以便 HMR full reload 先注销再重装。有了 target，
+   宿主自己的 `restoreView`（读 `dsh.conversation.<id>.view`）与本插件的 `scheduleActivate`
+   才能真正把空白会话拉成 `'active'`，工作台/项目中心随即渲染。
+3. **`openProjectCenterList()` / `skipNextBindFor()`**：徽标路径若**没有当前会话**，
+   先打开一个已登记项目的会话以取得视图上下文，再用一次性豁免（TTL 4s）阻止自动绑定
+   把视图偏好改写成「工作台」，保证停在项目列表。
+
+### 验证
+① **逻辑仿真**（esbuild 打包 sessions.ts → node 桩环境，假 ctx/假 DOM）**21/21 通过**：
+接管安装、徽标→项目中心（写偏好 + 点 tab + 不叫原生）、文件夹→工作台（workspaceId 透传建会话、
+偏好=工作台、点 tab）、未登记工作区自动登记、未知工作区回落原生、无会话时开最新会话且停在项目中心、
+豁免 TTL 到期后恢复正常绑定。
+② **真实浏览器端到端**（agent-browser 驱动 3080，真实点击，非模拟）：
+
+| 入口 | 期望 | 实测 |
+|---|---|---|
+| `views.entries()` | 含我们的两个 target | `["tokensave-control-room","tokensave-project-center",...]` ✓ |
+| `uiWorkspace.startSession` / `replaceMain` 包装 | 已接管 | `{start:true, main:true}` ✓ |
+| 侧边栏徽标「新会话」 | 项目中心列表 | `center="🎛 项目中心" / activeTab=项目中心 / desk=false` ✓ |
+| 项目文件夹「tokensave」新会话 | tokensave 工作台 | `desk=true / project=tokensave / activeTab=工作台` ✓ |
+| 工作台顶部「＋ 新建会话」 | 仍在本项目工作台 | `desk=true / project=tokensave / activeTab=工作台` ✓ |
+| 项目文件夹「ai」（未登记）新会话 | 自动登记 + 进其工作台 | `desk=true / project=ai / activeTab=工作台` ✓ |
+
+③ `pnpm run check` 全绿；`pnpm build:client` 通过；`node --check dist/client.js` 通过；
+3080 经 client HMR 已下发新 bundle（graph rev `39691ea7a0c3` → `f34502250ff6`）。
+
+### 遗留 / 副作用
+- 验证过程自动把 `/Users/sonoma/Desktop/测试/ai` 登记进了项目中心（即所选「自动登记」行为），
+  可在项目中心「移除」；验证还留下少量空白会话（标题「新会话」，tokensave / ai 工作区），可归档。
+- 徽标路径在**完全没有当前会话**时的分支（先开一个项目会话再切列表）只能靠逻辑仿真验证，
+  真机难构造，留待后续目检。

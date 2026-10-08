@@ -20,7 +20,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { useEffect } from 'react'
 import { getClientContext, setClientContext, subscribeSession, readService } from './session-subscribe'
 import {
-  sweepProjectSessionBindings, bindSessionToItsProject, bindSessionEventually, wrapSessionCreate, setCurrentSessionId,
+  sweepProjectSessionBindings, bindSessionToItsProject, bindSessionEventually, wrapSessionCreate, wrapSessionStart, registerViewTargets, setCurrentSessionId,
   VIEW_ID, WORKBENCH_LABEL, PROJECT_CENTER_VIEW_ID, PROJECT_CENTER_LABEL,
 } from './panel/sessions'
 import { mountBriefWindow, mountedExplorerCount } from './float/mount'
@@ -213,6 +213,13 @@ export function apply(ctx: Context) {
   // 同样接管 sessions.create：侧边栏新建的会话在创建时即写好视图偏好
   // （openSession 时机可能拿不到 cwd，不能只靠那一层）。
   wrapSessionCreate()
+  // 接管宿主侧边栏的全部「新会话」入口（uiWorkspace.startSession）：
+  // 徽标下那个 → 项目中心（项目列表）；项目文件夹悬浮那个 → 该项目的工作台。
+  wrapSessionStart()
+  // 注册 conversation.view 的 target：宿主对**空白会话**只在 activeTargets 非空时
+  // 才渲染视图，而 target 只认“注册过且 isActive”的视图（ui-chat/ui-trajectory 都自带）。
+  // 少了这步，新建出来的空白会话永远停在 Hero「选择一个工作区」，进不了工作台。
+  registerViewTargets(ctx)
   try {
     const slots = (ctx as any).slots
     // 1. 会话头部动作区探测组件（简报监听）
