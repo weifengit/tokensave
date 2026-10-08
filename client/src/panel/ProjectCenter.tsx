@@ -5,10 +5,13 @@
  *   展示：卡片模式 / 列表模式（表格：序号/名称/路径/创建/上次更新/项目介绍/活跃/操作）
  *   排序：按项目名称 / 按创建时间 / 按更新时间
  *
- * 三个进入工作台的入口**行为完全一致**（都调 enterProjectWorkbench）：
+ * 进入工作台的入口（均调 enterProjectWorkbench，进的是**该项目当前会话**的工作台）：
  *   - 卡片模式：点整张卡片
  *   - 列表模式：点整条记录行
- *   - 两种模式里的「进入工作台」按钮
+ *
+ * 「＋ 新会话」按钮（卡片与列表两种模式**一致**）：在该项目下开一个新对话
+ * （复用已有空白会话，没有则创建）并直接进入它的工作台（详见 sessions.startProjectSession）。
+ * 这样从「侧边栏徽标新会话 → 项目中心 → 选项目」这条链路点下去就是一条全新对话。
  *
  * 活跃标识：每行/每卡片显示该项目下活跃对话的序号点 ①②③（绿=活跃，黄=待确认）；
  * **点某个序号点 = 直接进入那条对话的工作台**（见 ActivityDots.onPick）。
@@ -22,7 +25,7 @@ import {
   updateProjectDescription,
 } from './store'
 import type { ProjectRecord, ViewMode, SortMode } from './store'
-import { enterProjectWorkbench, getCurrentSessionId, setControlRoomScreen } from './sessions'
+import { enterProjectWorkbench, getCurrentSessionId, setControlRoomScreen, startProjectSession } from './sessions'
 import { useProjectsActivity } from './activity'
 import type { SessionActivity } from './activity'
 import { fetchProjectInfo } from './api'
@@ -240,6 +243,32 @@ export function ProjectCenter({ sessionId }: Props) {
     if (enterProjectWorkbench(p.id, targetSessionId)) refresh()
   }
 
+  /** 正在「新会话」的项目 id（防连点） */
+  const [busyId, setBusyId] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
+  useEffect(() => {
+    if (!notice) return
+    const timer = window.setTimeout(() => setNotice(null), 4_000)
+    return () => window.clearTimeout(timer)
+  }, [notice])
+
+  /**
+   * 「＋ 新会话」：在该项目下开一个新对话（复用已有空白会话，没有则创建），
+   * 并直接进入它的工作台——与工作台顶部那个「＋ 新建会话」完全同款。
+   */
+  const newSession = async (p: ProjectRecord) => {
+    if (busyId) return
+    setBusyId(p.id)
+    setNotice(null)
+    try {
+      const res = await startProjectSession(p.path, p.id)
+      if (!res.ok) setNotice(`新建会话失败：${res.error}`)
+      else refresh()
+    } finally {
+      setBusyId(null)
+    }
+  }
+
   /** 移除项目：**先弹确认弹窗**（破坏性操作），确认后才真删。 */
   const dropProject = (p: ProjectRecord) => setPendingRemove(p)
   const confirmRemove = () => {
@@ -305,6 +334,8 @@ export function ProjectCenter({ sessionId }: Props) {
           <div className="ts-hint">当前会话上下文不可用，无法进入工作台（仍可管理项目列表）。</div>
         )}
 
+        {notice && <div className="ts-hint">⚠️ {notice}</div>}
+
         {projects.length === 0 ? (
           <div className="ts-center-emptywrap">
             <button className="ts-center-addcard" onClick={() => setShowAdd(true)}>
@@ -367,9 +398,10 @@ export function ProjectCenter({ sessionId }: Props) {
                     <td className="ts-plist-ops">
                       <button
                         className="ts-btn ts-btn-sm ts-btn-primary"
-                        onClick={(e) => { e.stopPropagation(); enter(p) }}
-                        title="进入该项目的工作台（与点击整行一致）"
-                      >进入工作台</button>
+                        disabled={busyId === p.id}
+                        onClick={(e) => { e.stopPropagation(); void newSession(p) }}
+                        title={`在「${p.name}」下开一个新对话，并直接进入它的工作台`}
+                      >{busyId === p.id ? '新建中…' : '＋ 新会话'}</button>
                       <button
                         className="ts-btn ts-btn-sm ts-btn-danger"
                         onClick={(e) => { e.stopPropagation(); dropProject(p) }}
@@ -424,9 +456,10 @@ export function ProjectCenter({ sessionId }: Props) {
                   >{infoOf(p)?.devRunning ? '● 已启动' : '○ 未启动'}</span>
                   <button
                     className="ts-btn ts-btn-sm ts-btn-primary"
-                    onClick={(e) => { e.stopPropagation(); enter(p) }}
-                    title="进入该项目的工作台（与点击整张卡片一致）"
-                  >进入工作台</button>
+                    disabled={busyId === p.id}
+                    onClick={(e) => { e.stopPropagation(); void newSession(p) }}
+                    title={`在「${p.name}」下开一个新对话，并直接进入它的工作台`}
+                  >{busyId === p.id ? '新建中…' : '＋ 新会话'}</button>
                   <button
                     className="ts-btn ts-btn-sm ts-btn-danger"
                     onClick={(e) => { e.stopPropagation(); dropProject(p) }}

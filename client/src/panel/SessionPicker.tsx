@@ -231,7 +231,7 @@ export function SessionPicker({ sessions, currentId, onPick, onNew }: SessionPic
           style={{ position: 'fixed', top: pos.top, right: pos.right, left: 'auto' }}
         >
           <div className="ts-sess-pop-head">
-            该项目的历史会话 · {sessions.length} 个 · 悬浮行可归档 / 更多操作
+            历史会话 · {sessions.length} 个
           </div>
           {sessions.length === 0 ? (
             <div className="ts-sess-empty">
@@ -244,52 +244,62 @@ export function SessionPicker({ sessions, currentId, onPick, onNew }: SessionPic
                 const rowOpen = menuFor === s.id || renameFor === s.id
                 return (
                   <div key={s.id} className="ts-sess-row">
-                    <div
-                      className={`ts-sess-item${s.id === currentId ? ' active' : ''}${rowOpen ? ' ts-sess-item-open' : ''}`}
-                      role="option"
-                      aria-selected={s.id === currentId}
-                    >
-                      <button
-                        type="button"
-                        className="ts-sess-item-main"
+                      {/* 行本体：点任意处选会话；右侧同一个槽里“时间 ↔ 悬浮双按钮”互换
+                        （槽宽固定，互换不引起浮动面板宽度跳动） */}
+                      <div
+                        className={`ts-sess-item${s.id === currentId ? ' active' : ''}${rowOpen ? ' ts-sess-item-open' : ''}`}
+                        role="option"
+                        aria-selected={s.id === currentId}
+                        tabIndex={0}
+                        title={`${s.title}${s.running ? '（进行中）' : ''}`}
                         onClick={() => {
                           closeAll()
                           onPick(s.id)
                         }}
-                        title={`${s.title}${s.running ? '（进行中）' : ''}`}
+                        onKeyDown={(e) => {
+                          if (e.key !== 'Enter' && e.key !== ' ') return
+                          e.preventDefault()
+                          closeAll()
+                          onPick(s.id)
+                        }}
                       >
                         <span className={`ts-win-dot${s.running ? '' : ' idle'}`} />
                         <MarqueeTitle text={s.title} prefix={s.explorer ? '🔍 ' : ''} />
                         {isPinned && <span className="ts-sess-tag" title="已置顶">📌</span>}
                         {s.blank && <span className="ts-sess-tag">空白</span>}
-                        <span className="ts-sess-item-time">{relTime(s.updatedAt)}</span>
-                      </button>
-                      {/* 悬浮才出现的两个按钮：⋯ 更多、📥 归档（宽度常驻，避免悬浮时抖动） */}
-                      <span className="ts-sess-rowops">
-                        <button
-                          type="button"
-                          className={`ts-sess-op${menuFor === s.id ? ' active' : ''}`}
-                          title="更多操作（置顶 / 重命名 / 归档 / 分叉）"
-                          aria-haspopup="menu"
-                          aria-expanded={menuFor === s.id}
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            setRenameFor(null)
-                            setMenuFor((v) => (v === s.id ? null : s.id))
-                          }}
-                        >⋯</button>
-                        <button
-                          type="button"
-                          className="ts-sess-op"
-                          title="归档该会话（运行中会先问你是否停止）"
-                          disabled={archiving === s.id}
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            void doArchive(s)
-                          }}
-                        >📥</button>
-                      </span>
-                    </div>
+                        <span className="ts-sess-slot">
+                          {relTime(s.updatedAt) !== '' && (
+                            <span className="ts-sess-time">
+                              <span className="ts-sess-sep" aria-hidden="true">·</span>
+                              {relTime(s.updatedAt)}
+                            </span>
+                          )}
+                          <span className="ts-sess-rowops">
+                            <button
+                              type="button"
+                              className={`ts-sess-op${menuFor === s.id ? ' active' : ''}`}
+                              title="更多操作（置顶 / 重命名 / 归档 / 分叉）"
+                              aria-haspopup="menu"
+                              aria-expanded={menuFor === s.id}
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                setRenameFor(null)
+                                setMenuFor((v) => (v === s.id ? null : s.id))
+                              }}
+                            >⋯</button>
+                            <button
+                              type="button"
+                              className="ts-sess-op"
+                              title="归档该会话（运行中会先问你是否停止）"
+                              disabled={archiving === s.id}
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                void doArchive(s)
+                              }}
+                            >📥</button>
+                          </span>
+                        </span>
+                      </div>
 
                     {menuFor === s.id && (
                       <div className="ts-sess-menu" role="menu">

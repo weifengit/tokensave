@@ -147,21 +147,26 @@ body.ts-hdesk-dock [data-conversation-region="composer"] {
 .ts-sess-btn.active { border-color:rgba(96,165,250,.7); background:rgba(96,165,250,.18); }
 .ts-sess-cur { opacity:.7; font-size:12px; max-width:280px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .ts-sess-caret { opacity:.6; font-size:11px; }
-.ts-sess-pop { position:absolute; top:calc(100% + 6px); right:0; left:auto; z-index:44; width:min(520px, calc(100vw - 32px)); max-height:60vh; display:flex; flex-direction:column; border-radius:12px; border:1px solid rgba(127,127,127,.35); background:rgba(24,27,33,.97); color:#e6e8eb; box-shadow:0 14px 40px rgba(0,0,0,.5); backdrop-filter:blur(12px) saturate(1.2); overflow:hidden; }
-.ts-sess-pop-head { flex:none; padding:9px 12px; font-size:11.5px; font-weight:600; opacity:.7; border-bottom:1px solid rgba(127,127,127,.25); letter-spacing:.03em; }
+/* 浮动面板宽度：**跟随内容**（主要是标题宽度）动态决定，而不是写死 520px；
+   min/max 只兜底（太窄不好看、太宽超出视口）。 */
+.ts-sess-pop { position:absolute; top:calc(100% + 6px); right:0; left:auto; z-index:44; width:max-content; min-width:240px; max-width:min(560px, calc(100vw - 32px)); max-height:60vh; display:flex; flex-direction:column; border-radius:12px; border:1px solid rgba(127,127,127,.35); background:rgba(24,27,33,.97); color:#e6e8eb; box-shadow:0 14px 40px rgba(0,0,0,.5); backdrop-filter:blur(12px) saturate(1.2); overflow:hidden; }
+/* 表头：max-width 封顶 + 允许换行，否则它的长文案会把动态宽度撑开 */
+.ts-sess-pop-head { flex:none; max-width:320px; padding:9px 12px; font-size:11.5px; font-weight:600; opacity:.7; border-bottom:1px solid rgba(127,127,127,.25); letter-spacing:.03em; white-space:normal; }
 .ts-sess-list { flex:1; min-height:0; overflow:auto; padding:5px; display:flex; flex-direction:column; gap:2px; }
-/* 行容器（div）：里面是「主体按钮 + ⋯ 按钮」，外面包一层 .ts-sess-row 以便菜单另起一行 */
+/* 行：点任意处选会话（整行可点）；内部从左到右紧凑排列，右侧不留空白 */
 .ts-sess-row { display:flex; flex-direction:column; }
-.ts-sess-item { display:flex; align-items:center; gap:2px; width:100%; border-radius:8px; color:inherit; font:inherit; font-size:12.5px; }
+.ts-sess-item { display:flex; align-items:center; gap:6px; width:100%; padding:7px 9px; border-radius:8px; color:inherit; font:inherit; font-size:12.5px; cursor:pointer; box-sizing:border-box; }
 .ts-sess-item:hover { background:rgba(127,127,127,.18); }
 .ts-sess-item.active { background:rgba(96,165,250,.24); box-shadow:inset 0 0 0 1px rgba(96,165,250,.5); }
-/* 主体（点选切换会话）：占满剩余宽度，内容与旧行样式一致 */
-.ts-sess-item-main { flex:1; min-width:0; display:flex; align-items:center; gap:8px; padding:7px 9px; border:0; border-radius:8px; background:transparent; color:inherit; font:inherit; font-size:12.5px; text-align:left; cursor:pointer; }
-.ts-sess-item-main:focus-visible { outline:2px solid rgba(96,165,250,.8); outline-offset:-2px; }
-/* 行右侧的悬浮按钮组（⋯ 更多、📥 归档）：宽度常驻（visibility 而非 display），
-   这样悬浮时不会把标题挤窄、跑马灯的实测宽度也不会变。 */
-.ts-sess-rowops { flex:none; display:inline-flex; align-items:center; gap:2px; padding-right:4px; visibility:hidden; }
-.ts-sess-item:hover .ts-sess-rowops, .ts-sess-item-open .ts-sess-rowops { visibility:visible; }
+.ts-sess-item:focus-visible { outline:2px solid rgba(96,165,250,.8); outline-offset:-2px; }
+/* 右侧插槽：空闲时显示时间（紧跟在标题后，用 · 分隔），悬浮时换成两个按钮。
+   插槽宽度固定（min-width），互换不会改变行宽 → 浮动面板宽度不会跳。 */
+.ts-sess-slot { flex:none; display:inline-flex; align-items:center; justify-content:flex-end; min-width:64px; }
+.ts-sess-time { font-size:10.5px; opacity:.5; font-variant-numeric:tabular-nums; white-space:nowrap; }
+.ts-sess-sep { margin:0 5px; opacity:.65; }
+.ts-sess-rowops { display:none; align-items:center; gap:2px; }
+.ts-sess-item:hover .ts-sess-rowops, .ts-sess-item-open .ts-sess-rowops { display:inline-flex; }
+.ts-sess-item:hover .ts-sess-time, .ts-sess-item-open .ts-sess-time { display:none; }
 .ts-sess-op { flex:none; border:0; background:transparent; color:inherit; cursor:pointer; font:inherit; font-size:13px; line-height:1; padding:5px 6px; border-radius:6px; opacity:.6; }
 .ts-sess-op:hover, .ts-sess-op.active { opacity:1; background:rgba(127,127,127,.25); }
 .ts-sess-op:disabled { cursor:default; opacity:.3; }
@@ -175,12 +180,12 @@ body.ts-hdesk-dock [data-conversation-region="composer"] {
 .ts-sess-menu-item:disabled { cursor:default; opacity:.5; }
 /* 归档失败等短提示（自动消失） */
 .ts-sess-notice { flex:none; max-width:260px; font-size:11.5px; opacity:.8; color:#fca5a5; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.ts-sess-item-title { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+/* 标题：按内容自适应（不抢剩余空间），但设上限，让面板宽度既能跟随标题、又不会被超长标题撑爆 */
+.ts-sess-item-title { flex:0 1 auto; min-width:0; max-width:340px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 /* 跑马灯：悬浮且内容超宽时左右来回滚动；位移量由 JS 实测写进 --ts-marquee-shift */
 .ts-marquee { display:inline-block; white-space:nowrap; }
 .ts-sess-item:hover .ts-marquee-move { animation: tsSessMarquee 5s ease-in-out infinite alternate; }
 @keyframes tsSessMarquee { from { transform:translateX(0); } to { transform:translateX(calc(-1 * var(--ts-marquee-shift, 0px))); } }
-.ts-sess-item-time { flex:none; font-size:10.5px; opacity:.5; font-variant-numeric:tabular-nums; }
 .ts-sess-tag { flex:none; font-size:10px; padding:1px 6px; border-radius:99px; background:rgba(127,127,127,.25); }
 .ts-sess-empty { padding:14px 12px; font-size:12px; opacity:.65; line-height:1.6; }
 
