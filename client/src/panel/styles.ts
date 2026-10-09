@@ -158,7 +158,12 @@ body.ts-hdesk-nochat [data-conversation-region="composer"] {
 /* 清单浮层：portal 到 body + position:fixed（top/left 由 JSX 按按钮矩形给），
    所以 rail（56px 收起）与展开态都从按钮右缘飞出，不被侧边栏 overflow 裁剪 */
 .ts-warn-pop { position:fixed; z-index:60; width:300px; max-width:calc(100vw - 24px); max-height:60vh; display:flex; flex-direction:column; border-radius:12px; border:1px solid rgba(127,127,127,.35); background:rgba(24,27,33,.97); color:#e6e8eb; box-shadow:0 14px 40px rgba(0,0,0,.5); backdrop-filter:blur(12px) saturate(1.2); overflow:hidden; }
-.ts-warn-pop-head { flex:none; padding:9px 12px; font-size:11.5px; font-weight:600; opacity:.75; border-bottom:1px solid rgba(127,127,127,.25); letter-spacing:.03em; }
+.ts-warn-pop-head { flex:none; display:flex; align-items:center; justify-content:space-between; gap:8px; padding:8px 10px 8px 12px; font-size:11.5px; font-weight:600; opacity:.8; border-bottom:1px solid rgba(127,127,127,.25); letter-spacing:.03em; }
+.ts-warn-pop-title { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+/* 头部「全部已读」：一键把清单里的都标上（黄灯随之回绿 / 第 3 点随之消隐） */
+.ts-warn-allread { flex:none; border:1px solid rgba(245,158,11,.55); background:rgba(245,158,11,.16); color:#fbbf24; font-size:10.5px; font-weight:600; line-height:1; padding:4px 9px; border-radius:999px; cursor:pointer; }
+.ts-warn-allread:hover { background:rgba(245,158,11,.32); }
+.ts-warn-allread:focus-visible { outline:2px solid rgba(96,165,250,.85); outline-offset:1px; }
 .ts-warn-pop-list { overflow:auto; padding:4px; display:flex; flex-direction:column; gap:2px; min-height:32px; }
 .ts-warn-item { display:flex; align-items:flex-start; gap:8px; width:100%; padding:7px 8px; border:0; border-radius:8px; background:transparent; color:inherit; font:inherit; text-align:left; cursor:pointer; }
 .ts-warn-item:hover { background:rgba(245,158,11,.16); }
@@ -167,6 +172,12 @@ body.ts-hdesk-nochat [data-conversation-region="composer"] {
 .ts-warn-body { min-width:0; display:flex; flex-direction:column; gap:2px; }
 .ts-warn-title { font-size:12.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .ts-warn-sub { font-size:11px; opacity:.65; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+/* 每一行 = 条目（点它跳转）+ 右侧「已读」小按钮（只标注不跳转） */
+.ts-warn-row { display:flex; align-items:stretch; gap:4px; }
+.ts-warn-row .ts-warn-item { flex:1; min-width:0; width:auto; }
+.ts-warn-read { flex:none; align-self:center; border:1px solid rgba(127,127,127,.4); background:rgba(127,127,127,.14); color:inherit; font-size:10.5px; line-height:1; padding:5px 7px; border-radius:7px; cursor:pointer; opacity:.72; }
+.ts-warn-read:hover { opacity:1; background:rgba(127,127,127,.3); }
+.ts-warn-read:focus-visible { outline:2px solid rgba(96,165,250,.85); outline-offset:1px; }
 .ts-warn-pop-foot { flex:none; padding:6px 10px; font-size:10.5px; opacity:.55; border-top:1px solid rgba(127,127,127,.2); }
 @media (prefers-reduced-motion: reduce) { .ts-warn-badge { animation:none; opacity:1; } }
 
@@ -179,9 +190,17 @@ body.ts-hdesk-nochat [data-conversation-region="composer"] {
 .ts-pulse-warn .ts-pulse-dot { background:#f59e0b; box-shadow:0 0 6px rgba(245,158,11,.8); }
 /* 有对话正在跑：依次闪烁（跑马灯）——animationDelay 由 JSX 按序号给出 */
 .ts-pulse-run .ts-pulse-dot { animation:ts-pulse-chase 1.05s ease-in-out infinite; }
+/* 第 3 个圆点 = 「最近正常结束」指示（蓝、可点开清单）。
+   特异性 (0,3,0) 压过 .ts-pulse-run/.ts-pulse-warn 的 (0,2,0)，
+   所以无论绿/黄、跑马灯与否，它都保持自己的颜色与呼吸节奏；
+   ::after 把点击热区撑到 20px（视觉仍是 6px 圆点）。 */
+.ts-pulse .ts-pulse-done { position:relative; background:#38bdf8; box-shadow:0 0 6px rgba(56,189,248,.9); cursor:pointer; animation:ts-pulse-breathe 1.8s ease-in-out infinite; }
+.ts-pulse .ts-pulse-done::after { content:''; position:absolute; inset:-7px; border-radius:50%; }
+.ts-pulse .ts-pulse-done:hover { transform:scale(1.35); box-shadow:0 0 10px rgba(56,189,248,1); }
+.ts-pulse .ts-pulse-done:focus-visible { outline:2px solid rgba(96,165,250,.85); outline-offset:3px; }
 @keyframes ts-pulse-chase { 0%,100% { opacity:.22; transform:scale(.8) } 30% { opacity:1; transform:scale(1.15) } }
 @keyframes ts-pulse-breathe { 0%,100% { opacity:.45 } 50% { opacity:1 } }
-@media (prefers-reduced-motion: reduce) { .ts-pulse-dot { animation:none; opacity:1 } }
+@media (prefers-reduced-motion: reduce) { .ts-pulse-dot { animation:none; opacity:1 } .ts-pulse .ts-pulse-done { animation:none; opacity:1 } }
 .ts-btn-primary:hover { background:rgba(96,165,250,.4); box-shadow:0 0 12px rgba(96,165,250,.25); }
 .ts-btn-picked { background:rgba(74,222,128,.35); border-color:rgba(74,222,128,.85); font-weight:600; box-shadow:0 0 0 1px rgba(74,222,128,.35) inset; }
 .ts-btn-picked:hover { background:rgba(74,222,128,.5); }

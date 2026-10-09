@@ -43,12 +43,26 @@ export type PulseTone = 'ok' | 'warn'
 
 /** 一条「需要处理」的对话（黄灯角标点开的清单；点它直达那条对话的工作台） */
 export interface WarnItem {
+  /** 已读标注用的稳定键：pending = 一次“待确认”会话期；failed = 出问题的那一轮（turn/end 时间） */
+  key: string
   sessionId: string
   projectId: string
   project: string
   title: string
   /** pending = 弹着选择框待你确认；failed = 上一轮没正常结束（含输出被截断） */
   kind: 'pending' | 'failed'
+}
+
+/** 一条「正常结束且未标注已读」的对话（第 3 个圆点点开的清单） */
+export interface DoneItem {
+  /** 已读标注用的稳定键：`d:sessionId:turnAt`（同一轮只提醒一次） */
+  key: string
+  sessionId: string
+  projectId: string
+  project: string
+  title: string
+  /** 正常结束的那一轮 turn/end 时间（排序与去重用） */
+  turnAt: number
 }
 
 export interface PulseState {
@@ -62,9 +76,11 @@ export interface PulseState {
   tip: string
   /** 需要处理的对话清单（与 warn 同步，供黄灯角标点开定位跳转） */
   items: WarnItem[]
+  /** 最近正常结束且未标注已读的对话（第 3 个圆点点开的清单） */
+  done: DoneItem[]
 }
 
-const EMPTY: PulseState = { alive: 0, warn: 0, running: 0, tip: '', items: [] }
+const EMPTY: PulseState = { alive: 0, warn: 0, running: 0, tip: '', items: [], done: [] }
 
 // —— 「上一轮是否正常结束」的判定（限量 / 节流 / 缓存）——
 /** 两次扫描之间的最小间隔 */
@@ -85,12 +101,52 @@ interface OutcomeEntry {
   title: string
   project: string
   projectId: string
+  /** 判定时读到的那轮 turn/end 时间（失败条目已读标注的键、完成通知的去重依据） */
+  turnAt: number
   checkedAt: number
 }
 const outcomeCache = new Map<string, OutcomeEntry>()
 /** 已判定失败的条目多久复核一次：黄灯必须能自己熄灭（复核到正常结束就写回 false）。
  *  2026-10-09 反馈「一直是黄灯、却找不到中断的任务」= 失败结论落缓存后再也不被重读。 */
 const FAILED_RECHECK_MS = 30_000
+
+// —— 已读标注（2026-10-09 需求：标注后不再提醒，全部标注完黄灯回归绿色）——
+/** localStorage 键：标注跨刷新保留（同源多标签共享） */
+const READ_MARKS_KEY = 'tokensave:pulse-read.v1'
+const READ_MARKS_MAX = 400
+const READ_MARKS_TTL = 7 * 24 * 3600 * 1000
+
+function loadReadMarks(): Map<string, number> {
+  const map = new Map<string, number>()
+  try {
+    if (typeof window === 'undefined') return map
+    const raw = window.localStorage.getItem(READ_MARKS_KEY)
+    if (!raw) return map
+    const obj = JSON.parse(raw) as Record<string, unknown>
+    const cutoff = Date.now() - READ_MARKS_TTL
+    for (const [k, t] of Object.entries(obj)) {
+      if (typeof t === 'number' && t >= cutoff) map.set(k, t)
+    }
+  } catch {
+    /* 隐私模式 / 配额：标注退化为本次会话内有效 */
+  }
+  return map
+}
+
+const readMarks = loadReadMarks()
+
+function persistReadMarks(): void {
+  try {
+    if (readMarks.size > READ_MARKS_MAX) {
+      const keep = [...readMarks].sort((a, b) => b[1] - a[1]).slice(0, READ_MARKS_MAX)
+      readMarks.clear()
+      for (const [k, t] of keep) readMarks.set(k, t)
+    }
+    window.localStorage.setItem(READ_MARKS_KEY, JSON.stringify(Object.fromEntries(readMarks)))
+  } catch {
+    /* 忽略写入失败 */
+  }
+}
 /** sessionId → 连续几次读不到结局（连读 3 次就按「无异常」落缓存，停止无谓的 retain） */
 const missCounts = new Map<string, number>()
 let lastScanAt = 0
@@ -112,6 +168,51 @@ function notifyOutcome(): void {
     }
   }
 }
+
+// —— 「正常结束」通知（第 3 个圆点：哪些会话正常结束了、可定位、可标注已读）——
+interface DoneEntry { sessionId: string; project: string; projectId: string; title: string; turnAt: number }
+/** 最近观察到的「正常结束」（新→旧；同 session+turnAt 去重，最多 DONE_CACHE_MAX 条） */
+const doneCache: DoneEntry[] = []
+const DONE_CACHE_MAX = 30
+/** 本轮 read() 算出的未读键：markPulseRead 不带 key 时「全部标注」用 */
+let lastWarnKeys: string[] = []
+let lastDoneKeys: string[] = []
+
+function doneKey(sessionId: string, turnAt: number): string {
+  return `d:${sessionId}:${turnAt}`
+}
+
+/** 记一次「正常结束」（去重 + 限量） */
+function recordDone(entry: DoneEntry): void {
+  if (!entry.turnAt) return
+  const key = doneKey(entry.sessionId, entry.turnAt)
+  const at = doneCache.findIndex((d) => doneKey(d.sessionId, d.turnAt) === key)
+  if (at >= 0) doneCache.splice(at, 1)
+  doneCache.unshift(entry)
+  if (doneCache.length > DONE_CACHE_MAX) doneCache.length = DONE_CACHE_MAX
+}
+
+/** 某会话又开始跑 → 它的「刚结束」通知过期（对话又活了，不再是完成态） */
+function dropDoneFor(sessionId: string): void {
+  for (let i = doneCache.length - 1; i >= 0; i--) {
+    if (doneCache[i].sessionId === sessionId) doneCache.splice(i, 1)
+  }
+}
+
+/**
+ * 标注已读（黄灯清单 / 完成清单共用）。
+ * @param kind - 标注哪一类
+ * @param key - 标注单条；缺省 = 把当前该类**全部未读**都标上
+ * 标注后这些项不再计入 warn / done：黄灯回绿、第 3 点消隐；
+ * 写 localStorage 跨刷新保留。同一轮不会重复提醒，但**新一轮 / 新的待确认会话期**会重新提醒。
+ */
+export function markPulseRead(kind: 'warn' | 'done', key?: string): void {
+  const keys = key ? [key] : kind === 'warn' ? lastWarnKeys : lastDoneKeys
+  if (keys.length === 0) return
+  for (const k of keys) readMarks.set(k, Date.now())
+  persistReadMarks()
+  notifyOutcome()
+}
 /** sessionId → 观察到「停止」的本地时刻（负结论新鲜度判定用） */
 const stoppedAt = new Map<string, number>()
 /** 正在即时判定中的会话（防重入） */
@@ -132,6 +233,9 @@ interface TurnOutcome {
   failed: boolean
   /** 该结局事件的时间（宿主 ms 时钟；判定新鲜度用） */
   turnAt: number
+  /** 宿主的原始 reason kind（completed / forked / aborted / error / max-tokens …）；
+   *  「正常结束」清单只收 completed / forked（用户主动停止不算“完成”） */
+  kind: string
 }
 
 /** 给任意 promise 加超时；超时按读不到处理（null），绝不让调用方永久挂起。 */
@@ -214,15 +318,15 @@ async function readTurnOutcome(ctx: any, sessionId: string): Promise<TurnOutcome
       }
       if (!last) return null
       const turnAt = Number(last.time) || 0
-      if (last.type === 'agent/error') return { failed: true, turnAt }
+      if (last.type === 'agent/error') return { failed: true, turnAt, kind: 'agent/error' }
       const kind = String(last?.data?.reason?.kind || '')
       if (kind === '') return null
       if (kind === 'aborted') {
         // 用户主动按的停止不算故障；登出/钩子等异常中止与工作台提示同一口径
         const sub = String(last?.data?.reason?.reason?.kind || '')
-        return { failed: sub !== 'user', turnAt }
+        return { failed: sub !== 'user', turnAt, kind }
       }
-      return { failed: FAILED_TURN_KINDS.has(kind), turnAt }
+      return { failed: FAILED_TURN_KINDS.has(kind), turnAt, kind }
     })
     return raw ?? null
   } catch {
@@ -252,8 +356,14 @@ function applyOutcome(ctx: any, sessionId: string, o: TurnOutcome | null): boole
     title,
     project: proj?.name || '',
     projectId: proj?.id || '',
+    turnAt: o.turnAt,
     checkedAt: Date.now(),
   })
+  // 正常结束（completed / forked）且是“观察到的这轮” → 记进第 3 个圆点的完成清单
+  // （用户主动停止 aborted 不算“完成”，不产生提醒）
+  if (!o.failed && (o.kind === 'completed' || o.kind === 'forked')) {
+    recordDone({ sessionId, project: proj?.name || '', projectId: proj?.id || '', title, turnAt: o.turnAt })
+  }
   notifyOutcome()
   return true
 }
@@ -320,7 +430,7 @@ async function scanOutcomes(ctx: any, projects: ProjectRecord[]): Promise<void> 
         missCounts.set(c.id, misses)
         // 连读 3 次都读不到：不再反复 retain，按「无异常」结案（黄灯不该由读不到支撑）
         if (misses >= 3) {
-          outcomeCache.set(c.id, { at: c.at, failed: false, title: c.title, project: c.project, projectId: c.projectId, checkedAt: Date.now() })
+          outcomeCache.set(c.id, { at: c.at, failed: false, title: c.title, project: c.project, projectId: c.projectId, turnAt: 0, checkedAt: Date.now() })
           notifyOutcome()
           missCounts.delete(c.id)
         }
@@ -335,13 +445,21 @@ async function scanOutcomes(ctx: any, projects: ProjectRecord[]): Promise<void> 
       const stale = stop > 0 && o.turnAt + TURN_FRESH_SLACK_MS < stop
       // 窗口还没写进刚结束的轮次：这次读到的是上一轮的旧结局，不落缓存（10s 后再读）
       if (stale && Date.now() - stop < STALE_NEGATIVE_GRACE_MS) continue
-      outcomeCache.set(c.id, { at, failed: o.failed, title, project: c.project, projectId: c.projectId, checkedAt: Date.now() })
+      outcomeCache.set(c.id, { at, failed: o.failed, title, project: c.project, projectId: c.projectId, turnAt: o.turnAt, checkedAt: Date.now() })
+      // 刚观察到停止（≤1 分钟内）且这轮正常结束 → 兼作完成清单的兜底录入
+      //（即时路读不到时，兜底扫描补上，不漏“正常结束”提醒）
+      if (!o.failed && (o.kind === 'completed' || o.kind === 'forked') && stop > 0 && Date.now() - stop < 60_000) {
+        recordDone({ sessionId: c.id, project: c.project, projectId: c.projectId, title, turnAt: o.turnAt })
+      }
       notifyOutcome()
     }
-    // 已不在任何已登记项目里的会话（归档 / 移除）：丢掉它的结论，不许留着常亮黄灯
+    // 已不在任何已登记项目里的会话（归档 / 移除）：丢掉它的结论与完成通知
     if (projects.length > 0) {
       for (const id of [...outcomeCache.keys()]) {
         if (!seen.has(id)) outcomeCache.delete(id)
+      }
+      for (let i = doneCache.length - 1; i >= 0; i--) {
+        if (!seen.has(doneCache[i].sessionId)) doneCache.splice(i, 1)
       }
     }
     // 防御性清理（缓存只增不减时会随会话数缓慢膨胀）
@@ -371,6 +489,8 @@ export function useActivityPulse(): PulseState {
     let live = true
     /** 上一次读到的 running（识别「刚停下」这个沿用） */
     const prevRunning = new Map<string, boolean>()
+    /** 上一次是否弹着选择框（pending 每出现一次 = 一个新会话期，旧的已读标注要失效） */
+    const prevPending = new Map<string, boolean>()
 
     const read = () => {
       const projects = loadProjects()
@@ -378,32 +498,50 @@ export function useActivityPulse(): PulseState {
       let running = 0
       let warn = 0
       const tips: string[] = []
-      /** 需要处理的对话清单（黄灯角标点开就用它） */
+      /** 需要处理的对话清单（黄灯角标点开就用它，只含**未标注已读**的） */
       const items: WarnItem[] = []
+      /** 最近正常结束、未标注已读的对话（第 3 个圆点点开就用它） */
+      let done: DoneItem[] = []
 
-      // 刚停下来的会话：立刻判结局，不等节流扫描（黄灯要“马上亮”）
+      // 状态沿：停止 → 立刻判结局；开始跑 → 作废该会话的「刚结束」通知；
+      // 新的一次待确认 → 作废它上一次的已读标注（新弹窗要重新提醒）
       if (statuses) {
         for (const [id, row] of statuses) {
           const isRunning = row?.running === true
+          const isPending = row?.pendingInteraction != null
           const was = prevRunning.get(id)
+          const wasPending = prevPending.get(id)
           // 每次观察到的停止都重判一次（不做「已有结论就跳过」：同一 updatedAt 下
           // 可能已跑了新的一轮——自动续轮不改 updatedAt，旧黄灯必须被新结局覆盖）
-          if (was === true && !isRunning && row?.pendingInteraction == null
-            && registeredProjectOf(ctx, id) !== null) {
+          if (was === true && !isRunning && !isPending && registeredProjectOf(ctx, id) !== null) {
             stoppedAt.set(id, Date.now())
             window.setTimeout(() => checkStoppedNow(ctx, id, 0), STOP_CHECK_DELAY_MS)
             console.debug(`[tokensave] 会话停止 → 立即判定结局：${id}`)
           }
+          if (!wasPending && isPending) {
+            let changed = false
+            for (const k of [...readMarks.keys()]) {
+              if (k.startsWith(`w:p:${id}:`)) {
+                readMarks.delete(k)
+                changed = true
+              }
+            }
+            if (changed) persistReadMarks()
+          }
+          if (!was && isRunning) dropDoneFor(id)
           prevRunning.set(id, isRunning)
+          prevPending.set(id, isPending)
         }
       }
 
       for (const project of projects) {
         for (const a of readProjectActivity(ctx, project.path)) {
           if (a.state === 'pending') {
+            const key = `w:p:${a.sessionId}:ep`
+            if (readMarks.has(key)) continue
             warn++
             tips.push(`⏳ 待你确认：${a.title}`)
-            items.push({ sessionId: a.sessionId, projectId: project.id, project: project.name, title: a.title, kind: 'pending' })
+            items.push({ key, sessionId: a.sessionId, projectId: project.id, project: project.name, title: a.title, kind: 'pending' })
           } else {
             running++
             tips.push(`● 进行中：${a.title}`)
@@ -414,13 +552,40 @@ export function useActivityPulse(): PulseState {
         if (!hit.failed) continue
         const st = statuses?.get(id)
         if (st?.running === true || st?.pendingInteraction != null) continue
+        const key = `w:f:${id}:${hit.turnAt}`
+        if (readMarks.has(key)) continue
         warn++
-        tips.push(`⚠️ 上一轮未正常结束：${hit.project ? `【${hit.project}】` : ''}${hit.title}`)
-        items.push({ sessionId: id, projectId: hit.projectId || '', project: hit.project, title: hit.title, kind: 'failed' })
+        const label = hit.project ? `【${hit.project}】` : ''
+        tips.push(`⚠️ 上一轮未正常结束：${label}${hit.title}`)
+        items.push({ key, sessionId: id, projectId: hit.projectId || '', project: hit.project, title: hit.title, kind: 'failed' })
       }
+      // 第 3 个圆点的数据：最近正常结束、还没标注已读的对话
+      const doneAll: DoneItem[] = []
+      for (const d of doneCache) {
+        const key = doneKey(d.sessionId, d.turnAt)
+        if (readMarks.has(key)) continue
+        const st = statuses?.get(d.sessionId)
+        if (st?.running === true || st?.pendingInteraction != null) continue
+        doneAll.push({ key, sessionId: d.sessionId, projectId: d.projectId, project: d.project, title: d.title, turnAt: d.turnAt })
+      }
+      doneAll.sort((a, b) => b.turnAt - a.turnAt)
+      done = doneAll
+      for (const d of done.slice(0, 6)) {
+        tips.push(`✅ 已正常结束：${d.project ? `【${d.project}】` : ''}${d.title}`)
+      }
+      // 当前未读键快照：markPulseRead() 不带 key 时的「全部标注」依据
+      lastWarnKeys = items.map((i) => i.key)
+      lastDoneKeys = done.map((d) => d.key)
       if (!live) return
-      setState(tips.length > 0
-        ? { alive: running + warn, warn, running, tip: tips.slice(0, 12).join('\n'), items }
+      setState(running + warn + done.length > 0
+        ? {
+            alive: running + warn + done.length,
+            warn,
+            running,
+            tip: tips.slice(0, 12).join('\n'),
+            items,
+            done,
+          }
         : EMPTY)
       // 顺带推进「失败」扫描（自带节流；结论会在下一次 read 时反映出来）
       void scanOutcomes(ctx, projects)
@@ -443,6 +608,15 @@ export function useActivityPulse(): PulseState {
       }
     }
     const timer = window.setInterval(read, 4_000)
+    // 另一个标签页标注了已读 → 本页同步（localStorage 同源共享）
+    const onStorage = (e: StorageEvent) => {
+      if (e.key !== null && e.key !== READ_MARKS_KEY) return
+      const fresh = loadReadMarks()
+      readMarks.clear()
+      for (const [k, t] of fresh) readMarks.set(k, t)
+      read()
+    }
+    window.addEventListener('storage', onStorage)
     return () => {
       live = false
       outcomeListeners.delete(read)
@@ -454,6 +628,7 @@ export function useActivityPulse(): PulseState {
         }
       }
       window.clearInterval(timer)
+      window.removeEventListener('storage', onStorage)
     }
   }, [])
 
@@ -465,6 +640,8 @@ export function useActivityPulse(): PulseState {
  *   __tokensavePulse.check(id)      —— 立刻对某会话做一次结局判定（即时路同一入口）
  *   __tokensavePulse.cache           —— 结局缓存 Map（.get/.delete(id)，改完 .refresh() 即重算）
  *   __tokensavePulse.stopped         —— 「观察到停止」时刻 Map（配合 check 演练新鲜度判定）
+ *   __tokensavePulse.done            —— 「最近正常结束」清单（unshift 一条可演练第 3 个圆点）
+ *   __tokensavePulse.marks           —— 已读标注 Map（localStorage 同步过来的那份）
  *   __tokensavePulse.refresh()       —— 手动重算呼吸灯
  */
 ;(globalThis as any).__tokensavePulse = {
@@ -474,5 +651,7 @@ export function useActivityPulse(): PulseState {
   },
   cache: outcomeCache,
   stopped: stoppedAt,
+  done: doneCache,
+  marks: readMarks,
   refresh: notifyOutcome,
 }
