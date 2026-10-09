@@ -45,8 +45,11 @@ import {
   sendToSession,
 } from './sessions'
 import { markPulseRead, useActivityPulse } from './pulse'
-import { SoundPanel } from './SoundPanel'
-import { initSoundBridge, playRole, stopSound, subscribePlaying } from './sound'
+import {
+  DURATION_OPTIONS, SOUND_OPTIONS, getSoundSettings, initSoundBridge, playRole,
+  setSoundSettings, stopSound, subscribePlaying,
+} from './sound'
+import type { SoundDuration, SoundId, SoundSettings } from './sound'
 
 /** 圆点数量（用户要求 3 个）。 */
 const DOT_COUNT = 3
@@ -57,13 +60,25 @@ const RAIL_MIN_WIDE = 30
  * 与 sessions.ts 的 NAV_SETTLE_MS 同量级（略短），避免两个窗口错位。
  */
 const NAV_LOCK_MS = 700
-/** 清单浮层宽高预算（clamp 定位时用）。 */
-const POP_W = 300
+/** 清单浮层高度预算（纵向 clamp 定位用；宽度改成按剩余空间动态上限，见下）。 */
 const POP_H = 220
-/** 跑马灯悬浮面板的宽度上限（宽度本身按清单里最长标题自适应，见 .ts-hover-pop） */
-const HOVER_POP_W = 560
-/** 提示音设置面板宽度（固定） */
-const SOUND_POP_W = 260
+
+/**
+ * 按钮所在**侧边栏容器**的右缘：面板要从容器右缘起飞，而不是按钮右缘——
+ * 按钮四周有内边距（实测 13px），只按按钮算会让面板钻到侧边栏底下被盖住。
+ * 只在「不宽于视口一半」的祖先里取最大右缘（更宽的那个就是主内容区了）。
+ */
+function sidebarRightOf(btn: HTMLElement): number {
+  const limit = window.innerWidth * 0.5
+  let best = btn.getBoundingClientRect().right
+  let el: HTMLElement | null = btn.parentElement
+  while (el && el !== document.body && el !== document.documentElement) {
+    const r = el.getBoundingClientRect()
+    if (r.width > 0 && r.width <= limit && r.right > best) best = r.right
+    el = el.parentElement
+  }
+  return best
+}
 /** 黄灯清单里「继续」按钮直接发出去的原文（宿主 max-tokens 提示就是让用户发「继续」） */
 const CONTINUE_TEXT = '继续'
 
@@ -108,7 +123,7 @@ function pillStyle(key: string): React.CSSProperties {
 function ItemPopover({
   pos, kind, items, onPick, onContinue, onClose,
 }: {
-  pos: { top?: number; bottom?: number; left: number }
+  pos: { top?: number; bottom?: number; left: number; maxWidth?: number }
   kind: PopKind
   items: PopItem[]
   onPick: (item: PopItem) => void
@@ -158,7 +173,7 @@ function ItemPopover({
       className="ts-warn-pop"
       role="dialog"
       aria-label={heading}
-      style={{ top: pos.top, bottom: pos.bottom, left: pos.left }}
+      style={{ top: pos.top, bottom: pos.bottom, left: pos.left, maxWidth: pos.maxWidth }}
     >
       <div className="ts-warn-pop-head">
         <span className="ts-warn-pop-title">{heading}</span>
@@ -263,50 +278,127 @@ function PulseDots({
  * **点条目直达那条对话的工作台**（原生 tooltip 做不到点击，所以自绘）。
  * portal 到 body + position:fixed，与两枚角标的清单同款定位（rail / 展开态都向右飞出）。
  */
-function HoverPanel({
-  pos, items, onPick, onHover, onOpenSound, playingLabel, onStopSound,
-}: {
-  pos: { top?: number; bottom?: number; left: number }
+function HoverPanel({ pos, items, onPick, onHover }: {
+  pos: { top?: number; bottom?: number; left: number; maxWidth?: number }
   items: PopItem[]
   onPick: (item: PopItem) => void
   /** 鼠标进出面板：父级据此保持打开 / 计时关闭 */
   onHover: (inside: boolean) => void
-  /** 打开提示音设置面板 */
-  onOpenSound: () => void
-  /** 正在播放的提示音标签（「完成」/「中断」），null = 没在播 */
-  playingLabel: string | null
-  /** 掐断正在响的提示音 */
-  onStopSound: () => void
 }) {
+  // 提示音设置**直接嵌在面板里**（与「对话清单」同面板同现，不再单独弹一层）；
+  // 改动即持久化，这里只是本地镜像，用来驱动控件显示。
+  const [s, setS] = useState<SoundSettings>(() => getSoundSettings())
+  const [playingLabel, setPlayingLabel] = useState<string | null>(null)
+  useEffect(() => subscribePlaying(setPlayingLabel), [])
+  const update = (patch: Partial<SoundSettings>) => setS(setSoundSettings(patch))
   return createPortal(
     <div
       className="ts-warn-pop ts-hover-pop"
       role="dialog"
       aria-label="对话清单"
-      style={{ top: pos.top, bottom: pos.bottom, left: pos.left }}
+      style={{ top: pos.top, bottom: pos.bottom, left: pos.left, maxWidth: pos.maxWidth }}
       onMouseEnter={() => onHover(true)}
       onMouseLeave={() => onHover(false)}
     >
-      {/* 顶部工具行：提示音设置入口（用户要求放在「对话清单」上方）+ 播放中可一键停止 */}
-      <div className="ts-hover-tools">
-        <button
-          type="button"
-          className="ts-hover-tool"
-          title="提示音设置：完成 / 中断音效、持续时长、音量（自动保存）"
-          onClick={onOpenSound}
-        >
-          🔔 提示音
-        </button>
-        {playingLabel && (
+      {/* 提示音设置：直接内嵌在面板顶部（与「对话清单」同面板同现，不再单独弹一层）；
+         紧凑字号，改完即持久化 */}
+      <div className="ts-sound-body">
+        <div className="ts-sound-row">
+          <label>提醒</label>
           <button
             type="button"
-            className="ts-hover-tool is-playing"
-            title="立刻停止正在响的提示音"
-            onClick={onStopSound}
+            className={`ts-sound-toggle${s.enabled ? ' on' : ''}`}
+            title="开启 / 关闭结局提示音"
+            onClick={() => update({ enabled: !s.enabled })}
           >
-            ■ 停止{playingLabel}
+            {s.enabled ? '开' : '关'}
           </button>
-        )}
+          <input
+            className="ts-sound-range"
+            type="range"
+            min={0}
+            max={100}
+            step={5}
+            value={Math.round(s.volume * 100)}
+            title={`音量 ${Math.round(s.volume * 100)}%`}
+            onChange={(e) => update({ volume: Number(e.target.value) / 100 })}
+          />
+        </div>
+        <div className="ts-sound-row">
+          <label>完成</label>
+          <select
+            className="ts-select"
+            value={s.doneId}
+            title="正常结束时的提示音"
+            onChange={(e) => update({ doneId: e.target.value as SoundId })}
+          >
+            {SOUND_OPTIONS.map((o) => (
+              <option key={o.id} value={o.id}>{o.label}</option>
+            ))}
+          </select>
+          <button
+            type="button"
+            className="ts-sound-mini"
+            title="试听完成音效"
+            onClick={() => void playRole('done', true)}
+          >
+            ▶
+          </button>
+        </div>
+        <div className="ts-sound-row">
+          <label>中断</label>
+          <select
+            className="ts-select"
+            value={s.failId}
+            title="被中断 / 失败 / 被截断时的提示音"
+            onChange={(e) => update({ failId: e.target.value as SoundId })}
+          >
+            {SOUND_OPTIONS.map((o) => (
+              <option key={o.id} value={o.id}>{o.label}</option>
+            ))}
+          </select>
+          <button
+            type="button"
+            className="ts-sound-mini"
+            title="试听中断音效"
+            onClick={() => void playRole('fail', true)}
+          >
+            ▶
+          </button>
+        </div>
+        <div className="ts-sound-row">
+          <label>时长</label>
+          <select
+            className="ts-select"
+            value={s.duration}
+            title="每次提醒持续多久（到点自动停）"
+            onChange={(e) => update({ duration: e.target.value as SoundDuration })}
+          >
+            {DURATION_OPTIONS.map((o) => (
+              <option key={o.id} value={o.id}>{o.label}</option>
+            ))}
+          </select>
+          {s.duration === 'custom' && (
+            <input
+              className="ts-sound-min"
+              type="number"
+              min={1}
+              max={180}
+              value={s.customMinutes}
+              title="自定义分钟数（1–180）"
+              onChange={(e) => update({ customMinutes: Number(e.target.value) })}
+            />
+          )}
+          {s.duration === 'custom' && <span className="ts-sound-unit">分钟</span>}
+          <button
+            type="button"
+            className={`ts-sound-mini${playingLabel ? ' is-playing' : ''}`}
+            title={playingLabel ? `停止正在响的「${playingLabel}」提示音（在页面里任意操作也会自动停）` : '停止提示音（在页面里任意操作也会自动停）'}
+            onClick={() => stopSound()}
+          >
+            ■
+          </button>
+        </div>
       </div>
       <div className="ts-warn-pop-head">
         <span className="ts-warn-pop-title">对话清单（{items.length}）</span>
@@ -373,7 +465,7 @@ export function ControlRoomEntry({ wide }: { wide?: boolean }) {
   }, [])
 
   // —— 清单浮层（黄灯角标 / 第 3 个圆点共用）——
-  const [pop, setPop] = useState<{ pos: { top?: number; bottom?: number; left: number }; kind: PopKind } | null>(null)
+  const [pop, setPop] = useState<{ pos: { top?: number; bottom?: number; left: number; maxWidth?: number }; kind: PopKind } | null>(null)
   // 对应的提醒被处理完（标注已读 / 状态变化）→ 自动收起
   useEffect(() => {
     if (!pop) return
@@ -392,14 +484,17 @@ export function ControlRoomEntry({ wide }: { wide?: boolean }) {
     }
     const r = btnRef.current?.getBoundingClientRect()
     if (!r || (r.width === 0 && r.height === 0)) return
-    const left = Math.max(8, Math.min(r.right + 8, window.innerWidth - POP_W - 12))
+    // 贴按钮右缘定位；宽度上限按**剩余空间**动态算 —— 窄窗口下宁可让内容省略，
+    // 也不能把面板塞回侧边栏底下（此前按固定 300/560 夹紧，面板左侧被侧边栏盖住过）
+    const left = Math.max(8, sidebarRightOf(btnRef.current as HTMLElement) + 8)
+    const maxWidth = Math.max(220, window.innerWidth - left - 12)
     const below = r.bottom + 6 + 140 <= window.innerHeight - 8
     const above = r.top - 6 >= 140 + 8
     const pos = below
-      ? { top: r.bottom + 6, left }
+      ? { top: r.bottom + 6, left, maxWidth }
       : above
-        ? { bottom: window.innerHeight - r.top + 6, left }
-        : { top: Math.max(8, Math.min(r.top, window.innerHeight - POP_H - 12)), left }
+        ? { bottom: window.innerHeight - r.top + 6, left, maxWidth }
+        : { top: Math.max(8, Math.min(r.top, window.innerHeight - POP_H - 12)), left, maxWidth }
     setPop({ pos, kind })
   }
 
@@ -470,7 +565,7 @@ export function ControlRoomEntry({ wide }: { wide?: boolean }) {
   ]
 
   // —— 跑马灯悬浮面板：圆点 hover → 弹出可点击的对话清单（取代原生 title，因为它点不了）——
-  const [hoverPos, setHoverPos] = useState<{ top?: number; bottom?: number; left: number } | null>(null)
+  const [hoverPos, setHoverPos] = useState<{ top?: number; bottom?: number; left: number; maxWidth?: number } | null>(null)
   const hoverTimer = useRef<number | null>(null)
   const clearHoverTimer = () => {
     if (hoverTimer.current) {
@@ -484,15 +579,17 @@ export function ControlRoomEntry({ wide }: { wide?: boolean }) {
     if (hoverPos || hoverItems.length === 0) return
     const r = btnRef.current?.getBoundingClientRect()
     if (!r || (r.width === 0 && r.height === 0)) return
-    const left = Math.max(8, Math.min(r.right + 8, window.innerWidth - HOVER_POP_W - 12))
+    // 同角标清单：贴按钮右缘，宽度上限按剩余空间动态给（窄窗口下不钻到侧边栏底下）
+    const left = Math.max(8, sidebarRightOf(btnRef.current as HTMLElement) + 8)
+    const maxWidth = Math.max(220, window.innerWidth - left - 12)
     const below = r.bottom + 6 + 140 <= window.innerHeight - 8
     const above = r.top - 6 >= 140 + 8
     setHoverPos(
       below
-        ? { top: r.bottom + 6, left }
+        ? { top: r.bottom + 6, left, maxWidth }
         : above
-          ? { bottom: window.innerHeight - r.top + 6, left }
-          : { top: Math.max(8, Math.min(r.top, window.innerHeight - POP_H - 12)), left },
+          ? { bottom: window.innerHeight - r.top + 6, left, maxWidth }
+          : { top: Math.max(8, Math.min(r.top, window.innerHeight - POP_H - 12)), left, maxWidth },
     )
   }
   /** 关闭：给 220ms 缓冲，鼠标从圆点挪到面板上不会闪断 */
@@ -505,39 +602,11 @@ export function ControlRoomEntry({ wide }: { wide?: boolean }) {
   }
   useEffect(() => clearHoverTimer, [])
 
-  // —— 提示音（跑马灯悬浮面板顶部「🔔 提示音」入口）——
-  const [soundPos, setSoundPos] = useState<{ top?: number; bottom?: number; left: number } | null>(null)
-  const [playingLabel, setPlayingLabel] = useState<string | null>(null)
   useEffect(() => {
-    // 结局告警桥：观察到「停止」并判定出完成 / 中断时各响各的音（挂载一次，幂等）
-    const offBridge = initSoundBridge()
-    const offPlaying = subscribePlaying(setPlayingLabel)
-    return () => {
-      offPlaying()
-      offBridge()
-    }
+    // 结局告警桥：观察到「停止」并判定出完成 / 中断时各响各的音（挂载一次，幂等）；
+    // 设置本身内嵌在跑马灯悬浮面板里（HoverPanel 自己管），这里只负责“该响时响”。
+    return initSoundBridge()
   }, [])
-
-  /** 开 / 关提示音设置面板（再点一次 = 关）；定位与其它浮层同款 */
-  const toggleSound = (e?: { stopPropagation?: () => void }) => {
-    e?.stopPropagation?.()
-    if (soundPos) {
-      setSoundPos(null)
-      return
-    }
-    const r = btnRef.current?.getBoundingClientRect()
-    if (!r || (r.width === 0 && r.height === 0)) return
-    const left = Math.max(8, Math.min(r.right + 8, window.innerWidth - SOUND_POP_W - 12))
-    const below = r.bottom + 6 + 200 <= window.innerHeight - 8
-    const above = r.top - 6 >= 200 + 8
-    setSoundPos(
-      below
-        ? { top: r.bottom + 6, left }
-        : above
-          ? { bottom: window.innerHeight - r.top + 6, left }
-          : { top: Math.max(8, Math.min(r.top, window.innerHeight - 240 - 12)), left },
-    )
-  }
 
   return (
     <>
@@ -653,12 +722,8 @@ export function ControlRoomEntry({ wide }: { wide?: boolean }) {
             if (inside) clearHoverTimer()
             else closeHover()
           }}
-          onOpenSound={() => toggleSound()}
-          playingLabel={playingLabel}
-          onStopSound={() => stopSound()}
         />
       )}
-      {soundPos && <SoundPanel pos={soundPos} onClose={() => setSoundPos(null)} />}
     </>
   )
 }

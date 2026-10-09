@@ -34,6 +34,11 @@ export interface DeskLayout {
   winState: Record<string, DeskWinState>
   /** 预览条高度（px）；0 = 没存过，调用方回落全局记忆 */
   previewH: number
+  /**
+   * 中列「上格（共享黑板）占中列高度的比例」；0 = 没存过，调用方回落对半分。
+   * 只影响中列内部两格的分高，与预览条高度、列轨道互不相干。
+   */
+  midSplit: number
 }
 
 export interface ProjectDeskPref {
@@ -48,6 +53,9 @@ const STORAGE_KEY = 'tokensave:desk-layout.v1'
 /** 快照里探索者窗口条目的上限（只留非默认项，正常远达不到；纯属安全阀）。 */
 const MAX_WIN_ENTRIES = 200
 
+/** 中列上下比例的安全区间：越界就钳回来（任一侧被压到只剩标题条都不可用）。 */
+const MID_SPLIT_MIN = 0.12
+const MID_SPLIT_MAX = 0.88
 function readAll(): Record<string, ProjectDeskPref> {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
@@ -91,11 +99,18 @@ function sanitizeLayout(raw: any): DeskLayout | null {
     if (c) winState[id] = { collapsed: c.collapsed, hidden: c.hidden }
   }
   const previewH = Number(raw.previewH)
+  // 中列比例：只认 (0,1) 区间里的有限数（0 与脏数据一律当「没存过」），再钳到安全区间
+  const midSplitRaw = Number(raw.midSplit)
+  const midSplit =
+    Number.isFinite(midSplitRaw) && midSplitRaw > 0 && midSplitRaw < 1
+      ? Math.min(MID_SPLIT_MAX, Math.max(MID_SPLIT_MIN, midSplitRaw))
+      : 0
   return {
     v: 1,
     cards,
     winState,
     previewH: Number.isFinite(previewH) && previewH > 0 ? previewH : 0,
+    midSplit,
   }
 }
 

@@ -409,10 +409,12 @@ function applyOutcome(ctx: any, sessionId: string, o: TurnOutcome | null): boole
   if (!o.failed && (o.kind === 'completed' || o.kind === 'forked')) {
     recordDone({ sessionId, project: proj?.name || '', projectId: proj?.id || '', title, turnAt: o.turnAt })
   }
+  // 先重算界面（黄/蓝角标、清单），再起音：同一拍里刷出来，
+  // 否则耳朵先听到、眼睛后看到（用户反馈“声音先出、角标后出”）。
+  notifyOutcome()
   // 提示音：中断/失败一套、正常完成一套；用户主动停止（aborted）不响
   if (o.failed) emitAlert('fail', sessionId, title, o.turnAt)
   else if (o.kind === 'completed' || o.kind === 'forked') emitAlert('done', sessionId, title, o.turnAt)
-  notifyOutcome()
   return true
 }
 

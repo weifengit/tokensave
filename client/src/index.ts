@@ -28,6 +28,7 @@ import { ControlRoom } from './panel/ControlRoom'
 import { ProjectCenter } from './panel/ProjectCenter'
 import { ControlRoomEntry } from './panel/ControlRoomEntry'
 import { applyDockkitPatch } from './dockkit-patch'
+import { installComposerResize } from './composer-resize'
 
 export const inject = { slots: true }
 
@@ -207,6 +208,13 @@ function wrapOpenSession(ui: any): boolean {
 
 export function apply(ctx: Context) {
   setClientContext(ctx)
+  // 宿主原生输入条增强：自动加高（一眼看全长文本）+ 上沿抓手手动拉高（松手固定）。
+  // 与 slots/uiWorkspace 无关，因此在最前面挂，任何视图（含默认纯对话窗）都生效。
+  try {
+    installComposerResize()
+  } catch (e) {
+    console.warn('[composer-resize] install failed:', e)
+  }
   // DockKit 补丁：关闭主对话窗口后，空出的 docked pane 自动合并（相邻窗口扩展，不残留空白/遮罩）
   try {
     applyDockkitPatch()

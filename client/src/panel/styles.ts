@@ -107,6 +107,17 @@ body.ts-hdesk-nochat [data-conversation-region="composer"] {
 .ts-title-proj { flex:none; display:inline-flex; align-items:center; gap:8px; max-width:min(420px,42vw); padding:3px 13px; border-radius:11px; font-size:19px; font-weight:700; letter-spacing:.01em; background:linear-gradient(135deg, rgba(96,165,250,.24), rgba(96,165,250,.07)); border:1px solid rgba(96,165,250,.5); box-shadow:inset 0 0 0 1px rgba(96,165,250,.12); }
 .ts-title-proj-icon { flex:none; font-size:16px; opacity:.9; }
 .ts-title-proj-name { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+/* 项目名胶囊的两种配色（用户要求）：**锁定** = 青绿；**未锁定** = 琥珀。
+   两套都只用半透明中性色 + 一个色相，深浅主题下都自适应；锁定色饱和度更高，
+   余光扫一眼标题行就能分辨当前是哪种状态。 */
+.ts-title-proj.ts-proj-locked { background:linear-gradient(135deg, rgba(45,212,191,.26), rgba(45,212,191,.08)); border-color:rgba(45,212,191,.62); box-shadow:inset 0 0 0 1px rgba(45,212,191,.14); }
+.ts-title-proj.ts-proj-unlocked { background:linear-gradient(135deg, rgba(251,191,36,.26), rgba(251,191,36,.08)); border-color:rgba(251,191,36,.62); box-shadow:inset 0 0 0 1px rgba(251,191,36,.14); }
+/* 布局锁按钮（紧贴项目名右侧）：与胶囊同色系，一瞥即知开关状态 */
+.ts-lock-btn { flex:none; white-space:nowrap; }
+.ts-lock-btn.ts-lock-on { background:rgba(45,212,191,.2); border-color:rgba(45,212,191,.55); }
+.ts-lock-btn.ts-lock-on:hover { background:rgba(45,212,191,.3); }
+.ts-lock-btn.ts-lock-off { background:rgba(251,191,36,.2); border-color:rgba(251,191,36,.55); }
+.ts-lock-btn.ts-lock-off:hover { background:rgba(251,191,36,.3); }
 /* 一键切换按钮：显示全部窗口 ↔ 仅显示预览（无预览时为 DSH 主对话） */
 .ts-btn-mode { flex:none; white-space:nowrap; }
 .ts-sub { opacity:.65; font-size:12px; }
@@ -167,26 +178,27 @@ body.ts-hdesk-nochat [data-conversation-region="composer"] {
 .ts-warn-pop { position:fixed; z-index:60; width:300px; max-width:calc(100vw - 24px); max-height:60vh; display:flex; flex-direction:column; border-radius:12px; border:1px solid rgba(127,127,127,.35); background:rgba(24,27,33,.97); color:#e6e8eb; box-shadow:0 14px 40px rgba(0,0,0,.5); backdrop-filter:blur(12px) saturate(1.2); overflow:hidden; }
 /* 跑马灯悬浮面板：宽度按清单里**最长的那条对话标题**自适应（上限 560px，超了才省略号） */
 .ts-hover-pop { width:max-content; max-width:min(560px, calc(100vw - 24px)); }
-/* 悬浮面板顶部工具行：🔔 提示音设置入口（用户要求放在「对话清单」上方）+ 播放中一键停止 */
-.ts-hover-tools { flex:none; display:flex; align-items:center; gap:6px; padding:6px 8px; border-bottom:1px solid rgba(127,127,127,.22); }
-.ts-hover-tools + .ts-warn-pop-head { border-bottom:0; }
-.ts-hover-tool { flex:none; border:1px solid rgba(127,127,127,.4); background:rgba(127,127,127,.12); color:inherit; font-size:11px; line-height:1; padding:4px 8px; border-radius:7px; cursor:pointer; opacity:.88; }
-.ts-hover-tool:hover { background:rgba(127,127,127,.26); opacity:1; }
-.ts-hover-tool.is-playing { border-color:rgba(245,158,11,.6); color:#fbbf24; }
-
-/* —— 提示音设置面板（完成/中断音效、持续时长、音量；改动即存 localStorage） —— */
-.ts-sound-pop { width:250px; }
-.ts-sound-body { display:flex; flex-direction:column; gap:8px; padding:9px 10px 10px; }
-.ts-sound-row { display:flex; align-items:center; gap:7px; font-size:12px; }
-.ts-sound-row > label { flex:none; width:40px; opacity:.7; }
+/* —— 提示音设置区（内嵌在跑马灯悬浮面板顶部，与「对话清单」同面板同现）——
+   所有控件统一身高/字号/圆角/描边：下拉框与自定义分钟输入框长得一模一样，
+   整行对齐、不挤不突兀（自定义那行额外有「分钟」单位与 ■ 停止 */
+.ts-sound-body { flex:none; width:272px; max-width:100%; display:flex; flex-direction:column; gap:5px; padding:7px 8px 8px; border-bottom:1px solid rgba(127,127,127,.22); }
+.ts-sound-row { display:flex; align-items:center; gap:5px; }
+.ts-sound-row > label { flex:none; width:28px; font-size:10.5px; opacity:.6; letter-spacing:.02em; }
+/* 下拉框与数字输入框同款：同高 22px、同字号 10.5px、同圆角 6px、同描边/底色 */
+.ts-sound-row .ts-select,
+.ts-sound-row .ts-sound-min { height:22px; box-sizing:border-box; border:1px solid rgba(127,127,127,.35); border-radius:6px; background:rgba(127,127,127,.1); color:inherit; font-family:inherit; font-size:10.5px; line-height:1; padding:0 5px; }
 .ts-sound-row .ts-select { flex:1; min-width:0; }
-.ts-sound-toggle { flex:none; width:34px; border:1px solid rgba(127,127,127,.45); background:rgba(127,127,127,.14); color:inherit; font-size:11px; line-height:1; padding:4px 0; border-radius:6px; cursor:pointer; }
+.ts-sound-row .ts-sound-min { flex:none; width:46px; text-align:center; -moz-appearance:textfield; appearance:textfield; }
+/* 数字输入框去掉原生上下箭头（它才是“跟别的控件不一样”的元凶） */
+.ts-sound-row .ts-sound-min::-webkit-outer-spin-button,
+.ts-sound-row .ts-sound-min::-webkit-inner-spin-button { -webkit-appearance:none; appearance:none; margin:0; }
+.ts-sound-toggle { flex:none; width:30px; height:22px; box-sizing:border-box; border:1px solid rgba(127,127,127,.45); background:rgba(127,127,127,.14); color:inherit; font-size:10.5px; line-height:1; padding:0; border-radius:6px; cursor:pointer; }
 .ts-sound-toggle.on { border-color:rgba(74,222,128,.6); background:rgba(74,222,128,.2); color:#86efac; }
-.ts-sound-range { flex:1; min-width:0; accent-color:#38bdf8; cursor:pointer; }
-.ts-sound-mini { flex:none; width:24px; border:1px solid rgba(127,127,127,.4); background:rgba(127,127,127,.14); color:inherit; font-size:10.5px; line-height:1; padding:4px 0; border-radius:6px; cursor:pointer; }
+.ts-sound-range { flex:1; min-width:0; height:14px; accent-color:#38bdf8; cursor:pointer; }
+.ts-sound-mini { flex:none; width:22px; height:22px; box-sizing:border-box; border:1px solid rgba(127,127,127,.4); background:rgba(127,127,127,.14); color:inherit; font-size:10px; line-height:1; padding:0; border-radius:6px; cursor:pointer; display:inline-flex; align-items:center; justify-content:center; }
 .ts-sound-mini:hover { background:rgba(127,127,127,.3); }
-.ts-sound-min { flex:none; width:54px; padding:4px 6px; font-size:11px; }
-.ts-sound-hint { font-size:10.5px; opacity:.55; line-height:1.5; }
+.ts-sound-mini.is-playing { border-color:rgba(245,158,11,.65); background:rgba(245,158,11,.16); color:#fbbf24; }
+.ts-sound-unit { flex:none; font-size:10px; opacity:.55; }
 .ts-warn-pop-head { flex:none; display:flex; align-items:center; justify-content:space-between; gap:8px; padding:8px 10px 8px 12px; font-size:11.5px; font-weight:600; opacity:.8; border-bottom:1px solid rgba(127,127,127,.25); letter-spacing:.03em; }
 .ts-warn-pop-title { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 /* 头部「全部已读」：一键把清单里的都标上（黄灯随之回绿 / 第 3 点随之消隐） */
@@ -505,25 +517,45 @@ body.ts-vsplit-dragging .ts-card { transition:none !important; animation:none !i
 .ts-newfolder-input { max-width:240px; padding:4px 8px; font-size:12.5px; }
 .ts-newfolder-hint { font-size:11px; opacity:.55; max-width:280px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .ts-newfolder-err { font-size:11.5px; color:#fca5a5; }
-
-/* —— H 型工作台：全台共享 R 行 1fr 网格（R 由 JSX 按窗口数注入），无中横线 —— */
-/* 中列必须用 minmax(0, 1fr)：裸 1fr 的自动最小值是 min-content，
-   一旦卡片里有长不可断内容（工具输出、长代码、长标题），中列就会被撑到
-   内容宽度，整个网格超出容器；而 .ts-cr 是 overflow:hidden，
-   右侧列（250px）连同部分中列就被**裁掉**——这就是“右边少了 40%”。
-   空项目没有长内容，所以看起来正常。 */
-.ts-desk { display:grid; grid-template-columns:minmax(190px,250px) minmax(0,1fr) minmax(190px,250px); gap:8px; flex:1; min-height:0; min-width:0; overflow:hidden; position:relative; }
+/* —— H 型工作台：左 / 中 / 右三列（固定 1.5 : 7 : 1.5），无中横线 —— */
+/* 轨道一律用 minmax(0, …fr)：裸 fr 的自动最小值是 min-content，一旦卡片里有长不可断
+   内容（工具输出、长代码、长标题），列就会被撑到内容宽度，整个网格超出容器；
+   而 .ts-cr 是 overflow:hidden，右侧列连同部分中列就被**裁掉**（“右边少了 40%”）。
+   列轨道由 HDesk 按「哪几列还有可见窗口」注入（缺失补位，见 DESK_COLUMNS）：
+   下面这套是三列俱全时的默认值，同时兜住「JS 还没接管」的那一帧。 */
+.ts-desk { display:grid; grid-template-columns:minmax(0,1.5fr) minmax(0,7fr) minmax(0,1.5fr); grid-template-rows:minmax(0,1fr); gap:8px; flex:1; min-height:0; min-width:0; overflow:hidden; position:relative; }
 /* 网格项自身也要 min-width:0，否则仍会被内容顶宽（min-width:auto 的默认行为） */
 .ts-desk > * { min-width:0; }
-.ts-desk-col { grid-row:1 / -1; display:flex; flex-direction:column; gap:8px; min-height:0; overflow:hidden; }
-.ts-desk-left { grid-column:1; }
-.ts-desk-right { grid-column:3; }
-.ts-desk-board { grid-column:2; min-height:0; min-width:0; display:flex; flex-direction:column; }
-.ts-desk-chat { grid-column:2; min-height:0; min-width:0; display:flex; flex-direction:column; position:relative; border:1px solid rgba(127,127,127,.3); border-radius:9px; background:rgba(127,127,127,.07); padding:8px; box-sizing:border-box; }
-/* 主对话卡未呈现（已关闭/铺满浮层）时，中下格的外框一并撤掉：它自带 border/padding
-   （供输入条内缩停靠），卡片不在时就是一个悬着的空框。只呈现预览时 HDesk 干脆不渲染
-   .ts-desk；这里兜底「H 台模式下关掉主对话」的情况。 */
-.ts-desk-chat-empty { border:0; background:transparent; padding:0; }
+/* 三列（左 / 中 / 右）共用同一套列容器：竖向 flex，列内卡片的占位由它承担 */
+.ts-desk-col, .ts-desk-mid { display:flex; flex-direction:column; gap:8px; min-height:0; overflow:hidden; }
+/* 整列一个可见窗口都不剩（全被关掉/铺满浮层占走）→ 该列移出网格，份额按列模板
+   并给邻列。用 display:none 而不是「不渲染」：列内组件的实例与订阅原样保留，
+   恢复任一窗口即当场回来（不丢滚动位置/展开态）。 */
+.ts-desk-empty { display:none; }
+/* 中列：上（共享黑板）/ 分隔条 / 下（DSH 主对话）共用列高，两格靠 flex-grow 按比例
+   分——所以「关掉或收起其中一格，另一格自动铺满整列」与「拖分隔条换高」是同一套
+   机制（见 HDesk 的 onMidSplitDown），不需要各写一条补位分支。 */
+.ts-desk-board, .ts-desk-chat { flex:1 1 0; min-height:0; min-width:0; display:flex; flex-direction:column; }
+/* 中下格自带 border/padding：宿主原生输入条按这个内缩量停靠进卡片边框内部 */
+.ts-desk-chat { position:relative; border:1px solid rgba(127,127,127,.3); border-radius:9px; background:rgba(127,127,127,.07); padding:8px; box-sizing:border-box; }
+/* 中列某一格收起（最小化）时它只占标题条高度，剩下的空间全给另一格 */
+.ts-desk-cell-collapsed { flex:0 0 auto !important; }
+
+/* —— 中列「共享黑板 ↔ DSH 主对话」的上下分隔条 ——
+   与预览条那条 .ts-vsplit 同源：默认隐形，悬停/拖动时显示握柄；
+   命中区 10px 高，用负外边距吃掉自身占位（不压缩两格的高度，
+   即两格之间的 16px 缝里 [上格底 → 分隔条盒 → 下格顶] 正好居中）。 */
+.ts-hsplit { position:relative; flex:none; height:10px; margin:-5px 0; cursor:ns-resize; z-index:6; }
+/* 握柄是**水平**的横条（72×2）：这条分隔条调的是上下高度，光标/提示都必须是横向语义；
+   写成竖向 2×36 会让人以为是左右拖。与 .ts-vsplit-grip 的度量保持完全一致。 */
+.ts-hsplit-grip { position:absolute; left:50%; top:50%; width:72px; height:2px; border-radius:2px; transform:translate(-50%,-50%); background:var(--dsw-alias-scrollbar-bg-l1, rgba(127,127,127,.5)); opacity:0; transition:opacity .12s ease; pointer-events:none; }
+.ts-hsplit:hover .ts-hsplit-grip, .ts-hsplit:active .ts-hsplit-grip { opacity:1; }
+/* 拖动中指针会离开分隔条（甚至落在 iframe 上），握柄必须继续可见 */
+body.ts-hsplit-dragging .ts-hsplit-grip { opacity:1; transition:none; }
+/* 拖动中：禁选中 + 全程 ns-resize 光标；iframe 屏蔽指针事件（否则拖快了命中区丢事件） */
+body.ts-hsplit-dragging { cursor:ns-resize; user-select:none; -webkit-user-select:none; }
+body.ts-hsplit-dragging iframe, body.ts-hsplit-dragging .ts-preview-frame { pointer-events:none !important; }
+body.ts-hsplit-dragging .ts-card { transition:none !important; animation:none !important; }
 
 /* —— 卡片外壳（黑板 / 主对话 / 协作对话 / 协作收益 共用）——
    卡片的占位（高度/宽度）由外壳承担，内层组件一律 flex:1 填满外壳。 */

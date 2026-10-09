@@ -3,6 +3,7 @@
  * 项目 = { id, 名称, 文件夹路径, 项目介绍, 创建时间, 上次更新时间 }
  */
 import { fetchProjects, publishProjects } from './api'
+import { forgetDeskPref } from './desk-layout'
 export type LayoutMode = 'h-desk'
 
 export interface ProjectRecord {
@@ -251,6 +252,9 @@ export function updateProjectDescription(id: string, description: string): boole
  */
 export function removeProject(id: string): void {
   saveProjects(loadProjects().filter((p) => p.id !== id), [id])
+  // 项目没了，它的布局锁与快照也一并清掉，不留孤儿条目（同 id 的项目不会复活，
+  // 但 localStorage 会随「移除→重新添加」不断积压）。
+  forgetDeskPref(id)
 }
 
 // —— 展示偏好（卡片 / 列表模式、排序方式）——————

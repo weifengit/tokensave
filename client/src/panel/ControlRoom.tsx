@@ -116,6 +116,10 @@ export function ControlRoom({ sessionId }: Props) {
   if (opened && sessionId) {
     return (
       <HDesk
+        // 换项目必须重挂：布局锁的状态（本次要恢复哪份快照）是在首次渲染的惰性初始化里
+        // 定下的，复用同一个实例会把 A 项目的布局回写进 B 项目。会话切换本来就会让本组件
+        // 重建，这里补的是「同一控制室实例内换项目」那条路径。
+        key={opened.id}
         project={opened}
         sessionId={sessionId}
         debug={debugEntry}

@@ -1,11 +1,11 @@
 /**
- * 提示音引擎（跑马灯悬浮面板顶部「🔔 提示音」设置用）。
+ * 提示音引擎（设置内嵌在跑马灯悬浮面板顶部，与「对话清单」同面板同现）。
  *
- * 参照 dsh-complete-notify 的思路，但按我们的需求裁剪：
+ * 参照 dsh-complete-notify 的思路，按我们的需求裁剪：
  *   - 完成 / 中断**两套独立音效**（可各自选择，含静音）；
  *   - **持续时长可调**：一声响 / 一分钟 / 一直响 / 自定义（N 分钟），到点自动停，
- *     面板上另有「停止」按钮随时掐断；
- *   - 设置固化在 localStorage（`tokensave:sound.v1`）。
+ *     设置区里另有「■」按钮随时掐断；
+ *   - 设置固化在 localStorage（`tokensave:sound.v1`），改完即存。
  *
  * 素材：两段录音来自 Wikimedia Commons 的公有领域文件（见 sounds-data.ts 的出处注释），
  * 已截取/归一化后内嵌进包；另有两段 Web Audio 合成音（零文件）与「静音」。
@@ -93,7 +93,7 @@ function normalize(s: SoundSettings): SoundSettings {
 // —— 订阅（设置变化 / 正在播放）——
 const settingsListeners = new Set<() => void>()
 const playingListeners = new Set<(label: string | null) => void>()
-/** 正在播放时的短标签（如「完成」/「中断」），空串 = 没在播 */
+/** 正在播放时的短标签（「完成」/「中断」），空串 = 没在播 */
 let playingLabel = ''
 
 export function getSoundSettings(): SoundSettings {
@@ -254,10 +254,35 @@ export function stopSound(): void {
   if (wake) wake()
 }
 
+// —— 用户一操作就自动停（用户需求：不用每次手动点 ■）——
+/** 页面内哪些事件算“用户在操作”。pointerdown 同时覆盖鼠标与触屏 */
+const INTERACTION_EVENTS = ['pointerdown', 'keydown', 'touchstart', 'wheel'] as const
+/** 起音后这段毫秒内的操作不算（避免“正在操作时刚好响了一声”被当场抹掉） */
+const INTERACTION_GRACE_MS = 250
+/** 最近一次起音时间（宽限期用） */
+let lastStartAt = 0
+/** 全局监听是否已挂（惰性挂，首次播放才装） */
+let autoStopArmed = false
+
+function onUserInteraction(): void {
+  if (!playingLabel) return
+  if (Date.now() - lastStartAt < INTERACTION_GRACE_MS) return
+  stopSound()
+}
+
+/** 挂上“一操作就停”的全局监听（只挂一次，capture 阶段先于业务处理） */
+function armAutoStop(): void {
+  if (autoStopArmed || typeof window === 'undefined') return
+  autoStopArmed = true
+  for (const type of INTERACTION_EVENTS) {
+    window.addEventListener(type, onUserInteraction, true)
+  }
+}
+
 /**
  * 播某一类提醒音（按当前设置循环到时长上限）。
  * @param role - done=完成 / fail=中断
- * @param force - true = 忽略“启用提醒”开关（设置面板里的「试听」用）
+ * @param force - true = 忽略“启用提醒”开关（试听用）
  */
 export async function playRole(role: SoundRole, force = false): Promise<void> {
   const s = { ...settings }
@@ -270,6 +295,8 @@ export async function playRole(role: SoundRole, force = false): Promise<void> {
   if (wake) wake()
   stopFlag = false
   const token = ++playToken
+  lastStartAt = Date.now()
+  armAutoStop()
   setPlaying(role === 'done' ? '完成' : '中断')
   const started = Date.now()
   const limit = durationMs(s)
@@ -294,7 +321,13 @@ let bridgeOff: (() => void) | null = null
 export function initSoundBridge(): () => void {
   if (!bridgeOff) {
     bridgeOff = onPulseAlert((a) => {
-      void playRole(a.kind === 'fail' ? 'fail' : 'done')
+      // 角标先上屏、声音随后半拍（两帧 ≈ 16-32ms）：两者同步感知，不再“先听到后看到”
+      const kick = () => void playRole(a.kind === 'fail' ? 'fail' : 'done')
+      if (typeof window.requestAnimationFrame === 'function') {
+        window.requestAnimationFrame(() => window.requestAnimationFrame(kick))
+      } else {
+        window.setTimeout(kick, 32)
+      }
     })
   }
   return () => {
