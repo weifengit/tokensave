@@ -58,6 +58,8 @@ const NAV_LOCK_MS = 700
 /** 清单浮层宽高预算（clamp 定位时用）。 */
 const POP_W = 300
 const POP_H = 220
+/** 跑马灯悬浮面板的宽度上限（宽度本身按清单里最长标题自适应，见 .ts-hover-pop） */
+const HOVER_POP_W = 560
 /** 黄灯清单里「继续」按钮直接发出去的原文（宿主 max-tokens 提示就是让用户发「继续」） */
 const CONTINUE_TEXT = '继续'
 
@@ -70,12 +72,29 @@ interface PopItem {
   icon: string
   title: string
   sub: string
+  /** 项目身份（给胶囊配色用：id 优先，退回项目名） */
+  projectKey: string
   /** 是否给「继续」按钮（只有上一轮没正常结束的那类才有意义） */
   canContinue: boolean
 }
 
 type PopKind = 'warn' | 'done'
 
+
+/**
+ * 项目胶囊配色：按项目 id/名称稳定散列出一个色相 —— 同项目永远同色、不同项目不同色。
+ * 分开给 bg / 边框 / 字色，深色底上既够亮又不抢标题的注意力。
+ */
+function pillStyle(key: string): React.CSSProperties {
+  if (!key) return {}
+  let h = 0
+  for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) % 360
+  return {
+    background: `hsla(${h},70%,55%,.18)`,
+    borderColor: `hsla(${h},70%,60%,.5)`,
+    color: `hsl(${h},72%,80%)`,
+  }
+}
 /**
  * 「需要处理的对话」/「最近正常结束的对话」清单（同一个组件，两套数据）。
  *
@@ -156,13 +175,13 @@ function ItemPopover({
             <button
               type="button"
               className="ts-warn-item"
-              title={`打开「${it.title}」的工作台，直达这条对话（并标为已读）`}
+              title={[it.title, it.sub, '点击：打开这条对话的工作台（并标为已读）'].filter(Boolean).join('\n')}
               onClick={() => onPick(it)}
             >
               <span className="ts-warn-icon" aria-hidden="true">{it.icon}</span>
               <span className="ts-warn-body">
                 <span className="ts-warn-title">{it.title}</span>
-                <span className="ts-warn-sub">{it.sub}</span>
+                {it.sub && <span className="ts-warn-sub" style={pillStyle(it.projectKey)}>{it.sub}</span>}
               </span>
             </button>
             {it.canContinue && (
@@ -207,50 +226,77 @@ function ItemPopover({
 }
 
 /**
- * 存活指示圆点：前 N 个是呼吸 / 跑马灯（绿或黄），最后一个是「正常结束」指示
- * （蓝色、可点开清单）。只有「还没标注已读的正常结束」时才画最后那颗。
+ * 存活指示圆点（呼吸 / 跑马灯，绿或黄）。“正常结束”已改成**蓝色计数角标**（与黄角标
+ * 同款、显示未读条数），不再占用第 3 个点——3 个点回归纯粹的“活跃指示”。
+ * 悬停在圆点上 → 打开「对话清单」悬浮面板（项目 + 标题、可点击跳转）——原生 title 点不了，
+ * 所以这里用自绘面板取代它。
  */
 function PulseDots({
-  tone, running, breathing, doneCount, onOpenDone,
+  tone, running, count, onHoverIn, onHoverOut,
 }: {
   tone: 'ok' | 'warn'
   running: boolean
-  breathing: number
-  doneCount: number
-  onOpenDone: () => void
+  count: number
+  onHoverIn?: () => void
+  onHoverOut?: () => void
 }) {
   return (
-    <span className={`ts-pulse${running ? ' ts-pulse-run' : ''}${tone === 'warn' ? ' ts-pulse-warn' : ''}`}>
-      {Array.from({ length: breathing }, (_, i) => (
-        <i
-          key={i}
-          className="ts-pulse-dot"
-          aria-hidden="true"
-          style={{ animationDelay: `${i * 0.16}s` }}
-        />
+    <span
+      className={`ts-pulse${running ? ' ts-pulse-run' : ''}${tone === 'warn' ? ' ts-pulse-warn' : ''}`}
+      aria-hidden="true"
+      onMouseEnter={onHoverIn}
+      onMouseLeave={onHoverOut}
+    >
+      {Array.from({ length: count }, (_, i) => (
+        <i key={i} className="ts-pulse-dot" style={{ animationDelay: `${i * 0.16}s` }} />
       ))}
-      {doneCount > 0 && (
-        <span
-          className="ts-pulse-dot ts-pulse-done"
-          role="button"
-          tabIndex={0}
-          aria-haspopup="dialog"
-          aria-label={`最近正常结束的对话 ${doneCount} 条`}
-          title={`最近正常结束的对话（${doneCount}）：点击查看清单，点条目直达那条对话，可标注已读`}
-          onClick={(e) => {
-            e.stopPropagation()
-            onOpenDone()
-          }}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' || e.key === ' ') {
-              e.preventDefault()
-              e.stopPropagation()
-              onOpenDone()
-            }
-          }}
-        />
-      )}
     </span>
+  )
+}
+
+/**
+ * 跑马灯悬浮面板：鼠标停在呼吸圆点上弹出的「对话清单」——每行 = 对话标题 + 项目胶囊，
+ * **点条目直达那条对话的工作台**（原生 tooltip 做不到点击，所以自绘）。
+ * portal 到 body + position:fixed，与两枚角标的清单同款定位（rail / 展开态都向右飞出）。
+ */
+function HoverPanel({ pos, items, onPick, onHover }: {
+  pos: { top?: number; bottom?: number; left: number }
+  items: PopItem[]
+  onPick: (item: PopItem) => void
+  /** 鼠标进出面板：父级据此保持打开 / 计时关闭 */
+  onHover: (inside: boolean) => void
+}) {
+  return createPortal(
+    <div
+      className="ts-warn-pop ts-hover-pop"
+      role="dialog"
+      aria-label="对话清单"
+      style={{ top: pos.top, bottom: pos.bottom, left: pos.left }}
+      onMouseEnter={() => onHover(true)}
+      onMouseLeave={() => onHover(false)}
+    >
+      <div className="ts-warn-pop-head">
+        <span className="ts-warn-pop-title">对话清单（{items.length}）</span>
+      </div>
+      <div className="ts-warn-pop-list">
+        {items.map((it) => (
+          <div className="ts-warn-row" key={it.key}>
+            <button
+              type="button"
+              className="ts-warn-item"
+              onClick={() => onPick(it)}
+            >
+              <span className="ts-warn-icon" aria-hidden="true">{it.icon}</span>
+              <span className="ts-warn-body">
+                <span className="ts-warn-title">{it.title}</span>
+                {it.sub && <span className="ts-warn-sub" style={pillStyle(it.projectKey)}>{it.sub}</span>}
+              </span>
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>,
+    document.body,
   )
 }
 
@@ -324,8 +370,11 @@ export function ControlRoomEntry({ wide }: { wide?: boolean }) {
     setPop({ pos, kind })
   }
 
-  /** 点条目：直达那条对话的工作台，并把它标为已读（去过 = 看过了）。 */
-  const pick = (kind: PopKind, it: PopItem) => {
+  /**
+ * 点条目：直达那条对话的工作台；kind 给了就顺手把它标为已读。
+ * 悬浮清单（kind=null）没有“已读”概念——那里的对话本来就活着，只负责跳转。
+ */
+  const pick = (kind: PopKind | null, it: PopItem) => {
     try {
       if (!enterProjectWorkbench(it.projectId, it.sessionId)) {
         console.warn('[tokensave] 定位对话：没有可导航的目标', it)
@@ -333,18 +382,22 @@ export function ControlRoomEntry({ wide }: { wide?: boolean }) {
     } catch (e) {
       console.warn('[tokensave] 定位对话失败', e)
     }
-    markPulseRead(kind, it.key)
+    if (kind) markPulseRead(kind, it.key)
   }
 
   const toDesk = screen === 'list'
   const head = toDesk ? '项目中心：回到工作台' : '项目中心：查看项目列表'
-  const title = `${head}（再点一次可在两者间切换）${alive ? `\n\n${pulse.tip}` : ''}`
-  // rail 里角标要与圆点同排（36px 挤）：有角标时总点数最多留 2 个
-  const totalDots = !wide && warnUnread ? Math.min(dotCount, 2) : dotCount
-  // 呼吸灯只在「真有活动（跑 / 待处理）」时画；只剩未读完成通知时只画第 3 点
-  const breathing = (pulse.running + pulse.warn) > 0
-    ? Math.max(0, totalDots - (doneUnread ? 1 : 0))
-    : 0
+  const title = `${head}（再点一次可在两者间切换）`
+  // 计数角标（黄=需要处理 / 蓝=未读完成）占位会让 rail（36px）挤不下圆点 →
+  // 按「角标优先」递减圆点：无角标 3 个、1 枚角标 2 个、2 枚角标让位给角标。
+  const badges = (warnUnread ? 1 : 0) + (doneUnread ? 1 : 0)
+  const breathing = wide
+    ? (pulse.running + pulse.warn) > 0 ? dotCount : 0
+    : badges === 0
+      ? dotCount
+      : badges === 1
+        ? Math.min(dotCount, 2)
+        : 0
 
   const warnItems: PopItem[] = pulse.items.map((i) => ({
     key: i.key,
@@ -352,7 +405,8 @@ export function ControlRoomEntry({ wide }: { wide?: boolean }) {
     projectId: i.projectId,
     icon: i.kind === 'pending' ? '⏳' : '⚠️',
     title: i.title || '（未命名对话）',
-    sub: `${i.project || '未知项目'} · ${i.kind === 'pending' ? '待你确认' : '上一轮未正常结束'}`,
+    sub: i.project || '',
+    projectKey: i.projectId || i.project,
     canContinue: i.kind === 'failed'
   }))
   const doneItems: PopItem[] = pulse.done.map((d) => ({
@@ -361,9 +415,62 @@ export function ControlRoomEntry({ wide }: { wide?: boolean }) {
     projectId: d.projectId,
     icon: '✅',
     title: d.title || '（未命名对话）',
-    sub: `${d.project || '未知项目'} · 已正常结束`,
+    sub: d.project || '',
+    projectKey: d.projectId || d.project,
     canContinue: false
   }))
+
+  /** 悬浮清单里的全部条目：跑着的（●） + 需处理的（⏳/⚠️） + 已完成的（✅），与 tip 同序 */
+  const hoverItems: PopItem[] = [
+    ...pulse.active.map((a) => ({
+      key: `a:${a.sessionId}`,
+      sessionId: a.sessionId,
+      projectId: a.projectId,
+      icon: '●',
+      title: a.title || '（未命名对话）',
+      sub: a.project || '',
+      projectKey: a.projectId || a.project,
+      canContinue: false,
+    })),
+    ...warnItems,
+    ...doneItems,
+  ]
+
+  // —— 跑马灯悬浮面板：圆点 hover → 弹出可点击的对话清单（取代原生 title，因为它点不了）——
+  const [hoverPos, setHoverPos] = useState<{ top?: number; bottom?: number; left: number } | null>(null)
+  const hoverTimer = useRef<number | null>(null)
+  const clearHoverTimer = () => {
+    if (hoverTimer.current) {
+      window.clearTimeout(hoverTimer.current)
+      hoverTimer.current = null
+    }
+  }
+  /** 打开：定位算法与角标清单同款（贴按钮右缘，放不下改锚上方） */
+  const openHover = () => {
+    clearHoverTimer()
+    if (hoverPos || hoverItems.length === 0) return
+    const r = btnRef.current?.getBoundingClientRect()
+    if (!r || (r.width === 0 && r.height === 0)) return
+    const left = Math.max(8, Math.min(r.right + 8, window.innerWidth - HOVER_POP_W - 12))
+    const below = r.bottom + 6 + 140 <= window.innerHeight - 8
+    const above = r.top - 6 >= 140 + 8
+    setHoverPos(
+      below
+        ? { top: r.bottom + 6, left }
+        : above
+          ? { bottom: window.innerHeight - r.top + 6, left }
+          : { top: Math.max(8, Math.min(r.top, window.innerHeight - POP_H - 12)), left },
+    )
+  }
+  /** 关闭：给 220ms 缓冲，鼠标从圆点挪到面板上不会闪断 */
+  const closeHover = () => {
+    clearHoverTimer()
+    hoverTimer.current = window.setTimeout(() => {
+      setHoverPos(null)
+      hoverTimer.current = null
+    }, 220)
+  }
+  useEffect(() => clearHoverTimer, [])
 
   return (
     <>
@@ -397,11 +504,21 @@ export function ControlRoomEntry({ wide }: { wide?: boolean }) {
         {(!alive || wide) && <span className="ts-side-icon" aria-hidden="true">{toDesk ? '🧭' : '🗂️'}</span>}
         {wide && <span className="ts-side-label">{toDesk ? '回到工作台' : '项目中心'}</span>}
         {alive && (
-          <span className={`ts-side-right${wide ? '' : ' rail'}`}>
-            {/* 黄灯角标：点它=看「需要处理的对话」清单并标注已读（不触发布局切换） */}
+          <span
+            className={`ts-side-right${wide ? '' : ' rail'}`}
+            // 悬停热区 = 整个右侧簇（角标 + 圆点及其 padding 扩出的区域）：
+            // 圆点只有 6px 高，只盯圆点既迟钝又难点中；鼠标一进这片区域就立刻弹出。
+            onMouseOver={(e) => {
+              // 角标自带 title + 点击面板，不在此处唤出悬浮清单（避免两层提示叠在一起）
+              if ((e.target as HTMLElement)?.closest?.('.ts-side-badge')) return
+              openHover()
+            }}
+            onMouseLeave={closeHover}
+          >
+            {/* 黄角标 = 需要处理的对话；蓝角标 = 未读的正常结束（都点得开各自清单） */}
             {warnUnread && (
               <span
-                className="ts-warn-badge"
+                className="ts-side-badge is-warn"
                 role="button"
                 tabIndex={0}
                 aria-haspopup="dialog"
@@ -418,13 +535,32 @@ export function ControlRoomEntry({ wide }: { wide?: boolean }) {
                 {pulse.warn}
               </span>
             )}
-            <PulseDots
-              tone={tone}
-              running={running}
-              breathing={breathing}
-              doneCount={doneUnread ? pulse.done.length : 0}
-              onOpenDone={togglePop('done')}
-            />
+            {doneUnread && (
+              <span
+                className="ts-side-badge is-done"
+                role="button"
+                tabIndex={0}
+                aria-haspopup="dialog"
+                aria-expanded={pop != null && pop.kind === 'done'}
+                title={`最近正常结束的对话（${pulse.done.length}）：点击查看清单，点条目直达那条对话，可标注已读`}
+                onClick={togglePop('done')}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault()
+                    togglePop('done')(e)
+                  }
+                }}
+              >
+                {pulse.done.length}
+              </span>
+            )}
+            {breathing > 0 && (
+              <PulseDots
+                tone={tone}
+                running={running}
+                count={breathing}
+              />
+            )}
           </span>
         )}
       </button>
@@ -436,6 +572,20 @@ export function ControlRoomEntry({ wide }: { wide?: boolean }) {
           onPick={(it) => pick(pop.kind, it)}
           onContinue={async (it) => { await sendToSession(it.sessionId, CONTINUE_TEXT) }}
           onClose={() => setPop(null)}
+        />
+      )}
+      {hoverPos && (
+        <HoverPanel
+          pos={hoverPos}
+          items={hoverItems}
+          onPick={(it) => {
+            pick(null, it)
+            setHoverPos(null)
+          }}
+          onHover={(inside) => {
+            if (inside) clearHoverTimer()
+            else closeHover()
+          }}
         />
       )}
     </>

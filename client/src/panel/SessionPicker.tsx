@@ -69,9 +69,11 @@ export interface SessionPickerProps {
   currentId: string
   onPick: (id: string) => void
   onNew: () => void | Promise<void>
+  /** 归档成功后的回调：归档的是当前会话时由调用方把界面拉回本项目工作台 */
+  onArchived?: (sessionId: string) => void
 }
 
-export function SessionPicker({ sessions, currentId, onPick, onNew }: SessionPickerProps) {
+export function SessionPicker({ sessions, currentId, onPick, onNew, onArchived }: SessionPickerProps) {
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)
   const [pos, setPos] = useState<{ top: number; right: number } | null>(null)
@@ -159,6 +161,13 @@ export function SessionPicker({ sessions, currentId, onPick, onNew }: SessionPic
     setArchiving(null)
     if (res.ok) {
       closeAll()
+      // 归档的若是当前会话，宿主会顺手清掉主会话（界面掉回「新建会话」Hero）；
+      // 由调用方决定如何留在本项目工作台（见 HDesk 的 onArchived）。
+      try {
+        onArchived?.(session.id)
+      } catch (e) {
+        console.warn('[tokensave] 归档后恢复工作台失败', e)
+      }
       return
     }
     if (res.active) {

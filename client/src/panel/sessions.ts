@@ -439,6 +439,8 @@ export async function revealProject(projectPath: string): Promise<boolean> {
 export async function startProjectSession(
   projectPath: string,
   projectId?: string,
+  /** 刚被归档、需显式排除的会话 id（归档集快照可能还没刷新，见 stayInProjectAfterArchive） */
+  excludeSessionId?: string,
 ): Promise<{ ok: true; id: string } | { ok: false; error: string }> {
   const ctx: any = getClientContext()
   if (!ctx) return { ok: false, error: '客户端上下文不可用' }
@@ -449,7 +451,7 @@ export async function startProjectSession(
   }
   try {
     const workspaceId = readProjectWorkspaceId(ctx, projectPath)
-    const reuse = readProjectSessions(ctx, projectPath).find((s) => s.blank)
+    const reuse = readProjectSessions(ctx, projectPath).find((s) => s.blank && s.id !== excludeSessionId)
     const id = reuse?.id
       ?? String(await sessions.create(workspaceId ? { workspaceId } : { cwd: projectPath }))
     // 顺序很关键：先写好「视图偏好 + 项目记忆 + 立即激活工作台视图」，再导航。
@@ -900,6 +902,36 @@ export function enterProjectWorkbench(projectId: string, targetSessionId?: strin
     }
   }
   return switchToView(VIEW_ID, WORKBENCH_LABEL)
+}
+
+/**
+ * 归档后**留在本项目工作台**（不跳进「新建会话」）。
+ *
+ * 为什么必须由本插件接手：宿主 `uiWorkspace.archiveSession` 归档的若是**当前**会话，
+ * 会顺手 `clearMain()`（mainReference=undefined + selection.set({}) + selectPanel(null)），
+ * 界面于是掉回「新建会话」Hero —— 用户看到的就是「点归档后直接跳进一个全新会话」。
+ * 宿主不会自己回来（watchNavigation 的 reconcile 只在 initial==='waiting' 时恢复，
+ * 归档发生时它早已是 'done'），因此归档成功后必须显式再导航一次：
+ *   ① 本项目还有别的会话 → 打开最近活动的那个（优先非空白，与 latestProjectSession 同口径）；
+ *   ② 一个都不剩 → 在本项目下复用/新建一个空白会话，仍然落在它的工作台
+ *      （没有会话时 ControlRoom 只会显示「会话上下文不可用」，那是更差的落点）。
+ * @param projectPath - 被归档会话所属的项目目录
+ * @param projectId - 该项目 id（写「上次打开的项目」记忆用）
+ * @param archivedId - 刚被归档的会话 id（显式排除：归档集快照可能还没刷新）
+ * @returns 是否发起了导航
+ */
+export function stayInProjectAfterArchive(
+  projectPath: string,
+  projectId: string,
+  archivedId: string,
+): boolean {
+  const ctx: any = getClientContext()
+  if (!ctx || !projectPath || !projectId) return false
+  const remaining = readProjectSessions(ctx, projectPath).filter((s) => s.id !== archivedId)
+  const next = remaining.find((s) => !s.blank) ?? remaining[0]
+  if (next) return enterProjectWorkbench(projectId, next.id)
+  void startProjectSession(projectPath, projectId, archivedId)
+  return true
 }
 
 /**

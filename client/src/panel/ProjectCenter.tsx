@@ -8,6 +8,8 @@
  * 进入工作台的入口（均调 enterProjectWorkbench，进的是**该项目当前会话**的工作台）：
  *   - 卡片模式：点整张卡片
  *   - 列表模式：点整条记录行
+ *   - 卡片模式：启动情况标的「● 已启动」本身就是调试**超链接**（悬停时变成「去调试 →」），
+ *     点它进工作台并要求「项目预览 + DSH 主对话」两个窗口**并存**（intent='debug'）
  *
  * 「＋ 新会话」按钮（卡片与列表两种模式**一致**）：在该项目下开一个新对话
  * （复用已有空白会话，没有则创建）并直接进入它的工作台（详见 sessions.startProjectSession）。
@@ -235,12 +237,15 @@ export function ProjectCenter({ sessionId }: Props) {
     // projects 变化（增删项目）时重新拉
   }, [projects])
 
-  /** 进入该项目的工作台；带 targetSessionId 时直接落到那条对话（序号点用）。 */
-  const enter = (p: ProjectRecord, targetSessionId?: string) => {
+  /**
+   * 进入该项目的工作台；带 targetSessionId 时直接落到那条对话（序号点用）；
+   * intent='debug' 时同时要求「项目预览 + DSH 主对话」两窗并存（卡片上的「去调试」）。
+   */
+  const enter = (p: ProjectRecord, targetSessionId?: string, intent?: 'debug') => {
     // 优先用宿主当前会话（侧边栏入口可能比 sessionId prop 更新）；都没有才放弃
     const current = sessionId || getCurrentSessionId() || ''
     if (!current && !targetSessionId) return
-    if (enterProjectWorkbench(p.id, targetSessionId)) refresh()
+    if (enterProjectWorkbench(p.id, targetSessionId, intent)) refresh()
   }
 
   /** 正在「新会话」的项目 id（防连点） */
@@ -447,13 +452,39 @@ export function ProjectCenter({ sessionId }: Props) {
                   <span className="ts-tag ts-tag-warn">更新于 {relTime(infoOf(p)?.mtimeMs || 0)}</span>
                 </div>
                 <div className="ts-center-actions">
-                  {/* 启动情况：直接放在「进入工作台」之前，与两个按钮同排不跨行 */}
-                  <span
-                    className={`ts-dev-chip${infoOf(p)?.devRunning ? ' on' : ''}`}
-                    title={infoOf(p)?.devRunning
-                      ? '检测到开发服务器正在监听（工作台里会直接显示预览）'
-                      : '未检测到开发服务器；在项目里跑起来后工作台会自动出现预览'}
-                  >{infoOf(p)?.devRunning ? '● 已启动' : '○ 未启动'}</span>
+                  {/* 启动情况（与两个按钮同排不跨行）：
+                      未启动 → 灰标，只看不点；
+                      已启动 → 同一枚小标升级成**超链接**：悬停显示「去调试 →」，
+                        点它进该项目的工作台调试（预览 + DSH 主对话两窗并存）。
+                      两段文字叠在同一格里（宽度取较大者），悬停不挤动后面的按钮。 */}
+                  {infoOf(p)?.devRunning ? (
+                    <a
+                      className="ts-dev-chip on ts-dev-chip-link"
+                      role="link"
+                      tabIndex={sessionId ? 0 : -1}
+                      title={`开发服务器正在监听 · 点它进入「${p.name}」的工作台调试（项目预览 + DSH 主对话）`}
+                      onClick={(e) => {
+                        // 别让卡片自己的「进入工作台」也接一手（那会按默认布局再进一次）
+                        e.stopPropagation()
+                        enter(p, undefined, 'debug')
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault()
+                          e.stopPropagation()
+                          enter(p, undefined, 'debug')
+                        }
+                      }}
+                    >
+                      <span className="ts-dev-chip-state">● 已启动</span>
+                      <span className="ts-dev-chip-go">去调试 →</span>
+                    </a>
+                  ) : (
+                    <span
+                      className="ts-dev-chip"
+                      title="未检测到开发服务器；在项目里跑起来后工作台会自动出现预览"
+                    >○ 未启动</span>
+                  )}
                   <button
                     className="ts-btn ts-btn-sm ts-btn-primary"
                     disabled={busyId === p.id}

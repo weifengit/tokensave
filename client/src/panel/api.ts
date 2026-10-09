@@ -15,6 +15,10 @@ export interface FsEntry {
 
 export interface FsListing {
   path: string
+  /** 父目录（在文件系统根上时为 null）——由后端算好，客户端不再字符串切片猜。 */
+  parent: string | null
+  /** 文件系统根列表：Windows 上是盘符（C:/、D:/…），类 Unix 上是 ['/']。 */
+  roots: string[]
   entries: FsEntry[]
 }
 
@@ -27,7 +31,12 @@ export async function fetchDirectory(path?: string): Promise<FsListing> {
   if (res.status === 400) throw new Error('不是目录')
   if (!res.ok) throw new Error(`目录读取失败（HTTP ${res.status}）`)
   const data = await res.json()
-  return { path: String(data.path || ''), entries: (data.entries || []) as FsEntry[] }
+  return {
+    path: String(data.path || ''),
+    parent: typeof data.parent === 'string' ? data.parent : null,
+    roots: Array.isArray(data.roots) ? data.roots.map((r: unknown) => String(r)) : [],
+    entries: (data.entries || []) as FsEntry[],
+  }
 }
 
 export interface ProjectInfo {

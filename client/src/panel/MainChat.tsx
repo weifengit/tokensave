@@ -16,6 +16,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { subscribeSession, loadOlderHistory, subscribeHistoryState } from '../session-subscribe'
 import type { StreamMsg } from '../session-subscribe'
 import { MsgList } from './MsgList'
+import { CHAT_VIEWS, CHAT_VIEW_STAT, CHAT_VIEW_UNIT, useChatView } from './chat-view'
 
 interface HistoryState {
   hasMore: boolean
@@ -24,6 +25,7 @@ interface HistoryState {
 
 export function MainChat({ sessionId, actions }: { sessionId: string; actions?: React.ReactNode }) {
   const [messages, setMessages] = useState<StreamMsg[]>([])
+  const [view, setView] = useChatView()
   const [history, setHistory] = useState<HistoryState>({ hasMore: false, loadingOlder: false })
 
   useEffect(() => {
@@ -49,12 +51,15 @@ export function MainChat({ sessionId, actions }: { sessionId: string; actions?: 
   }, [sessionId])
 
   /**
-   * 标题条上的消息统计：总数 + user / agent 细分。
+   * 标题条上的消息统计：按**当前视图**给一个数。
    *
    * 口径（与 MsgList 的收纳一致）：
-   *   msg   = 会话流里的全部行（用户/助手/工具…）
-   *   user  = 你发出的消息——**不算**宿主自动注入的上下文（运行时快照/技能目录等）
-   *   agent = 助手回复——**不算**思考（reasoning）片段（MsgList 单拎为「思考」）
+   *   all   = 会话流里的全部行（用户/助手/工具/注入…）——与旧 msg 统计同口径；
+   *   user  = 你发出的消息——**不算**宿主自动注入的上下文（运行时快照/技能目录等）；
+   *   agent = 助手回复——**不算**思考（reasoning）片段（MsgList 单拎为「思考」）。
+   *
+   * 为什么跟着视图变：这个数就是「你现在看得见多少条」。固定显示总数时，
+   * 切到「我的」却仍报 msg 137 会让人以为切换没生效（实际是口径不同）。
    */
   const stat = useMemo(() => {
     let user = 0
@@ -68,6 +73,8 @@ export function MainChat({ sessionId, actions }: { sessionId: string; actions?: 
     }
     return { total: messages.length, user, agent }
   }, [messages])
+  const shown = view === 'user' ? stat.user : view === 'agent' ? stat.agent : stat.total
+  const unit = CHAT_VIEW_UNIT[view]
   const loadOlder = useCallback(async () => {
     if (!sessionId) return
     await loadOlderHistory(sessionId)
@@ -78,23 +85,33 @@ export function MainChat({ sessionId, actions }: { sessionId: string; actions?: 
       {/* #3 标题条：标题 + 中间信息（消息条数）居中，三键固定右上角 */}
       <div className="ts-mainchat-head">
         <span className="ts-head-title">💬 DSH 主对话</span>
+        {/* 中间段 = 统计 + 视图开关，同一个 grid 格子里（grid 仍是 [标题][中][三键] 三段式）。
+           两样东西本来就该在一起：它两回答的是同一个问题——「现在看的是哪一档、有多少」。 */}
         <span
-          className="ts-head-mid ts-mainchat-sub"
-          title={`msg ${stat.total} · user ${stat.user} · agent ${stat.agent}`
-            + '\n\nmsg：已载入的会话流行数（工具结果、上下文注入等都算一行；往上滚动加载更早历史后会变大）'
-            + '\nuser：你发出的消息（不含宿主自动注入的运行时快照 / 审批通知 / 技能目录等）'
-            + '\nagent：助手回复（不含思考片段与工具过程）'}
+          className="ts-head-mid ts-mainchat-mid"
+          title={`当前视图「${CHAT_VIEWS.find((v) => v.id === view)?.label}」· 显示 ${shown} ${unit}`
+            + `（会话共 ${stat.total} 行 · 我发的 ${stat.user} · 模型回复 ${stat.agent}）`
+            + '\n\n' + CHAT_VIEWS.map((v) => `${v.label}：${v.desc}`).join('\n')}
         >
-          <span className="ts-msgstat"><span className="ts-msgstat-k">msg</span>{stat.total}</span>
-          <span className="ts-msgstat-sep">·</span>
-          <span className="ts-msgstat"><span className="ts-msgstat-k">user</span>{stat.user}</span>
-          <span className="ts-msgstat-sep">·</span>
-          <span className="ts-msgstat"><span className="ts-msgstat-k">agent</span>{stat.agent}</span>
+          <span className="ts-msgstat"><span className="ts-msgstat-k">{CHAT_VIEW_STAT[view]}</span>{shown}</span>
+          {/* 视图开关（全部 / 我的 / 回复）：三档互斥，当前档高亮，键盘可达。 */}
+          <span className="ts-view-tabs" role="group" aria-label="阅读视图">
+            {CHAT_VIEWS.map((v) => (
+              <button
+                key={v.id}
+                className={`ts-view-tab${v.id === view ? ' is-on' : ''}`}
+                aria-pressed={v.id === view}
+                title={`${v.desc}\n（当前${v.id === view ? '已选' : '未选'}）`}
+                onClick={() => setView(v.id)}
+              >{v.label}</button>
+            ))}
+          </span>
         </span>
         {actions}
       </div>
       <MsgList
         messages={messages}
+        view={view}
         emptyText="在下方输入框发送消息，对话内容会实时显示在这里。"
         hasMore={history.hasMore}
         loadingOlder={history.loadingOlder}

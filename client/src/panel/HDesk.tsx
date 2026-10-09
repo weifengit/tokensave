@@ -31,7 +31,7 @@ import { SavingsColumn } from './SavingsColumn'
 import { MainChat } from './MainChat'
 import { SessionPicker } from './SessionPicker'
 import { ExplorerSettings } from './ExplorerSettings'
-import { useProjectSessions, openSession, startProjectSession, latestProjectSession, sessionBelongsToProject } from './sessions'
+import { useProjectSessions, openSession, startProjectSession, latestProjectSession, sessionBelongsToProject, stayInProjectAfterArchive } from './sessions'
 import { getClientContext } from '../session-subscribe'
 import { rememberOpenedProject } from './store'
 import type { ProjectRecord } from './store'
@@ -758,6 +758,16 @@ export function HDesk({ project, sessionId }: Props) {
                 rememberOpenedProject(res.id, project.id)
               } else {
                 setProbeError(`新建会话失败：${res.error}`)
+              }
+            }}
+            onArchived={(id) => {
+              // 归档当前会话后宿主会 clearMain()（界面掉进「新建会话」Hero）：
+              // 立刻把界面拉回本项目的工作台（打开别的会话，或新建一个空白会话）。
+              if (id !== sessionId) return
+              try {
+                stayInProjectAfterArchive(project.path, project.id, id)
+              } catch (e) {
+                console.warn('[tokensave] 归档后留在工作台失败', e)
               }
             }}
           />

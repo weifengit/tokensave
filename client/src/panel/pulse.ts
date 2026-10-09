@@ -65,6 +65,14 @@ export interface DoneItem {
   turnAt: number
 }
 
+/** 一条「正在跑」的对话（绿色跑马灯悬浮面板用：项目 + 标题，可点击跳转） */
+export interface ActiveItem {
+  sessionId: string
+  projectId: string
+  project: string
+  title: string
+}
+
 export interface PulseState {
   /** 存活对话数：正在跑 + 待确认 + 上一轮失败 */
   alive: number
@@ -74,13 +82,15 @@ export interface PulseState {
   running: number
   /** 悬停说明（逐条列出存活对话） */
   tip: string
+  /** 正在跑的对话清单（跑马灯悬浮面板用） */
+  active: ActiveItem[]
   /** 需要处理的对话清单（与 warn 同步，供黄灯角标点开定位跳转） */
   items: WarnItem[]
   /** 最近正常结束且未标注已读的对话（第 3 个圆点点开的清单） */
   done: DoneItem[]
 }
 
-const EMPTY: PulseState = { alive: 0, warn: 0, running: 0, tip: '', items: [], done: [] }
+const EMPTY: PulseState = { alive: 0, warn: 0, running: 0, tip: '', items: [], done: [], active: [] }
 
 // —— 「上一轮是否正常结束」的判定（限量 / 节流 / 缓存）——
 /** 两次扫描之间的最小间隔 */
@@ -163,6 +173,34 @@ function notifyOutcome(): void {
   for (const fn of [...outcomeListeners]) {
     try {
       fn()
+    } catch {
+      /* 单个订阅者出错不影响其它订阅者 */
+    }
+  }
+}
+
+// —— 告警（提示音）：只在「观察到的停止」那条路上发 ——
+/** 一条结局告警（提示音用）：fail=中断/失败，done=正常完成 */
+export interface PulseAlert {
+  kind: 'done' | 'fail'
+  sessionId: string
+  title: string
+}
+const alertListeners = new Set<(a: PulseAlert) => void>()
+/** 同一轮只告警一次（即时判定会重试） */
+let lastAlertKey = ''
+/** 订阅结局告警；返回解绑函数（sound.ts 的告警桥用） */
+export function onPulseAlert(cb: (a: PulseAlert) => void): () => void {
+  alertListeners.add(cb)
+  return () => alertListeners.delete(cb)
+}
+function emitAlert(kind: 'done' | 'fail', sessionId: string, title: string, turnAt: number): void {
+  const key = `${sessionId}:${turnAt}:${kind}`
+  if (key === lastAlertKey) return
+  lastAlertKey = key
+  for (const l of [...alertListeners]) {
+    try {
+      l({ kind, sessionId, title })
     } catch {
       /* 单个订阅者出错不影响其它订阅者 */
     }
@@ -364,6 +402,9 @@ function applyOutcome(ctx: any, sessionId: string, o: TurnOutcome | null): boole
   if (!o.failed && (o.kind === 'completed' || o.kind === 'forked')) {
     recordDone({ sessionId, project: proj?.name || '', projectId: proj?.id || '', title, turnAt: o.turnAt })
   }
+  // 提示音：中断/失败一套、正常完成一套；用户主动停止（aborted）不响
+  if (o.failed) emitAlert('fail', sessionId, title, o.turnAt)
+  else if (o.kind === 'completed' || o.kind === 'forked') emitAlert('done', sessionId, title, o.turnAt)
   notifyOutcome()
   return true
 }
@@ -502,6 +543,8 @@ export function useActivityPulse(): PulseState {
       const items: WarnItem[] = []
       /** 最近正常结束、未标注已读的对话（第 3 个圆点点开就用它） */
       let done: DoneItem[] = []
+      /** 正在跑的对话（跑马灯悬浮面板用） */
+      const active: ActiveItem[] = []
 
       // 状态沿：停止 → 立刻判结局；开始跑 → 作废该会话的「刚结束」通知；
       // 新的一次待确认 → 作废它上一次的已读标注（新弹窗要重新提醒）
@@ -540,11 +583,14 @@ export function useActivityPulse(): PulseState {
             const key = `w:p:${a.sessionId}:ep`
             if (readMarks.has(key)) continue
             warn++
-            tips.push(`⏳ 待你确认：${a.title}`)
+            const label = project.name ? `【${project.name}】` : ''
+            tips.push(`⏳ 待你确认：${label}${a.title}`)
             items.push({ key, sessionId: a.sessionId, projectId: project.id, project: project.name, title: a.title, kind: 'pending' })
           } else {
             running++
-            tips.push(`● 进行中：${a.title}`)
+            active.push({ sessionId: a.sessionId, projectId: project.id, project: project.name, title: a.title })
+            // 跑马灯悬浮面板 / tip 里不再写「进行中」三个字：项目 + 标题足矣
+            tips.push(`${project.name ? `【${project.name}】` : ''}${a.title}`)
           }
         }
       }
@@ -585,6 +631,7 @@ export function useActivityPulse(): PulseState {
             tip: tips.slice(0, 12).join('\n'),
             items,
             done,
+            active,
           }
         : EMPTY)
       // 顺带推进「失败」扫描（自带节流；结论会在下一次 read 时反映出来）

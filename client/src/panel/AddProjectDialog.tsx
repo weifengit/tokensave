@@ -34,8 +34,28 @@ function dirName(p: string): string {
   return clean.slice(0, idx)
 }
 
+/** 把展示路径拆成面包屑段（Windows 盘符根 "C:/" → ["C:"]；POSIX "/Users/me" → ["Users","me"]）。 */
+function crumbsOf(p: string): string[] {
+  return String(p || '').split('/').filter(Boolean)
+}
+
+/** 面包屑第 index 段对应的绝对路径；盘符段（"C:"）要补出 "C:/"，其余补前导 "/"。 */
+function crumbPath(crumbs: string[], index: number): string {
+  const head = crumbs.slice(0, index + 1).join('/')
+  if (/^[A-Za-z]:$/.test(head)) return `${head}/`
+  return /^[A-Za-z]:/.test(head) ? head : `/${head}`
+}
+
+/** 路径所属的文件系统根（Windows 盘符根 "C:/" 或 POSIX "/"）。 */
+function rootOf(p: string): string {
+  const m = /^([A-Za-z]):/.exec(String(p || ''))
+  return m ? `${m[1].toUpperCase()}:/` : '/'
+}
+
 export function AddProjectDialog({ onClose, onCreated }: Props) {
   const [cwd, setCwd] = useState<string>('')
+  const [parent, setParent] = useState<string | null>(null)
+  const [roots, setRoots] = useState<string[]>([])
   const [entries, setEntries] = useState<FsEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [fsError, setFsError] = useState<string | null>(null)
@@ -56,6 +76,8 @@ export function AddProjectDialog({ onClose, onCreated }: Props) {
     try {
       const listing = await fetchDirectory(path)
       setCwd(listing.path)
+      setParent(listing.parent)
+      setRoots(listing.roots)
       setEntries(listing.entries)
     } catch (e) {
       setFsError(e instanceof Error ? e.message : '目录读取失败')
@@ -66,10 +88,9 @@ export function AddProjectDialog({ onClose, onCreated }: Props) {
 
   useEffect(() => { load() }, [load])
 
-  const crumbs = cwd ? cwd.split('/').filter(Boolean) : []
+  const crumbs = crumbsOf(cwd)
   const gotoCrumb = (index: number) => {
-    const partial = '/' + crumbs.slice(0, index + 1).join('/')
-    load(partial)
+    load(crumbPath(crumbs, index))
     setSelectedPath(null)
   }
 
@@ -145,7 +166,7 @@ export function AddProjectDialog({ onClose, onCreated }: Props) {
 
   return (
     <div className="ts-modal-mask" onClick={(e) => { if (e.target === e.currentTarget) onClose() }}>
-      <div className="ts-modal">
+      <div className="ts-modal ts-addproj">
         <div className="ts-modal-head">
           <span>➕ 添加项目</span>
           <button className="ts-icon-btn" onClick={onClose} title="关闭">✕</button>
@@ -156,18 +177,28 @@ export function AddProjectDialog({ onClose, onCreated }: Props) {
             <label className="ts-field-label">选择项目文件夹</label>
             <div className="ts-fs">
               <div className="ts-fs-crumb">
-                <span onClick={() => { load('/'); setSelectedPath(null) }} title="根目录">/</span>
-                {crumbs.map((c, i) => (
-                  <React.Fragment key={i}>
-                    <span onClick={() => gotoCrumb(i)}>{c}</span>
-                    {i < crumbs.length - 1 && <span style={{ opacity: .4 }}>/</span>}
-                  </React.Fragment>
+                <div className="ts-fs-crumbs">
+                  <span className="ts-fs-rooticon" onClick={() => load(roots[0])} title="根目录">🖥</span>
+                  {crumbs.map((c, i) => (
+                    <React.Fragment key={i}>
+                      <span onClick={() => gotoCrumb(i)}>{c}</span>
+                      {i < crumbs.length - 1 && <span className="ts-fs-sep">/</span>}
+                    </React.Fragment>
+                  ))}
+                </div>
+                {roots.length > 1 && roots.map((r) => (
+                  <span
+                    key={r}
+                    className={`ts-fs-drive${r === rootOf(cwd) ? ' ts-fs-drive-on' : ''}`}
+                    onClick={() => load(r)}
+                    title={`切换到 ${r}`}
+                  >{r.replace(/\/$/, '')}</span>
                 ))}
                 <button
                   className="ts-btn"
-                  style={{ marginLeft: 'auto', padding: '2px 10px', fontSize: 12 }}
-                  onClick={() => load(cwd ? cwd.split('/').slice(0, -1).join('/') || '/' : undefined)}
-                  disabled={!cwd || cwd === '/'}
+                  style={{ padding: '2px 10px', fontSize: 12, flex: '0 0 auto' }}
+                  onClick={() => { if (parent) { load(parent); setSelectedPath(null) } }}
+                  disabled={!parent}
                 >↑ 上级</button>
               </div>
               <div className="ts-fs-list">

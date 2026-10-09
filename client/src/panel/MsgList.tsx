@@ -20,6 +20,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { StreamMsg } from '../session-subscribe'
 import { RichText, stripMarkdown } from './RichText'
+import type { ChatView } from './chat-view'
 
 /** 最多渲染的轮数（超出只显示最近这些） */
 const MAX_TURNS = 40
@@ -62,6 +63,12 @@ const ROLE_LABELS: Record<string, string> = {
   assistant: '模型',
   tool: '工具',
   system: '系统',
+}
+/** 某视图下一条都没剩时的提示（消息在，只是被当前口径滤掉了）。 */
+const VIEW_EMPTY: Record<ChatView, string> = {
+  all: '等待会话消息…',
+  user: '本会话里还没有你发的消息（当前视图只看你发的）。',
+  agent: '本会话里还没有模型的回复（当前视图只看模型侧）。',
 }
 
 /** 注入来源 → 人话标签（未收录的 kind 回退为「上下文注入」）；浮窗同款复用 */
@@ -298,6 +305,14 @@ interface MsgListProps {
    * 挂载时若已有内容，直接贴底，不再依赖「内容变化」这个触发条件。
    */
   followKey?: string
+  /**
+   * 阅读视图（见 chat-view.ts）：只影响**呈现**，不改变轮次切分与滚动。
+   *   all   → 现状：我的气泡 + 回复，过程 / 注入各自折叠一行；
+   *   user  → 只留我的气泡；
+   *   agent → 只留模型侧（过程折叠 + 回复 + 轮末异常提示）。
+   * 缺省 all，探索者窗口与简报沿用同一份组件、行为不变。
+   */
+  view?: ChatView
 }
 
 /**
@@ -346,6 +361,7 @@ export function MsgList({
   loadingOlder = false,
   onLoadOlder,
   followKey = '',
+  view = 'all',
 }: MsgListProps) {
   const ref = useRef<HTMLDivElement>(null)
   // 当前展示的轮数窗口：瀑布式回翻时逐步放大（只放大，不缩回去）
@@ -454,6 +470,27 @@ export function MsgList({
   const shownTurns = turns.length > windowTurns ? turns.slice(-windowTurns) : turns
   const hiddenTurns = turns.length - shownTurns.length
   const parsed = useMemo(() => shownTurns.map(splitTurn), [shownTurns])
+  /**
+   * 按视图过滤后的轮（整轮被滤空就丢掉）。
+   *
+   * 为什么先过滤再渲染、而不是在 JSX 里逐块判断：`.ts-turn + .ts-turn` 靠相邻
+   * 兄弟选择器画分隔线，滤空的轮若留在 DOM 里就会留下一段空当 + 一条虚线。
+   * 顺带用它判定「消息在、只是被口径滤掉了」的空态提示。
+   */
+  const visible = useMemo(
+    () => parsed
+      .map((t) => ({
+        users: view === 'agent' ? [] : t.users,
+        // 上下文注入既不是「我」发的、也不是模型说的（宿主自动带进来），只在全部视图里出现
+        injects: view === 'all' ? t.injects : [],
+        proc: view === 'user' ? [] : t.proc,
+        answer: view === 'user' ? null : t.answer,
+        notice: view === 'user' ? null : t.notice,
+      }))
+      .filter((t) => t.users.length > 0 || t.injects.length > 0
+        || t.proc.length > 0 || !!t.answer || !!t.notice),
+    [parsed, view],
+  )
   /** DOM 里还有被窗口裁掉的更早轮（无需请求宿主，直接放大窗口即可） */
   const hasHiddenInDom = hiddenTurns > 0
   const canLoadOlder = hasHiddenInDom || (hasMore && !!onLoadOlder)
@@ -747,6 +784,10 @@ export function MsgList({
       {messages.length === 0 && (
         <div className="ts-hint">{emptyText ?? '等待会话消息…'}</div>
       )}
+      {/* 消息在、只是被当前视图滤空了：明说是口径问题，别让人以为会话没内容 */}
+      {messages.length > 0 && visible.length === 0 && (
+        <div className="ts-hint">{VIEW_EMPTY[view]}</div>
+      )}
       {(canLoadOlder || loadingOlder) && (
         <div className="ts-msgs-topbar">
           {loadingOlder ? (
@@ -759,7 +800,7 @@ export function MsgList({
           {hasHiddenInDom && <span className="ts-dim">已折叠更早 {hiddenTurns} 轮</span>}
         </div>
       )}
-      {parsed.map((t, ti) => (
+      {visible.map((t, ti) => (
         <div className="ts-turn" key={ti}>
           {t.users.map((m, i) => (
             <div className="ts-msg-block ts-msg-block-user" key={`u${i}`}>

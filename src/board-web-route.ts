@@ -237,6 +237,59 @@ function normalizeWorkspace(rawPath?: string | null): string {
   return p
 }
 
+// —— 文件系统路径工具（目录浏览专用）———————————————————————
+//
+// 注意：normalizeWorkspace 是「工作区标识」规范化（正斜杠 + 盘符小写 + 去尾斜杠），
+// 它会把根目录 "/" 归一成空串、把 Windows 盘符根 "C:\" 归一成 "c:"，直接拿它当
+// 文件系统路径用是错的——于是 Mac 上点「根目录」会掉回 HOME（顶端永远停在 /Users），
+// Windows 上又会拼出根本不存在的 "/c:/Users"。目录浏览另用下面这组：保留根、保留盘符，
+// 只做展示层规整，真正的解析交给 path.resolve。
+
+const IS_WINDOWS = process.platform === 'win32'
+
+/** 文件系统根列表：Windows 上是所有真实存在的盘符，类 Unix 上是 "/"。 */
+function fsRoots(): string[] {
+  if (!IS_WINDOWS) return ['/']
+  const roots: string[] = []
+  for (let c = 65; c <= 90; c += 1) {
+    const drive = `${String.fromCharCode(c)}:/`
+    try {
+      if (fs.statSync(drive).isDirectory()) roots.push(drive)
+    } catch { /* 该盘符不存在 */ }
+  }
+  return roots.length > 0 ? roots : ['C:/']
+}
+
+/** 把请求参数解析成可被 fs 使用的绝对路径；空值 / 无效值回落到默认起点（HOME，再不行根）。 */
+function fsResolve(rawPath?: string | null): string {
+  const raw = typeof rawPath === 'string' ? rawPath.trim() : ''
+  if (!raw) {
+    const home = process.env.HOME || process.env.USERPROFILE || ''
+    if (home) {
+      try { if (fs.statSync(home).isDirectory()) return home } catch { /* 回落 */ }
+    }
+    return IS_WINDOWS ? fsRoots()[0] : '/'
+  }
+  // 纯盘符（"c:" / "C:/" / "C:\\"）→ 该盘根目录。path.resolve('c:') 在 Windows 上会落到
+  // 「C 盘当前目录」而不是根，必须单独识别。
+  if (/^[a-zA-Z]:[\\/]*$/.test(raw)) return `${raw[0].toUpperCase()}:/`
+  return path.resolve(raw.replace(/\\+/g, '/'))
+}
+
+/** 展示用路径：统一正斜杠、盘符大写、根保留尾斜杠，其余去尾斜杠。 */
+function fsDisplay(p: string): string {
+  const s = p.replace(/\\+/g, '/').replace(/^([a-zA-Z]):/, (_, d: string) => `${d.toUpperCase()}:`)
+  if (s === '/') return '/'
+  if (/^[A-Za-z]:\/+$/.test(s)) return `${s[0].toUpperCase()}:/`
+  return s.replace(/\/+$/, '')
+}
+
+/** 上级目录；已在文件系统根上时返回 null。 */
+function fsParent(displayPath: string): string | null {
+  const parent = fsDisplay(path.dirname(displayPath))
+  return parent === displayPath ? null : parent
+}
+
 function writeJson(res: any, status: number, body: unknown): void {
   try {
     res.writeHead(status, JSON_HEADERS)
@@ -380,10 +433,11 @@ interface FsEntry {
 
 function listDirectories(rawPath?: string | null): {
   path: string
+  parent: string | null
+  roots: string[]
   entries: FsEntry[]
 } {
-  const fallback = process.env.HOME || process.cwd()
-  const target = normalizeWorkspace(rawPath) || normalizeWorkspace(fallback)
+  const target = fsResolve(rawPath)
 
   let stat: fs.Stats
   try {
@@ -409,10 +463,13 @@ function listDirectories(rawPath?: string | null): {
     try {
       isProject = PROJECT_MARKERS.some((m) => fs.existsSync(path.join(full, m)))
     } catch { /* noop */ }
-    out.push({ name: d.name, path: normalizeWorkspace(full), isProject })
+    out.push({ name: d.name, path: fsDisplay(full), isProject })
   }
   out.sort((a, b) => Number(b.isProject) - Number(a.isProject) || a.name.localeCompare(b.name, 'zh'))
-  return { path: target, entries: out.slice(0, 500) }
+  const display = fsDisplay(target)
+  // 把 parent / roots 一并返回：客户端不必再靠字符串切片猜父目录（Windows 盘符根
+  // "C:/" 的字符串切法会切出 "/c:" 这种不存在的路径）。
+  return { path: display, parent: fsParent(display), roots: fsRoots(), entries: out.slice(0, 500) }
 }
 
 function handleFs(req: any, res: any): void {

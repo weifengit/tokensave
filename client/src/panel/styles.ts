@@ -143,21 +143,30 @@ body.ts-hdesk-nochat [data-conversation-region="composer"] {
 .ts-side-icon { flex:none; font-size:14px; line-height:1; }
 .ts-side-label { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 
-/* 右侧簇（黄灯角标 + 呼吸灯圆点）：wide 右对齐，rail 跟随居中 */
-.ts-side-right { flex:none; margin-left:auto; display:inline-flex; align-items:center; gap:5px; }
+/* 右侧簇（角标 + 呼吸灯圆点）：wide 右对齐，rail 跟随居中。
+   padding + 对应负 margin = 悬停热区向四周扩大（跑马灯悬浮面板要“一碰到这片区域就弹”），
+   视觉尺寸不变，只变可触达范围（圆点本身只有 6px，直接命中太难）。 */
+.ts-side-right { flex:none; margin-left:auto; display:inline-flex; align-items:center; gap:5px; padding:8px 7px; margin-top:-8px; margin-bottom:-8px; margin-right:-7px; }
 .ts-side-right .ts-pulse { margin-left:0; }
 .ts-side-entry.rail .ts-side-right { margin-left:0; gap:3px; }
 
-/* —— 黄灯角标：warn>0 时挂在圆点旁，点它弹「需要处理的对话」清单（定位跳转）—— */
-.ts-warn-badge { flex:none; display:inline-flex; align-items:center; justify-content:center; min-width:15px; height:15px; padding:0 4px; border-radius:999px; background:#f59e0b; color:#1b1305; font-size:10px; font-weight:700; line-height:1; cursor:pointer; box-shadow:0 0 6px rgba(245,158,11,.85); animation:ts-pulse-breathe 1.6s ease-in-out infinite; }
-.ts-warn-badge:hover { filter:brightness(1.12); box-shadow:0 0 9px rgba(245,158,11,1); }
-.ts-warn-badge:focus-visible { outline:2px solid rgba(96,165,250,.85); outline-offset:2px; }
-/* rail（36px）里角标与 2 个圆点同排：固定 15px 宽（border-box 口径），保证不横向溢出按钮 */
-.ts-side-entry.rail .ts-warn-badge { box-sizing:border-box; width:15px; min-width:15px; height:14px; padding:0; font-size:9.5px; }
+/* —— 计数角标（同款两种色）：黄 = 需要处理的对话；蓝 = 未读的正常结束，点它弹各自清单 —— */
+.ts-side-badge { flex:none; display:inline-flex; align-items:center; justify-content:center; min-width:15px; height:15px; padding:0 4px; border-radius:999px; font-size:10px; font-weight:700; line-height:1; cursor:pointer; animation:ts-pulse-breathe 1.6s ease-in-out infinite; }
+.ts-side-badge.is-warn { background:#f59e0b; color:#1b1305; box-shadow:0 0 6px rgba(245,158,11,.85); }
+.ts-side-badge.is-done { background:#38bdf8; color:#052a3d; box-shadow:0 0 6px rgba(56,189,248,.9); }
+.ts-side-badge:hover { filter:brightness(1.12); }
+.ts-side-badge.is-warn:hover { box-shadow:0 0 9px rgba(245,158,11,1); }
+.ts-side-badge.is-done:hover { box-shadow:0 0 9px rgba(56,189,248,1); }
+.ts-side-badge:focus-visible { outline:2px solid rgba(96,165,250,.85); outline-offset:2px; }
+/* rail（36px）里角标与圆点同排：固定 15px 宽（border-box 口径），保证不横向溢出按钮；
+   两枚角标同现时圆点让位（JSX 侧按角标数递减呼吸点） */
+.ts-side-entry.rail .ts-side-badge { box-sizing:border-box; width:15px; min-width:15px; height:14px; padding:0; font-size:9.5px; }
 
 /* 清单浮层：portal 到 body + position:fixed（top/left 由 JSX 按按钮矩形给），
    所以 rail（56px 收起）与展开态都从按钮右缘飞出，不被侧边栏 overflow 裁剪 */
 .ts-warn-pop { position:fixed; z-index:60; width:300px; max-width:calc(100vw - 24px); max-height:60vh; display:flex; flex-direction:column; border-radius:12px; border:1px solid rgba(127,127,127,.35); background:rgba(24,27,33,.97); color:#e6e8eb; box-shadow:0 14px 40px rgba(0,0,0,.5); backdrop-filter:blur(12px) saturate(1.2); overflow:hidden; }
+/* 跑马灯悬浮面板：宽度按清单里**最长的那条对话标题**自适应（上限 560px，超了才省略号） */
+.ts-hover-pop { width:max-content; max-width:min(560px, calc(100vw - 24px)); }
 .ts-warn-pop-head { flex:none; display:flex; align-items:center; justify-content:space-between; gap:8px; padding:8px 10px 8px 12px; font-size:11.5px; font-weight:600; opacity:.8; border-bottom:1px solid rgba(127,127,127,.25); letter-spacing:.03em; }
 .ts-warn-pop-title { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 /* 头部「全部已读」：一键把清单里的都标上（黄灯随之回绿 / 第 3 点随之消隐） */
@@ -169,9 +178,10 @@ body.ts-hdesk-nochat [data-conversation-region="composer"] {
 .ts-warn-item:hover { background:rgba(245,158,11,.16); }
 .ts-warn-item:focus-visible { outline:1px solid rgba(96,165,250,.8); }
 .ts-warn-icon { flex:none; font-size:12px; line-height:1.55; }
-.ts-warn-body { min-width:0; display:flex; flex-direction:column; gap:2px; }
+.ts-warn-body { min-width:0; display:flex; flex-direction:column; gap:4px; }
 .ts-warn-title { font-size:12.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.ts-warn-sub { font-size:11px; opacity:.65; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+/* 第二行只留**项目名**（状态由左侧图标表达，极简不重复）：轻胶囊一眼分清归属 */
+.ts-warn-sub { align-self:flex-start; max-width:100%; box-sizing:border-box; font-size:10.5px; line-height:1.55; padding:0 7px; border-radius:999px; background:rgba(127,127,127,.15); border:1px solid rgba(127,127,127,.26); opacity:.9; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 /* 每一行 = 条目（点它跳转）+ 右侧「已读」小按钮（只标注不跳转） */
 .ts-warn-row { display:flex; align-items:stretch; gap:4px; }
 .ts-warn-row .ts-warn-item { flex:1; min-width:0; width:auto; }
@@ -185,7 +195,7 @@ body.ts-hdesk-nochat [data-conversation-region="composer"] {
 .ts-warn-cont.is-sent { background:rgba(74,222,128,.2); border-color:rgba(74,222,128,.6); color:#86efac; }
 .ts-warn-cont.is-error { background:rgba(248,113,113,.2); border-color:rgba(248,113,113,.6); color:#fca5a5; }
 .ts-warn-cont:focus-visible { outline:2px solid rgba(96,165,250,.85); outline-offset:1px; }
-@media (prefers-reduced-motion: reduce) { .ts-warn-badge { animation:none; opacity:1; } }
+@media (prefers-reduced-motion: reduce) { .ts-side-badge { animation:none; opacity:1; } }
 
 /* 呼吸灯：侧边栏「项目中心」入口的存活指示（3 个小圆点，wide 时右对齐）。
    绿 = 正常使用；黄 = 弹选择框 / 被故障中断；有对话在跑时依次闪烁（跑马灯）。 */
@@ -196,17 +206,9 @@ body.ts-hdesk-nochat [data-conversation-region="composer"] {
 .ts-pulse-warn .ts-pulse-dot { background:#f59e0b; box-shadow:0 0 6px rgba(245,158,11,.8); }
 /* 有对话正在跑：依次闪烁（跑马灯）——animationDelay 由 JSX 按序号给出 */
 .ts-pulse-run .ts-pulse-dot { animation:ts-pulse-chase 1.05s ease-in-out infinite; }
-/* 第 3 个圆点 = 「最近正常结束」指示（蓝、可点开清单）。
-   特异性 (0,3,0) 压过 .ts-pulse-run/.ts-pulse-warn 的 (0,2,0)，
-   所以无论绿/黄、跑马灯与否，它都保持自己的颜色与呼吸节奏；
-   ::after 把点击热区撑到 20px（视觉仍是 6px 圆点）。 */
-.ts-pulse .ts-pulse-done { position:relative; background:#38bdf8; box-shadow:0 0 6px rgba(56,189,248,.9); cursor:pointer; animation:ts-pulse-breathe 1.8s ease-in-out infinite; }
-.ts-pulse .ts-pulse-done::after { content:''; position:absolute; inset:-7px; border-radius:50%; }
-.ts-pulse .ts-pulse-done:hover { transform:scale(1.35); box-shadow:0 0 10px rgba(56,189,248,1); }
-.ts-pulse .ts-pulse-done:focus-visible { outline:2px solid rgba(96,165,250,.85); outline-offset:3px; }
 @keyframes ts-pulse-chase { 0%,100% { opacity:.22; transform:scale(.8) } 30% { opacity:1; transform:scale(1.15) } }
 @keyframes ts-pulse-breathe { 0%,100% { opacity:.45 } 50% { opacity:1 } }
-@media (prefers-reduced-motion: reduce) { .ts-pulse-dot { animation:none; opacity:1 } .ts-pulse .ts-pulse-done { animation:none; opacity:1 } }
+@media (prefers-reduced-motion: reduce) { .ts-pulse-dot { animation:none; opacity:1 } }
 .ts-btn-primary:hover { background:rgba(96,165,250,.4); box-shadow:0 0 12px rgba(96,165,250,.25); }
 .ts-btn-picked { background:rgba(74,222,128,.35); border-color:rgba(74,222,128,.85); font-weight:600; box-shadow:0 0 0 1px rgba(74,222,128,.35) inset; }
 .ts-btn-picked:hover { background:rgba(74,222,128,.5); }
@@ -455,13 +457,26 @@ body.ts-vsplit-dragging .ts-card { transition:none !important; animation:none !i
 .ts-modal-body { padding:14px 18px; overflow:auto; display:flex; flex-direction:column; gap:14px; }
 .ts-modal-foot { padding:12px 18px; border-top:1px solid rgba(127,127,127,.25); display:flex; justify-content:flex-end; gap:10px; }
 .ts-field-label { font-size:13px; font-weight:600; margin-bottom:6px; display:block; }
+/* 「添加项目」弹窗：固定尺寸（切换目录 / 点「上级」时面板不缩放、位置不动），
+   内容超出走内部滚动，内容少也撑住这么大。 */
+.ts-modal-addproj { width:min(680px,92%); height:min(680px,90vh); max-height:90vh; }
+.ts-modal-addproj .ts-modal-body { flex:1 1 auto; min-height:0; overflow:auto; }
 
 /* —— 目录浏览器 —— */
 .ts-fs { border:1px solid rgba(127,127,127,.3); border-radius:8px; overflow:hidden; }
-.ts-fs-crumb { display:flex; align-items:center; gap:6px; padding:7px 10px; background:rgba(127,127,127,.1); font-size:12px; flex-wrap:wrap; font-family:var(--dsh-font-mono, monospace); }
+.ts-fs-crumb { display:flex; align-items:center; gap:6px; padding:7px 10px; background:rgba(127,127,127,.1); font-size:12px; flex-wrap:nowrap; font-family:var(--dsh-font-mono, monospace); }
+/* 面包屑本体：单行不换行（换行会让目录栏高度随路径长短变化、连带面板跳动），过长横向滚动 */
+.ts-fs-crumbs { display:flex; align-items:center; gap:6px; flex:1 1 auto; min-width:0; overflow-x:auto; white-space:nowrap; }
+.ts-fs-rooticon { opacity:.6; cursor:pointer; }
+.ts-fs-sep { opacity:.4; cursor:default; }
+/* 多盘符时的根切换芯片（Windows） */
+.ts-fs-drive { padding:1px 7px; border-radius:99px; border:1px solid rgba(127,127,127,.35); opacity:.75; cursor:pointer; }
+.ts-fs-drive:hover { opacity:1; }
+.ts-fs-drive-on { opacity:1; border-color:rgba(96,165,250,.7); background:rgba(96,165,250,.16); }
 .ts-fs-crumb span { cursor:pointer; opacity:.8; }
 .ts-fs-crumb span:hover { opacity:1; text-decoration:underline; }
-.ts-fs-list { max-height:240px; overflow:auto; }
+/* 固定高度：目录内容多少都一个高度（少内容也不塔），多出的在框内滚动 */
+.ts-fs-list { height:260px; overflow:auto; }
 .ts-fs-item { display:flex; align-items:center; gap:8px; padding:6px 12px; cursor:pointer; border:none; background:transparent; color:inherit; width:100%; text-align:left; font-size:13px; }
 .ts-fs-item:hover { background:rgba(127,127,127,.15); }
 .ts-fs-item .ts-tag { margin-left:auto; }
@@ -566,10 +581,21 @@ body.ts-vsplit-dragging .ts-card { transition:none !important; animation:none !i
 .ts-mainchat-head > .ts-head-title { justify-self:start; }
 .ts-mainchat-head > .ts-head-mid { justify-self:center; margin:0; }
 .ts-mainchat-head > .ts-card-actions { justify-self:end; margin-left:0; order:0; }
-.ts-mainchat-sub { font-size:10.5px; font-weight:400; opacity:.6; display:inline-flex; align-items:baseline; gap:5px; }
-.ts-msgstat { display:inline-flex; align-items:baseline; gap:3px; font-variant-numeric:tabular-nums; }
+/* 中间段 = 计数 + 视图开关（同格内两件）。窄卡片下允许横向滚动而不是把三键挤出去：
+   网格给它的上限就是 auto 列，overflow-x:auto 让 chip 可滑，不参与换行。 */
+.ts-mainchat-mid { font-size:10.5px; font-weight:400; opacity:.6; display:inline-flex; align-items:center; gap:7px; max-width:100%; overflow-x:auto; overflow-y:hidden; text-overflow:clip; white-space:nowrap; scrollbar-width:none; }
+.ts-mainchat-mid::-webkit-scrollbar { height:0; }
+.ts-msgstat { display:inline-flex; align-items:baseline; gap:3px; font-variant-numeric:tabular-nums; flex:none; }
 .ts-msgstat-k { font-size:9.5px; font-weight:400; opacity:.78; letter-spacing:.02em; }
-.ts-msgstat-sep { opacity:.38; }
+/* —— 视图开关（全部 / 我的 / 回复）——
+   与统计同一格：统计是「有多少」，开关是「看哪一档」。分段控件形态（共一个底槽、
+   当前档亮起），比三个独立按钮更能读出「互斥三选一」。 */
+.ts-view-tabs { flex:none; display:inline-flex; align-items:center; gap:1px; padding:1px; border-radius:7px; background:rgba(127,127,127,.16); border:1px solid rgba(127,127,127,.22); }
+.ts-view-tab { cursor:pointer; border:0; background:transparent; color:inherit; font:inherit; font-size:10.5px; line-height:1.5; padding:1px 7px; border-radius:5px; opacity:.6; white-space:nowrap; transition:background .15s ease, opacity .15s ease, color .15s ease; }
+.ts-view-tab:hover { opacity:.9; background:rgba(127,127,127,.2); }
+.ts-view-tab.is-on { opacity:1; font-weight:600; background:rgba(96,165,250,.28); box-shadow:0 0 0 1px rgba(96,165,250,.45) inset; }
+.ts-view-tab.is-on:hover { background:rgba(96,165,250,.38); }
+.ts-view-tab:focus-visible { outline:2px solid rgba(96,165,250,.85); outline-offset:1px; }
 /* 探索者窗口标题条中间信息 */
 .ts-win-mid { flex:0 1 auto; margin:0 auto; }
 
