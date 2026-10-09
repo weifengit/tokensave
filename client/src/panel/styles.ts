@@ -143,6 +143,33 @@ body.ts-hdesk-nochat [data-conversation-region="composer"] {
 .ts-side-icon { flex:none; font-size:14px; line-height:1; }
 .ts-side-label { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 
+/* 右侧簇（黄灯角标 + 呼吸灯圆点）：wide 右对齐，rail 跟随居中 */
+.ts-side-right { flex:none; margin-left:auto; display:inline-flex; align-items:center; gap:5px; }
+.ts-side-right .ts-pulse { margin-left:0; }
+.ts-side-entry.rail .ts-side-right { margin-left:0; gap:3px; }
+
+/* —— 黄灯角标：warn>0 时挂在圆点旁，点它弹「需要处理的对话」清单（定位跳转）—— */
+.ts-warn-badge { flex:none; display:inline-flex; align-items:center; justify-content:center; min-width:15px; height:15px; padding:0 4px; border-radius:999px; background:#f59e0b; color:#1b1305; font-size:10px; font-weight:700; line-height:1; cursor:pointer; box-shadow:0 0 6px rgba(245,158,11,.85); animation:ts-pulse-breathe 1.6s ease-in-out infinite; }
+.ts-warn-badge:hover { filter:brightness(1.12); box-shadow:0 0 9px rgba(245,158,11,1); }
+.ts-warn-badge:focus-visible { outline:2px solid rgba(96,165,250,.85); outline-offset:2px; }
+/* rail（36px）里角标与 2 个圆点同排：固定 15px 宽（border-box 口径），保证不横向溢出按钮 */
+.ts-side-entry.rail .ts-warn-badge { box-sizing:border-box; width:15px; min-width:15px; height:14px; padding:0; font-size:9.5px; }
+
+/* 清单浮层：portal 到 body + position:fixed（top/left 由 JSX 按按钮矩形给），
+   所以 rail（56px 收起）与展开态都从按钮右缘飞出，不被侧边栏 overflow 裁剪 */
+.ts-warn-pop { position:fixed; z-index:60; width:300px; max-width:calc(100vw - 24px); max-height:60vh; display:flex; flex-direction:column; border-radius:12px; border:1px solid rgba(127,127,127,.35); background:rgba(24,27,33,.97); color:#e6e8eb; box-shadow:0 14px 40px rgba(0,0,0,.5); backdrop-filter:blur(12px) saturate(1.2); overflow:hidden; }
+.ts-warn-pop-head { flex:none; padding:9px 12px; font-size:11.5px; font-weight:600; opacity:.75; border-bottom:1px solid rgba(127,127,127,.25); letter-spacing:.03em; }
+.ts-warn-pop-list { overflow:auto; padding:4px; display:flex; flex-direction:column; gap:2px; min-height:32px; }
+.ts-warn-item { display:flex; align-items:flex-start; gap:8px; width:100%; padding:7px 8px; border:0; border-radius:8px; background:transparent; color:inherit; font:inherit; text-align:left; cursor:pointer; }
+.ts-warn-item:hover { background:rgba(245,158,11,.16); }
+.ts-warn-item:focus-visible { outline:1px solid rgba(96,165,250,.8); }
+.ts-warn-icon { flex:none; font-size:12px; line-height:1.55; }
+.ts-warn-body { min-width:0; display:flex; flex-direction:column; gap:2px; }
+.ts-warn-title { font-size:12.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.ts-warn-sub { font-size:11px; opacity:.65; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.ts-warn-pop-foot { flex:none; padding:6px 10px; font-size:10.5px; opacity:.55; border-top:1px solid rgba(127,127,127,.2); }
+@media (prefers-reduced-motion: reduce) { .ts-warn-badge { animation:none; opacity:1; } }
+
 /* 呼吸灯：侧边栏「项目中心」入口的存活指示（3 个小圆点，wide 时右对齐）。
    绿 = 正常使用；黄 = 弹选择框 / 被故障中断；有对话在跑时依次闪烁（跑马灯）。 */
 .ts-pulse { flex:none; margin-left:auto; display:inline-flex; align-items:center; gap:4px; }

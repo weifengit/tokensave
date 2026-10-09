@@ -1079,7 +1079,6 @@ export function mountTokensaveWebRoutes(ctx: Context): void {
       try {
         const parsed = body ? JSON.parse(body) : {}
         const next = writeProjectScope(String(parsed?.workspace ?? ''))
-        console.log(`[dsh-tokensave] 项目作用域已发布: ${next.workspace || '(清除)'}`)
         writeJson(res, 200, { timestamp: Date.now(), ...next })
       } catch (error) {
         writeJson(res, 400, { error: 'invalid scope payload' })

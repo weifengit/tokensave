@@ -23,10 +23,21 @@
  *   - 绿 = 正常使用；黄 = 弹选择框 / 被故障中断（黄覆盖绿）；
  *   - 有对话正在跑 → 依次闪烁（跑马灯）；只有待处理时 → 同相呼吸。
  *   状态来源见 pulse.ts（含成本说明）。
+ *
+ * 黄灯角标（2026-10-09，用户反馈「黄色时找不到中断的任务」）：
+ *   `warn > 0` 时圆点旁挂一枚黄色计数角标，点它弹出「需要处理的对话」清单，
+ *   点条目直达那条对话的工作台（enterProjectWorkbench，与项目中心序号点同入口）。
+ *   浮层 portal 到 body + position:fixed → rail（56px 收起态）与展开态都从按钮
+ *   右缘飞出，不受侧边栏宽度 / overflow 裁剪影响（Step 24 下拉被裁的教训）。
+ *   主按钮的「切换」语义不受影响：点角标 stopPropagation，其余区域照旧切换。
  */
 import React, { useEffect, useRef, useState } from 'react'
-import { openControlRoom, getLiveScreen, onRequestProjectList, onRequestWorkbench } from './sessions'
+import { createPortal } from 'react-dom'
+import {
+  enterProjectWorkbench, getLiveScreen, onRequestProjectList, onRequestWorkbench, openControlRoom,
+} from './sessions'
 import { useActivityPulse } from './pulse'
+import type { WarnItem } from './pulse'
 
 /** 圆点数量（用户要求 3 个）。 */
 const DOT_COUNT = 3
@@ -37,6 +48,9 @@ const RAIL_MIN_WIDE = 30
  * 与 sessions.ts 的 NAV_SETTLE_MS 同量级（略短），避免两个窗口错位。
  */
 const NAV_LOCK_MS = 700
+/** 清单浮层宽高预算（clamp 定位时用）。 */
+const POP_W = 300
+const POP_H = 220
 
 /** 存活指示：3 个（或 2 个）小圆点。running 时依次闪烁（跑马灯），否则同相呼吸。 */
 function PulseDots({ tone, running, count }: { tone: 'ok' | 'warn'; running: boolean; count: number }) {
@@ -49,6 +63,77 @@ function PulseDots({ tone, running, count }: { tone: 'ok' | 'warn'; running: boo
         <i key={i} className="ts-pulse-dot" style={{ animationDelay: `${i * 0.16}s` }} />
       ))}
     </span>
+  )
+}
+
+/**
+ * 黄灯角标点开的「需要处理的对话」清单。
+ *
+ * portal 到 body、position:fixed（坐标由打开方按按钮矩形算好传入）：
+ * 收起（rail 56px）与展开两种状态下都是从按钮右缘向右飞出，不被侧边栏裁剪。
+ */
+function WarnPopover({
+  pos, items, onClose,
+}: { pos: { top?: number; bottom?: number; left: number }; items: WarnItem[]; onClose: () => void }) {
+  useEffect(() => {
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as HTMLElement | null
+      // 点在清单里 / 角标上：交给各自处理（角标自己负责开合）
+      if (t?.closest('.ts-warn-pop') || t?.closest('.ts-warn-badge')) return
+      onClose()
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+    }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [onClose])
+
+  const pick = (it: WarnItem) => {
+    try {
+      if (!enterProjectWorkbench(it.projectId, it.sessionId)) {
+        console.warn('[tokensave] 定位对话：没有可导航的目标', it)
+      }
+    } catch (e) {
+      console.warn('[tokensave] 定位对话失败', e)
+    }
+    onClose()
+  }
+
+  return createPortal(
+    <div
+      className="ts-warn-pop"
+      role="dialog"
+      aria-label="需要处理的对话"
+      style={{ top: pos.top, bottom: pos.bottom, left: pos.left }}
+    >
+      <div className="ts-warn-pop-head">需要处理的对话（{items.length}）</div>
+      <div className="ts-warn-pop-list">
+        {items.map((it) => (
+          <button
+            key={`${it.kind}:${it.sessionId}`}
+            type="button"
+            className="ts-warn-item"
+            title={`打开「${it.title || '未命名对话'}」的工作台，直达这条对话`}
+            onClick={() => pick(it)}
+          >
+            <span className="ts-warn-icon" aria-hidden="true">{it.kind === 'pending' ? '⏳' : '⚠️'}</span>
+            <span className="ts-warn-body">
+              <span className="ts-warn-title">{it.title || '（未命名对话）'}</span>
+              <span className="ts-warn-sub">
+                {it.project || '未知项目'} · {it.kind === 'pending' ? '待你确认' : '上一轮未正常结束'}
+              </span>
+            </span>
+          </button>
+        ))}
+      </div>
+      <div className="ts-warn-pop-foot">点条目直达那条对话的工作台 · Esc 关闭</div>
+    </div>,
+    document.body,
   )
 }
 
@@ -89,40 +174,100 @@ export function ControlRoomEntry({ wide }: { wide?: boolean }) {
     return () => ro.disconnect()
   }, [])
 
+  // —— 黄灯清单（角标 → 浮层）——
+  const [pop, setPop] = useState<{ top?: number; bottom?: number; left: number } | null>(null)
+  // 需要处理的对话都没了（处理完 / 被复核清掉）→ 自动收起
+  useEffect(() => {
+    if (pop && pulse.warn <= 0) setPop(null)
+  }, [pop, pulse.warn])
+
+  /**
+   * 开/关清单：贴着按钮定位（rail 与展开态同一套算法）。
+   *   横向：按钮右缘 + 8px（向右飞出，侧边栏再窄也不裁），越界朝窗口内收；
+   *   纵向：默认贴按钮下方；下方放不下就改用 bottom 锚到按钮上方（贴住，不留缝）。
+   */
+  const togglePop = (e: { stopPropagation: () => void }) => {
+    e.stopPropagation()
+    if (pop) {
+      setPop(null)
+      return
+    }
+    const r = btnRef.current?.getBoundingClientRect()
+    if (!r || (r.width === 0 && r.height === 0)) return
+    const left = Math.max(8, Math.min(r.right + 8, window.innerWidth - POP_W - 12))
+    const below = r.bottom + 6 + 140 <= window.innerHeight - 8
+    const above = r.top - 6 >= 140 + 8
+    const pos = below
+      ? { top: r.bottom + 6, left }
+      : above
+        ? { bottom: window.innerHeight - r.top + 6, left }
+        : { top: Math.max(8, Math.min(r.top, window.innerHeight - POP_H - 12)), left }
+    setPop(pos)
+  }
+
   const toDesk = screen === 'list'
   const head = toDesk ? '项目中心：回到工作台' : '项目中心：查看项目列表'
   const title = `${head}（再点一次可在两者间切换）${alive ? `\n\n${pulse.tip}` : ''}`
+  // rail 里角标要与圆点同排（36px 挤）：有角标时圆点最多留 2 个
+  const dots = !wide && pulse.warn > 0 ? Math.min(dotCount, 2) : dotCount
   return (
-    <button
-      ref={btnRef}
-      type="button"
-      className={`ts-side-entry${wide ? '' : ' rail'}`}
-      title={title}
-      aria-label={title}
-      onClick={() => {
-        // 连点防抖：导航在途（tab 尚未落定）时忽略后续点击。
-        // 否则第二次点击会在“旧屏幕”上算出反方向，把刚切过去的界面又拨回来。
-        if (navigatingRef.current) return
-        navigatingRef.current = true
-        window.setTimeout(() => { navigatingRef.current = false }, NAV_LOCK_MS)
-        // 意图即真值：点击瞬间就定住目标屏，按钮文案不再闪动（不等宿主回流）。
-        const target: 'list' | 'desk' = screen === 'list' ? 'desk' : 'list'
-        setScreen(target)
-        try {
-          if (!openControlRoom()) {
-            console.warn('[tokensave] 项目中心：没有可导航的会话，且没有已登记项目')
+    <>
+      <button
+        ref={btnRef}
+        type="button"
+        className={`ts-side-entry${wide ? '' : ' rail'}`}
+        title={title}
+        aria-label={title}
+        onClick={() => {
+          // 连点防抖：导航在途（tab 尚未落定）时忽略后续点击。
+          // 否则第二次点击会在“旧屏幕”上算出反方向，把刚切过去的界面又拨回来。
+          if (navigatingRef.current) return
+          navigatingRef.current = true
+          window.setTimeout(() => { navigatingRef.current = false }, NAV_LOCK_MS)
+          // 意图即真值：点击瞬间就定住目标屏，按钮文案不再闪动（不等宿主回流）。
+          const target: 'list' | 'desk' = screen === 'list' ? 'desk' : 'list'
+          setScreen(target)
+          try {
+            if (!openControlRoom()) {
+              console.warn('[tokensave] 项目中心：没有可导航的会话，且没有已登记项目')
+            }
+          } catch (e) {
+            console.warn('[tokensave] 项目中心入口导航失败', e)
           }
-        } catch (e) {
-          console.warn('[tokensave] 项目中心入口导航失败', e)
-        }
-        // 宿主 tab 可能晚一拍才切过去，稍后再对一次账
-        window.setTimeout(() => setScreen(getLiveScreen()), NAV_LOCK_MS)
-      }}
-    >
-      {/* 收起态有存活对话时：圆点**顶替**图标；否则照旧显示图标（用户要求） */}
-      {(!alive || wide) && <span className="ts-side-icon" aria-hidden="true">{toDesk ? '🧭' : '🗂️'}</span>}
-      {wide && <span className="ts-side-label">{toDesk ? '回到工作台' : '项目中心'}</span>}
-      {alive && <PulseDots tone={tone} running={running} count={dotCount} />}
-    </button>
+          // 宿主 tab 可能晚一拍才切过去，稍后再对一次账
+          window.setTimeout(() => setScreen(getLiveScreen()), NAV_LOCK_MS)
+        }}
+      >
+        {/* 收起态有存活对话时：圆点**顶替**图标；否则照旧显示图标（用户要求） */}
+        {(!alive || wide) && <span className="ts-side-icon" aria-hidden="true">{toDesk ? '🧭' : '🗂️'}</span>}
+        {wide && <span className="ts-side-label">{toDesk ? '回到工作台' : '项目中心'}</span>}
+        {alive && (
+          <span className={`ts-side-right${wide ? '' : ' rail'}`}>
+            {/* 黄灯角标：点它=看清单并跳转（stopPropagation，不触发布局切换） */}
+            {pulse.warn > 0 && (
+              <span
+                className="ts-warn-badge"
+                role="button"
+                tabIndex={0}
+                aria-haspopup="dialog"
+                aria-expanded={pop != null}
+                title={`需要处理的对话（${pulse.warn}）：点击查看清单，点条目直达那条对话\n\n${pulse.tip}`}
+                onClick={togglePop}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault()
+                    togglePop(e)
+                  }
+                }}
+              >
+                {pulse.warn}
+              </span>
+            )}
+            <PulseDots tone={tone} running={running} count={dots} />
+          </span>
+        )}
+      </button>
+      {pop && <WarnPopover pos={pop} items={pulse.items} onClose={() => setPop(null)} />}
+    </>
   )
 }
