@@ -6,7 +6,8 @@
   "main": "src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./client": "./dist/client.js"
+    "./client": "./dist/client.js",
+    "./package.json": "./package.json"
   },
   "dsh": {
     "bundle": {
@@ -24,7 +25,9 @@
     "build:client": "node scripts/build-client.mjs"
   },
   "dependencies": {
-
+    "@deepseek-ai/dsh-brand": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-llm": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-tools": "0.2.0-rc.2"
   },
   "devDependencies": {
     "@deepseek-ai/dsh-agent": "0.2.0-rc.2",

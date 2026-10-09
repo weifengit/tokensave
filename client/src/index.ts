@@ -27,6 +27,7 @@ import { mountBriefWindow, mountedExplorerCount } from './float/mount'
 import { ControlRoom } from './panel/ControlRoom'
 import { ProjectCenter } from './panel/ProjectCenter'
 import { ControlRoomEntry } from './panel/ControlRoomEntry'
+import { applyDockkitPatch } from './dockkit-patch'
 
 export const inject = { slots: true }
 
@@ -206,6 +207,12 @@ function wrapOpenSession(ui: any): boolean {
 
 export function apply(ctx: Context) {
   setClientContext(ctx)
+  // DockKit 补丁：关闭主对话窗口后，空出的 docked pane 自动合并（相邻窗口扩展，不残留空白/遮罩）
+  try {
+    applyDockkitPatch()
+  } catch (e) {
+    console.warn('[dockkit-patch] apply failed:', e)
+  }
   // #2 确定性入口：包装 uiWorkspace.replaceMain（所有导航的唯一汇合点），
   // 在宿主激活视图前把该会话绑到它所属项目的工作台。这样左侧边栏点会话/新建会话、
   // 工作台内切会话都自动落到工作台，而不是宿主默认的纯对话窗口。
