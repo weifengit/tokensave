@@ -533,13 +533,15 @@ export function HDesk({ project, sessionId }: Props) {
       setCard(item.id, { hidden: false })
     } else setStateOf(item.id, { hidden: false })
   }
-  /** 标题行一键切换：在「显示全部窗口」与「仅显示预览（如有）+ DSH 窗口」之间换挡。 */
+  /** 标题行一键切换：在「全部窗口」与「仅呈现一个窗口」之间换挡 ——
+   *  有预览只留「项目预览」，无预览只留「DSH 主对话」。 */
   const allShown = closedItems.length === 0
   const toggleAllWindows = () => {
     chatChoiceRef.current = true // 一键切换即显式选择，之后预览显隐不再自动干预主对话
     if (allShown) {
-      // 只保留「预览（如有）+ DSH 主对话」：其余卡片与探索者窗口全部关闭
-      const keep = new Set(['chat', ...(previewAvailable ? ['preview'] : [])])
+      // 只保留一个窗口：有预览 →「项目预览」；无预览 →「DSH 主对话」。
+      // 其余卡片与探索者窗口全部关闭 —— 主对话收进「已关闭」chip，可随时点回。
+      const keep = new Set([previewAvailable ? 'preview' : 'chat'])
       // 探索者「最大化」走的是独立浮层：收成 focus 时必须一并退出，否则浮层仍会盖着。
       setOverlayId(null)
       if (document.fullscreenElement) document.exitFullscreen().catch(() => {})
@@ -728,8 +730,8 @@ export function HDesk({ project, sessionId }: Props) {
             onClick={toggleAllWindows}
             title={
               allShown
-                ? '当前：全部窗口已呈现 · 点击只保留「项目预览（如有）+ DSH 主对话」'
-                : '当前：部分窗口已关闭 · 点击放出全部窗口（黑板 / 探索者 / 协作对话 / 协作收益）'
+                ? '当前：全部窗口已呈现 · 点击只保留「项目预览」（无预览时为「DSH 主对话」）'
+                : '当前：部分窗口已关闭 · 点击放出全部窗口（DSH 主对话 / 黑板 / 探索者 / 协作对话 / 协作收益）'
             }
           >
             一键切换

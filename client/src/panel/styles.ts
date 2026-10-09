@@ -107,7 +107,7 @@ body.ts-hdesk-nochat [data-conversation-region="composer"] {
 .ts-title-proj { flex:none; display:inline-flex; align-items:center; gap:8px; max-width:min(420px,42vw); padding:3px 13px; border-radius:11px; font-size:19px; font-weight:700; letter-spacing:.01em; background:linear-gradient(135deg, rgba(96,165,250,.24), rgba(96,165,250,.07)); border:1px solid rgba(96,165,250,.5); box-shadow:inset 0 0 0 1px rgba(96,165,250,.12); }
 .ts-title-proj-icon { flex:none; font-size:16px; opacity:.9; }
 .ts-title-proj-name { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-/* 一键切换按钮：显示全部窗口 ↔ 仅显示预览 + DSH 主对话 */
+/* 一键切换按钮：显示全部窗口 ↔ 仅显示预览（无预览时为 DSH 主对话） */
 .ts-btn-mode { flex:none; white-space:nowrap; }
 .ts-sub { opacity:.65; font-size:12px; }
 .ts-btn { cursor:pointer; border:1px solid rgba(127,127,127,.35); background:rgba(127,127,127,.12); color:inherit; border-radius:8px; padding:5px 12px; font-size:13px; line-height:1.4; transition:background .15s ease, border-color .15s ease, box-shadow .15s ease; }
