@@ -164,6 +164,44 @@ export function openSession(sessionId: string): boolean {
 }
 
 /**
+ * 直接给**指定会话**发一条消息（黄灯清单里的「继续」按钮用，免去跳转页面操作）。
+ *
+ * 走宿主 scoped conversation 面（与 dsh-client-ui-conversation 内部同一配方）：
+ *   `sessions.scope(id).get('conversation').send(text)`
+ * 会话还没 materialize scope 时先 retain 一把（retain 即 materialize），发完释放；
+ * scope 已存在则直接发。发送成功宿主会把它排成一轮 turn —— 该会话随即变“进行中”，
+ * 黄灯自动消（无需再标已读）。
+ * @param sessionId - 目标会话
+ * @param text - 原样作为一条文本块发送
+ * @throws 服务不可用 / 作用域不可用 / 宿主业务失败（原样抛给调用方展示）
+ */
+export async function sendToSession(sessionId: string, text: string): Promise<void> {
+  const ctx: any = getClientContext()
+  if (!ctx) throw new Error('客户端上下文不可用')
+  if (!text || !text.trim()) throw new Error('消息内容为空')
+  const sessions = svc(ctx, 'sessions')
+  if (!sessions || typeof sessions.scope !== 'function') throw new Error('sessions 服务不可用')
+
+  const deliver = async () => {
+    const scoped = sessions.scope(sessionId)
+    if (!scoped) throw new Error('会话作用域不可用')
+    const conversation = typeof scoped.get === 'function' ? scoped.get('conversation') : undefined
+    if (!conversation || typeof conversation.send !== 'function') throw new Error('conversation 服务不可用')
+    await conversation.send(text)
+  }
+
+  if (sessions.scope(sessionId)) {
+    await deliver()
+    return
+  }
+  if (typeof sessions.using === 'function') {
+    await sessions.using(sessionId, { source: 'tokensave' }, deliver)
+    return
+  }
+  await deliver()
+}
+
+/**
  * 归档一个会话（宿主 uiWorkspace.archiveSession）。
  *
  * 镜像原生左侧边栏的流程：先不带 stopActivity 试一次；宿主对**正在运行**的会话会

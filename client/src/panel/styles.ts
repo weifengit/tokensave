@@ -178,7 +178,13 @@ body.ts-hdesk-nochat [data-conversation-region="composer"] {
 .ts-warn-read { flex:none; align-self:center; border:1px solid rgba(127,127,127,.4); background:rgba(127,127,127,.14); color:inherit; font-size:10.5px; line-height:1; padding:5px 7px; border-radius:7px; cursor:pointer; opacity:.72; }
 .ts-warn-read:hover { opacity:1; background:rgba(127,127,127,.3); }
 .ts-warn-read:focus-visible { outline:2px solid rgba(96,165,250,.85); outline-offset:1px; }
-.ts-warn-pop-foot { flex:none; padding:6px 10px; font-size:10.5px; opacity:.55; border-top:1px solid rgba(127,127,127,.2); }
+/* 行内「继续」：不跳转，直接给那条对话发一条「继续」（黄灯清单里上一轮未正常结束的行才有） */
+.ts-warn-cont { flex:none; align-self:center; border:1px solid rgba(245,158,11,.6); background:rgba(245,158,11,.18); color:#fbbf24; font-size:10.5px; font-weight:600; line-height:1; padding:5px 7px; border-radius:7px; cursor:pointer; }
+.ts-warn-cont:hover:not(:disabled) { background:rgba(245,158,11,.34); }
+.ts-warn-cont:disabled { opacity:.8; cursor:default; }
+.ts-warn-cont.is-sent { background:rgba(74,222,128,.2); border-color:rgba(74,222,128,.6); color:#86efac; }
+.ts-warn-cont.is-error { background:rgba(248,113,113,.2); border-color:rgba(248,113,113,.6); color:#fca5a5; }
+.ts-warn-cont:focus-visible { outline:2px solid rgba(96,165,250,.85); outline-offset:1px; }
 @media (prefers-reduced-motion: reduce) { .ts-warn-badge { animation:none; opacity:1; } }
 
 /* 呼吸灯：侧边栏「项目中心」入口的存活指示（3 个小圆点，wide 时右对齐）。

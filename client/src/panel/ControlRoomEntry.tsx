@@ -42,6 +42,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
   enterProjectWorkbench, getLiveScreen, onRequestProjectList, onRequestWorkbench, openControlRoom,
+  sendToSession,
 } from './sessions'
 import { markPulseRead, useActivityPulse } from './pulse'
 
@@ -57,6 +58,8 @@ const NAV_LOCK_MS = 700
 /** 清单浮层宽高预算（clamp 定位时用）。 */
 const POP_W = 300
 const POP_H = 220
+/** 黄灯清单里「继续」按钮直接发出去的原文（宿主 max-tokens 提示就是让用户发「继续」） */
+const CONTINUE_TEXT = '继续'
 
 /** 浮层里的一行（黄灯清单与完成清单共用结构）。 */
 interface PopItem {
@@ -67,6 +70,8 @@ interface PopItem {
   icon: string
   title: string
   sub: string
+  /** 是否给「继续」按钮（只有上一轮没正常结束的那类才有意义） */
+  canContinue: boolean
 }
 
 type PopKind = 'warn' | 'done'
@@ -78,12 +83,14 @@ type PopKind = 'warn' | 'done'
  * 收起（rail 56px）与展开两种状态下都是从按钮右缘飞出，不被侧边栏裁剪。
  */
 function ItemPopover({
-  pos, kind, items, onPick, onClose,
+  pos, kind, items, onPick, onContinue, onClose,
 }: {
   pos: { top?: number; bottom?: number; left: number }
   kind: PopKind
   items: PopItem[]
   onPick: (item: PopItem) => void
+  /** 直接给那条对话发「继续」（不跳转）；不传则不显示该按钮 */
+  onContinue?: (item: PopItem) => Promise<void>
   onClose: () => void
 }) {
   useEffect(() => {
@@ -106,6 +113,23 @@ function ItemPopover({
 
   const isWarn = kind === 'warn'
   const heading = isWarn ? `需要处理的对话（${items.length}）` : `最近正常结束的对话（${items.length}）`
+  /** 每行「继续」的发送状态（发完那条对话变进行中，行会随黄灯重算消失） */
+  const [sendState, setSendState] = useState<Record<string, 'sending' | 'sent' | 'error'>>({})
+  const [sendErr, setSendErr] = useState('')
+  const cont = async (it: PopItem) => {
+    if (!onContinue) return
+    const cur = sendState[it.key]
+    if (cur === 'sending' || cur === 'sent') return
+    setSendState((m) => ({ ...m, [it.key]: 'sending' }))
+    try {
+      await onContinue(it)
+      setSendState((m) => ({ ...m, [it.key]: 'sent' }))
+    } catch (e: any) {
+      setSendErr(String(e?.message ?? e))
+      setSendState((m) => ({ ...m, [it.key]: 'error' }))
+      console.warn('[tokensave] 清单里直接发送「继续」失败', e)
+    }
+  }
   return createPortal(
     <div
       className="ts-warn-pop"
@@ -141,6 +165,28 @@ function ItemPopover({
                 <span className="ts-warn-sub">{it.sub}</span>
               </span>
             </button>
+            {it.canContinue && (
+              <button
+                type="button"
+                className={`ts-warn-cont${sendState[it.key] ? ` is-${sendState[it.key]}` : ''}`}
+                disabled={sendState[it.key] === 'sending' || sendState[it.key] === 'sent'}
+                title={sendState[it.key] === 'error'
+                  ? `发送失败：${sendErr}（点「重试」再发一次）`
+                  : '不跳转：直接给这条对话发一条「继续」，让它接着输出'}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  void cont(it)
+                }}
+              >
+                {sendState[it.key] === 'sending'
+                  ? '…'
+                  : sendState[it.key] === 'sent'
+                    ? '✓'
+                    : sendState[it.key] === 'error'
+                      ? '重试'
+                      : '继续'}
+              </button>
+            )}
             <button
               type="button"
               className="ts-warn-read"
@@ -154,11 +200,6 @@ function ItemPopover({
             </button>
           </div>
         ))}
-      </div>
-      <div className="ts-warn-pop-foot">
-        {isWarn
-          ? '点条目直达那条对话并标为已读；「已读」只标注不跳转 · Esc 关闭'
-          : '点条目直达那条对话并标为已读；标完该点消隐 · Esc 关闭'}
       </div>
     </div>,
     document.body,
@@ -312,6 +353,7 @@ export function ControlRoomEntry({ wide }: { wide?: boolean }) {
     icon: i.kind === 'pending' ? '⏳' : '⚠️',
     title: i.title || '（未命名对话）',
     sub: `${i.project || '未知项目'} · ${i.kind === 'pending' ? '待你确认' : '上一轮未正常结束'}`,
+    canContinue: i.kind === 'failed'
   }))
   const doneItems: PopItem[] = pulse.done.map((d) => ({
     key: d.key,
@@ -320,6 +362,7 @@ export function ControlRoomEntry({ wide }: { wide?: boolean }) {
     icon: '✅',
     title: d.title || '（未命名对话）',
     sub: `${d.project || '未知项目'} · 已正常结束`,
+    canContinue: false
   }))
 
   return (
@@ -391,6 +434,7 @@ export function ControlRoomEntry({ wide }: { wide?: boolean }) {
           kind={pop.kind}
           items={pop.kind === 'warn' ? warnItems : doneItems}
           onPick={(it) => pick(pop.kind, it)}
+          onContinue={async (it) => { await sendToSession(it.sessionId, CONTINUE_TEXT) }}
           onClose={() => setPop(null)}
         />
       )}
