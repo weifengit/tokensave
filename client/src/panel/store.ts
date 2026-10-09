@@ -324,6 +324,12 @@ function readOpenedMap(): Record<string, string> {
 /** 记住某会话当前打开的项目；传 null 表示退回项目列表（清除记忆）。 */
 export function rememberOpenedProject(sessionId: string, projectId: string | null): void {
   if (!sessionId) return
+  // 内存快路径（性能关键）：sweepProjectSessionBindings 每 5 秒会对**每个**项目下的
+  // **每个**会话调一次本函数（5 项目 × 30 会话 ≈ 150 次/5s）。若值没变就直接返回，
+  // 跳过 readOpenedMap 的 getItem + JSON.parse + stringify + setItem 四步同步 I/O——
+  // 这在忙碌的机器上是切会话卡顿的明确来源之一。
+  const known = openedBySession.get(sessionId)
+  if (projectId ? known === projectId : known === undefined) return
   if (projectId) openedBySession.set(sessionId, projectId)
   else openedBySession.delete(sessionId)
   try {

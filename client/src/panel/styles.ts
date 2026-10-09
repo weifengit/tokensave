@@ -85,6 +85,16 @@ body.ts-hdesk-dock [data-conversation-region="composer"] {
   background: transparent !important;
 }
 
+/* —— 工作台「DSH 主对话卡未呈现」时：**整条隐藏**宿主输入条 ——
+   主对话卡被关闭/收起后输入条不再停靠；若放它回宿主原位，就会独自悬在预览/台面
+   下方（连同模型名 · 费用 · 上下文占比 · 步数 · token 缓存等状态行）。用户要求此时
+   界面里不出现任何对话框（像「项目中心」页那样）。
+   用 display:none 而非 unmount：恢复主对话卡（标题行「＋ DSH 主对话」chip / 一键切换）
+   即原样回来，宿主状态不丢。类名由 HDesk 在主对话卡未停靠期间加到 body。 */
+body.ts-hdesk-nochat [data-conversation-region="composer"] {
+  display: none !important;
+}
+
 /* —— 通用条/按钮 —— */
 .ts-bar { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
 .ts-bar-right { margin-left:auto; flex:0 1 auto; min-width:0; }
@@ -199,8 +209,12 @@ body.ts-hdesk-dock [data-conversation-region="composer"] {
 .ts-sess-item.active { background:rgba(96,165,250,.24); box-shadow:inset 0 0 0 1px rgba(96,165,250,.5); }
 .ts-sess-item:focus-visible { outline:2px solid rgba(96,165,250,.8); outline-offset:-2px; }
 /* 右侧插槽：固定在行尾（margin-left:auto）。空闲时显示时间（右对齐），
-   悬浮时换成两个按钮；插槽宽度固定（min-width），互换不会改变行宽。 */
-.ts-sess-slot { flex:none; margin-left:auto; display:inline-flex; align-items:center; justify-content:flex-end; min-width:64px; }
+   悬浮时换成两个按钮。
+   **高度恒定 24px**（关键修复）：时间文字约 13px、按钮（13px + 上下 padding 5px）约 23px，
+   若不锁高，鼠标扫过每一行都会在「文字 ↔ 按钮」互换时把该行撑高约 8~10px，
+   下方所有行被逐行顶动——正是「鼠标上下移动时对话清单抖动」的根因。
+   锁高后两种状态都居中容纳，行高恒为 7+24+7=38px，悬浮零回流。 */
+.ts-sess-slot { flex:none; margin-left:auto; display:inline-flex; align-items:center; justify-content:flex-end; min-width:64px; height:24px; }
 .ts-sess-time { font-size:10.5px; opacity:.5; font-variant-numeric:tabular-nums; white-space:nowrap; }
 /* 时间已右对齐、独立成列（不需要跟在标题后的分隔符） */
 .ts-sess-rowops { display:none; align-items:center; gap:2px; }
@@ -419,6 +433,10 @@ body.ts-vsplit-dragging .ts-card { transition:none !important; animation:none !i
 .ts-desk-right { grid-column:3; }
 .ts-desk-board { grid-column:2; min-height:0; min-width:0; display:flex; flex-direction:column; }
 .ts-desk-chat { grid-column:2; min-height:0; min-width:0; display:flex; flex-direction:column; position:relative; border:1px solid rgba(127,127,127,.3); border-radius:9px; background:rgba(127,127,127,.07); padding:8px; box-sizing:border-box; }
+/* 主对话卡未呈现（已关闭/铺满浮层）时，中下格的外框一并撤掉：它自带 border/padding
+   （供输入条内缩停靠），卡片不在时就是一个悬着的空框。只呈现预览时 HDesk 干脆不渲染
+   .ts-desk；这里兜底「H 台模式下关掉主对话」的情况。 */
+.ts-desk-chat-empty { border:0; background:transparent; padding:0; }
 
 /* —— 卡片外壳（黑板 / 主对话 / 协作对话 / 协作收益 共用）——
    卡片的占位（高度/宽度）由外壳承担，内层组件一律 flex:1 填满外壳。 */
@@ -524,6 +542,14 @@ body.ts-vsplit-dragging .ts-card { transition:none !important; animation:none !i
    因此回复块改为拉伸满宽，不再留右侧那一小块空白） */
 .ts-msg-assistant { align-self:stretch; background:rgba(127,127,127,.14); border-radius:8px 8px 8px 2px; padding:5px 9px; max-width:none; white-space:pre-wrap; word-break:break-word; }
 .ts-msg-tool, .ts-msg-system { align-self:stretch; opacity:.62; font-size:11px; border-left:2px solid rgba(127,127,127,.5); padding:2px 8px; }
+/* —— 每条消息的发出时间（用户气泡 / 助手回答 / 过程项 / 注入项）——
+   块容器：气泡与时间的 column flex；user 块整体右对齐、assistant 块拉伸满宽。 */
+.ts-msg-block { display:flex; flex-direction:column; gap:3px; min-width:0; }
+.ts-msg-block-user { align-self:flex-end; align-items:flex-end; }
+.ts-msg-block-assistant { align-self:stretch; }
+.ts-msg-time { font-size:10.5px; opacity:.5; font-variant-numeric:tabular-nums; white-space:nowrap; color:inherit; line-height:1.4; }
+.ts-msg-block-user .ts-msg-time { text-align:right; }
+.ts-proc-time { margin-left:auto; font-size:10px; opacity:.5; font-variant-numeric:tabular-nums; white-space:nowrap; flex:none; }
 .ts-msg-tool .ts-msg-role, .ts-msg-system .ts-msg-role { display:flex; align-items:center; gap:4px; }
 .ts-msg-toggle { padding:0 4px; font-size:11px; opacity:.7; }
 .ts-msg-preview { opacity:.85; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
@@ -565,8 +591,16 @@ body.ts-vsplit-dragging .ts-card { transition:none !important; animation:none !i
 .ts-inject .ts-proc-head:hover { background:rgba(52,211,153,.16); }
 .ts-inject-item { border-left-color:rgba(52,211,153,.45); }
 .ts-inject-item .ts-proc-role { color:rgba(52,211,153,.95); opacity:.9; }
-/* “回到最新”：粘性跟随被用户滚离底部后出现（不自动抢滚动） */
-.ts-jump-latest { position:sticky; bottom:6px; align-self:center; margin-top:-28px; z-index:2; padding:4px 12px; border-radius:99px; border:1px solid rgba(96,165,250,.6); background:rgba(24,27,33,.92); color:#e6e8eb; font:inherit; font-size:11.5px; cursor:pointer; box-shadow:0 4px 14px rgba(0,0,0,.4); backdrop-filter:blur(8px); }
+/* “回到最新”：粘性跟随被用户滚离底部后出现（不自动抢滚动）。
+   常驻 DOM（由 [data-visible] 控制可见性），不因 pinned 翻转而增删。
+   它带 margin-top:-28px，如果跟着 pinned 反复挂/卸，会反复改变滚动内容高度，
+   而高度又反过来影响「是否在底部」的判定——自激成底部附近的微抖 / 重影。
+   用 visibility 而非 display：仍占位，scrollHeight 恒定。 */
+/* 注：此处**不能用** backdrop-filter。
+   它是个 sticky 元素且位于滚动容器**内部**：滚动时浏览器每帧都要为它重新
+   模糊身后的内容，在 WebKit 上会留下未及时清除的旧帧——同样表现为「重影」。 */
+.ts-jump-latest { position:sticky; bottom:6px; align-self:center; margin-top:-28px; z-index:2; padding:4px 12px; border-radius:99px; border:1px solid rgba(96,165,250,.6); background:rgba(24,27,33,.98); color:#e6e8eb; font:inherit; font-size:11.5px; cursor:pointer; box-shadow:0 4px 14px rgba(0,0,0,.4); visibility:hidden; }
+.ts-jump-latest[data-visible] { visibility:visible; }
 .ts-jump-latest:hover { background:rgba(96,165,250,.35); }
 /* 任务列表 */
 .ts-rich-tasks { list-style:none; padding-left:2px; }
@@ -604,7 +638,13 @@ body.ts-vsplit-dragging .ts-card { transition:none !important; animation:none !i
 .ts-topic-brief { background:rgba(192,132,252,.22); border-color:rgba(192,132,252,.5); }
 
 /* —— 消息流列表（探索者窗口 / 主对话 / 简报共用） —— */
-.ts-chat-msgs { flex:1; min-height:0; overflow:auto; padding:10px; display:flex; flex-direction:column; gap:7px; }
+/* overflow-anchor:none —— 关键。
+   本容器里的 scrollTop 由我们自己的贴底循环（forceBottom）主动写入；
+   而浏览器的滚动锚定（scroll anchoring）也会在内容长高时自行修正 scrollTop。
+   两个写者来回拉扯 → 底部附近高频微抖，视觉上就是「重影」。
+   宿主的对话 scrollport 在跟随尾部时也是这么关的
+   （.EvIC1a_root[data-chat-following-tail] .EvIC1a_scroll{overflow-anchor:none}）。 */
+.ts-chat-msgs { flex:1; min-height:0; overflow:auto; overflow-anchor:none; padding:10px; display:flex; flex-direction:column; gap:7px; }
 
 /* —— 左栏：协作对话时间轴 —— */
 .ts-talk { border:1px solid rgba(127,127,127,.3); border-radius:9px; background:rgba(127,127,127,.07); display:flex; flex-direction:column; min-height:104px; overflow:hidden; }

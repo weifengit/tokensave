@@ -9,7 +9,7 @@
  * 项目列表本身、项目介绍的编辑、活跃序号点都在「项目中心」tab（ProjectCenter），
  * 本组件不再渲染列表——两个 tab 的切换见 sessions.ts 的 switchToView。
  */
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useLayoutEffect, useState } from 'react'
 import { injectProjectCenterStyles } from './styles'
 import { loadProjects, recallOpenedProject, rememberOpenedProject, subscribeProjects, syncProjectsFromServer } from './store'
 import type { ProjectRecord } from './store'
@@ -36,28 +36,52 @@ export function ControlRoom({ sessionId }: Props) {
   const [projects, setProjects] = useState<ProjectRecord[]>(() => loadProjects())
   // 跨来源同步：手机端（经 dsh-remote-mobile 网关，来源与桌面端不同）据服务端注册表
   // 水合出与桌面端一致的项目列表；服务端数据到达后广播 → 本组件重渲染。
+  //   - 首次 pull 延后 600ms：切会话的首帧优先，不与服务端水合抢网络/主线程；
+  //   - 内容未变则复用旧数组：否则每次 focus/广播都无条件 setState，带来大量无谓重渲染。
   useEffect(() => {
     const un = subscribeProjects(setProjects)
-    const pull = () => { void syncProjectsFromServer().then(() => setProjects(loadProjects())) }
-    pull()
-    window.addEventListener('focus', pull)
-    return () => { un(); window.removeEventListener('focus', pull) }
-  }, [])
-  const [openedId, setOpenedId] = useState<string | null>(null)
-
-  // 恢复上次打开的工作台（记忆只是 UI 偏好；会话归属由 HDesk 自己解析）。
-  // ControlRoom 会在切 tab / 切会话时重挂，因此这里就是「进入工作台」的落点。
-  useEffect(() => {
-    if (!sessionId) return
-    const remembered = recallOpenedProject(sessionId)
-    if (!remembered) return
-    if (!loadProjects().some((p) => p.id === remembered)) {
-      rememberOpenedProject(sessionId, null)
-      return
+    const pull = () => {
+      void syncProjectsFromServer().then(() => {
+        const next = loadProjects()
+        setProjects((prev) => (
+          prev.length === next.length
+          && prev.every((p, i) => p.id === next[i].id
+            && p.updatedAt === next[i].updatedAt && p.name === next[i].name)
+            ? prev
+            : next
+        ))
+      })
     }
-    setOpenedId(remembered)
-  }, [sessionId])
+    const timer = window.setTimeout(pull, 600)
+    window.addEventListener('focus', pull)
+    return () => { window.clearTimeout(timer); un(); window.removeEventListener('focus', pull) }
+  }, [])
 
+  /**
+   * 读该会话「上次打开的项目」记忆（惰性初始化与布局效果共用）。
+   * 记忆指向已删除的项目时顺手清除并返回 null——引导页才是那种情况的正确落点。
+   */
+  const restoreOpenedId = (sid?: string | null): string | null => {
+    if (!sid) return null
+    const remembered = recallOpenedProject(sid)
+    if (!remembered) return null
+    if (!loadProjects().some((p) => p.id === remembered)) {
+      rememberOpenedProject(sid, null)
+      return null
+    }
+    return remembered
+  }
+  // 惰性初始化：切会话时 ControlRoom 重挂，**首帧**直接按记忆进 H 台。
+  // 以前是 useState(null) + useEffect 恢复——effect 晚于首次绘制，首帧必然先闪一帧
+  // 「还没有选择项目」引导页，第二帧才切到工作台（用户反馈的闪现）。
+  const [openedId, setOpenedId] = useState<string | null>(() => restoreOpenedId(sessionId))
+
+  // 同实例换 sessionId（不重挂）的兜底：layout effect 在绘制前跑，同样不闪引导页。
+  // （重挂路径由上面的惰性初始化接住；两者都会在记忆缺失时清回 null——
+  //   旧实现会沿用上一个会话的项目，HDesk 的会话归属校验会反过来抢切会话。）
+  useLayoutEffect(() => {
+    setOpenedId(restoreOpenedId(sessionId))
+  }, [sessionId])
   // 「回到工作台」信号（自动绑定 / 侧边栏等入口）：恢复记忆里的项目，没有就取第一个，
   // 保证「再点一次能回去」始终成立。
   useEffect(() => onRequestWorkbench((targetSid) => {

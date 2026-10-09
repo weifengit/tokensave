@@ -11,6 +11,10 @@
  * - 中下格内嵌 DSH 主对话只读消息流（MainChat），并把宿主原生输入条
  *   （conversation.composer，每个 tab 常驻）position:fixed 停靠在消息流下方，
  *   卸载/切 tab 自动还原。
+ * - 有「项目预览」的项目：进入工作台默认**只呈现预览** —— DSH 主对话收进标题行
+ *   「已关闭」条的「＋ DSH 主对话」chip（点即恢复），其外框（.ts-desk-chat）与宿主
+ *   输入条一并隐藏（styles.ts 的 body.ts-hdesk-nochat）；台面空置时 .ts-desk 整块
+ *   不渲染、预览条撑满剩余高度 —— 界面里不出现任何对话框（与「项目中心」一致）。
  * - 顶部标题行（左→右）：项目名（显著徽标）→ 已关闭列表 → 一键切换 → 历史会话 / 新建会话。
  * - 工作台默认铺满，无宽度把手/滑块（宿主那套全局把手在进入工作台期间隐藏）。
  * - 黑板 / 主对话 / 协作对话 / 协作收益 四张卡都支持最小化、最大化、关闭；
@@ -302,20 +306,36 @@ function hostContentWidthPx(el: HTMLElement): number {
 
 /** 注意：`onBack` 仍保留在 Props 里（调用方照传），但标题行不再渲染返回按钮——
  *  返回项目列表改由左侧边栏的「项目中心」入口承担（用户要求左侧只留项目名）。 */
+// —— 切会话性能：按项目缓存探索者列表与预览探测结果 ——
+// conversation.view 按会话作用域重挂：切会话 = 整个 HDesk 重建。首帧若从空状态起步，
+// 探索者窗口/预览条会「先消失再出现」，且首轮网络与切换抢资源。
+// 用模块级缓存做首屏种子（切回来的瞬间即还原，不空窗、不闪），
+// 真正的网络结果延后 400~500ms 再到，刷新后覆盖。键为项目路径，不会串台。
+const EXPLORER_CACHE = new Map<string, TelemetrySession[]>()
+const DEVINFO_CACHE = new Map<string, ProjectInfo>()
+/** 首帧是否已有可用预览（只查模块缓存，不发请求）：供「有预览的项目默认只呈现预览」
+ *  做无闪烁种子——缓存命中时主对话首帧即收起，不用先闪出来再被收走。 */
+function cachedPreviewAvailable(path: string): boolean {
+  const info = DEVINFO_CACHE.get(path)
+  return !!info && absoluteUrl(info.devUrl || '') !== ''
+}
+
 export function HDesk({ project, sessionId }: Props) {
-  const [explorers, setExplorers] = useState<TelemetrySession[]>([])
+  const [explorers, setExplorers] = useState<TelemetrySession[]>(() => EXPLORER_CACHE.get(project.path) ?? [])
   const [winState, setWinState] = useState<Record<string, WinState>>({})
   const [overlayId, setOverlayId] = useState<string | null>(null)
   const [probeError, setProbeError] = useState<string | null>(null)
   // 项目预览：探测结果（devUrl / 是否在跑）、预览条高度、iframe 重挂计数
-  const [devInfo, setDevInfo] = useState<ProjectInfo | null>(null)
+  const [devInfo, setDevInfo] = useState<ProjectInfo | null>(() => DEVINFO_CACHE.get(project.path) ?? null)
   const [previewH, setPreviewH] = useState<number>(() => readPreviewHeight())
   const [previewReload, setPreviewReload] = useState(0)
   // 默认（未唤醒 tokensave、无探索者）只呈现「DSH 主对话」：黑板 / 协作对话 / 协作收益
   // 一律以「已关闭」形式列在标题行里，可单独点开恢复 —— 这正是「隐藏窗口明示」的落点。
+  // 例外：有项目预览的项目默认只呈现预览，主对话同样以 chip 形式留在标题行可恢复。
   const [cards, setCards] = useState<Record<string, CardState>>({
     board: { ...CARD_DEFAULT, hidden: true },
-    chat: CARD_DEFAULT,
+    // 有项目预览的项目：进工作台默认只呈现预览，主对话收进「已关闭」chip（点即恢复）
+    chat: { ...CARD_DEFAULT, hidden: cachedPreviewAvailable(project.path) },
     talk: { ...CARD_DEFAULT, hidden: true },
     save: { ...CARD_DEFAULT, hidden: true },
     preview: CARD_DEFAULT,
@@ -385,6 +405,7 @@ export function HDesk({ project, sessionId }: Props) {
     try {
       // 按当前项目路径收敛（与黑板同口径）；宿主侧过滤后为空会自动回退全量
       const list = await fetchExplorers(project.path)
+      EXPLORER_CACHE.set(project.path, list)
       setExplorers(list)
       reportExplorerCount(list.length)
       setProbeError(null)
@@ -394,9 +415,10 @@ export function HDesk({ project, sessionId }: Props) {
   }, [project.path])
 
   useEffect(() => {
-    probe()
+    // 首次探测延后 500ms：让路给切会话的首帧/主线程（首屏已有上面的缓存种子，不空窗）。
+    const first = window.setTimeout(probe, 500)
     const timer = setInterval(probe, 8_000)
-    return () => clearInterval(timer)
+    return () => { window.clearTimeout(first); clearInterval(timer) }
   }, [probe])
 
   // 项目预览的探针：解析 devUrl / 是否在监听。
@@ -408,16 +430,19 @@ export function HDesk({ project, sessionId }: Props) {
     const tick = async () => {
       const next = await fetchProjectInfo(project.path)
       if (!alive || !next) return
+      DEVINFO_CACHE.set(project.path, next)
       setDevInfo((prev) =>
         prev && prev.devUrl === next.devUrl && prev.devRunning === next.devRunning && prev.mtimeMs === next.mtimeMs
           ? prev
           : next,
       )
     }
-    void tick()
+    // 首次 tick 延后 400ms（同 probe）：首屏用缓存种子，网络让给切换本身。
+    const first = window.setTimeout(tick, 400)
     const timer = window.setInterval(tick, 10_000)
     return () => {
       alive = false
+      window.clearTimeout(first)
       window.clearInterval(timer)
     }
   }, [project.path])
@@ -471,7 +496,27 @@ export function HDesk({ project, sessionId }: Props) {
   /** 铺满的那张卡（含预览）；浮层独占渲染，网格里不再重复实例 */
   const maximizedCard = allCards.find((c) => cardOf(c.id).maximized)?.id ?? null
   const previewInStrip = previewAvailable && !previewState.hidden && !previewState.maximized
-  const showSplitter = previewInStrip && !previewState.collapsed
+  // —— DSH 主对话卡的呈现态（提前算：台面空置判定与停靠共用）——
+  // 铺满时停靠到浮层里的那张卡；收起/关闭时既不停靠，也**不留输入框**（见下方 nochat 标记）。
+  const chatState = cardOf('chat')
+  const chatMaximized = chatState.maximized
+  const chatDocked = chatMaximized || (!chatState.collapsed && !chatState.hidden)
+  // 用户手动收放过主对话（恢复 chip / 一键切换 / 卡片 ✕）后，预览的显隐不再替他做主。
+  const chatChoiceRef = useRef(false)
+  // 有预览 → 默认只呈现预览（主对话收进「已关闭」chip）；无预览 → 呈现主对话。
+  // 预览探测晚到（缓存未命中）或 dev server 停掉时在这里收/放一次。
+  useEffect(() => {
+    if (chatChoiceRef.current) return
+    setCards((prev) => {
+      const want = previewAvailable // 主对话默认隐藏 ⇔ 有可用预览
+      if (!!prev.chat?.hidden === want) return prev
+      return { ...prev, chat: { ...(prev.chat || CARD_DEFAULT), hidden: want } }
+    })
+  }, [previewAvailable])
+  // 台面空置：主对话未呈现（已关闭/铺满浮层），且没有探索者、其余卡片全关
+  // → 整块 .ts-desk 不渲染（不留空的中下格外框），预览条撑满标题行以下的全部高度。
+  const deskEmpty = compact && (chatState.hidden || chatState.maximized)
+  const showSplitter = previewInStrip && !previewState.collapsed && !deskEmpty
 
   // —— 标题行「已关闭列表」：卡片（含预览）与探索者窗口统一收口 ——
   // 全部窗口都呈现时 closedItems 为空 → 该区域自然消失（「只有全部呈现才消失」）。
@@ -483,12 +528,15 @@ export function HDesk({ project, sessionId }: Props) {
   ]
   /** 点 chip 恢复单个窗口（可选择性恢复）。 */
   const restoreWindow = (item: ClosedWindowItem) => {
-    if (item.kind === 'card') setCard(item.id, { hidden: false })
-    else setStateOf(item.id, { hidden: false })
+    if (item.kind === 'card') {
+      if (item.id === 'chat') chatChoiceRef.current = true
+      setCard(item.id, { hidden: false })
+    } else setStateOf(item.id, { hidden: false })
   }
   /** 标题行一键切换：在「显示全部窗口」与「仅显示预览（如有）+ DSH 窗口」之间换挡。 */
   const allShown = closedItems.length === 0
   const toggleAllWindows = () => {
+    chatChoiceRef.current = true // 一键切换即显式选择，之后预览显隐不再自动干预主对话
     if (allShown) {
       // 只保留「预览（如有）+ DSH 主对话」：其余卡片与探索者窗口全部关闭
       const keep = new Set(['chat', ...(previewAvailable ? ['preview'] : [])])
@@ -529,10 +577,6 @@ export function HDesk({ project, sessionId }: Props) {
   // 网格行数：黑板占 1..R-1，中下占 R；左右两竖跨满 —— 探索者增多即均分
   const rows = Math.max(left.length, right.length, 2)
   // 中下格随窗口数/布局变化 → 停靠持续跟随（deps 覆盖重排）
-  const chatState = cardOf('chat')
-  const chatMaximized = chatState.maximized
-  // 铺满时停靠到浮层里的那张卡；收起/关闭时不停靠（输入条回宿主原位）
-  const chatDocked = chatMaximized || (!chatState.collapsed && !chatState.hidden)
   useDockNativeComposer(
     chatMaximized ? overlayChatRef : chatCellRef,
     chatDocked,
@@ -550,6 +594,16 @@ export function HDesk({ project, sessionId }: Props) {
     return () => document.body.classList.remove('ts-hdesk-dock')
   }, [chatDocked])
 
+  // 主对话卡未呈现（已关闭/收起）时，输入条既不停靠、也不独自悬在预览/台面下方：
+  // 整条隐藏（同「项目中心」的做法，样式见 styles.ts 的 body.ts-hdesk-nochat）。
+  // 恢复主对话卡（标题行「＋ DSH 主对话」chip / 一键切换）即原样回来——
+  // display:none 不卸载节点，宿主状态不丢。用 layout effect：避免首帧闪一下输入条。
+  useLayoutEffect(() => {
+    if (chatDocked) return
+    document.body.classList.add('ts-hdesk-nochat')
+    return () => document.body.classList.remove('ts-hdesk-nochat')
+  }, [chatDocked])
+
   /** 卡片三键：构造后交给各卡片渲染进自己的标题条 */
   const actionsFor = (id: string, label: string) => {
     const st = cardOf(id)
@@ -559,7 +613,7 @@ export function HDesk({ project, sessionId }: Props) {
         label={label}
         onToggleCollapse={() => setCard(id, { collapsed: !st.collapsed })}
         onToggleMax={() => toggleMax(id)}
-        onHide={() => setCard(id, { hidden: true })}
+        onHide={() => { if (id === 'chat') chatChoiceRef.current = true; setCard(id, { hidden: true }) }}
       />
     )
   }
@@ -686,7 +740,12 @@ export function HDesk({ project, sessionId }: Props) {
             sessions={sessions}
             currentId={sessionId}
             onPick={(id) => {
-              if (id !== sessionId && !openSession(id)) {
+              if (id === sessionId) return
+              // 先写「已进入的工作台」记忆，再导航：ControlRoom 重挂时首帧就按记忆进 H 台。
+              // 等 5s 一次的 sweep 补记忆会留下闪现引导页的窗口（且记忆晚到时
+              // bindToProject 不一定发工作台信号，见 sessions.ts）。
+              rememberOpenedProject(id, project.id)
+              if (!openSession(id)) {
                 setProbeError('切换会话失败：会话导航服务不可用')
               }
             }}
@@ -708,7 +767,12 @@ export function HDesk({ project, sessionId }: Props) {
       {previewInStrip && (
         <div
           className="ts-preview-strip"
-          style={previewState.collapsed ? undefined : { height: previewH }}
+          style={previewState.collapsed
+            ? undefined
+            : deskEmpty
+              // 台面空置（只呈现预览）：预览条撑满标题行以下的全部高度
+              ? { flex: '1 1 auto', minHeight: 0 }
+              : { height: previewH }}
         >
           {cardShell('preview', (
             <PreviewPanel
@@ -748,6 +812,8 @@ export function HDesk({ project, sessionId }: Props) {
           原样保留（滚动位置、展开态、已加载的历史都不丢）。
           DOM 顺序把主对话放在 index 0：compact 下其余格子渲染成 false 也不会
           挤动它的位置；视觉位置仍由各格子自己的 grid-row/grid-column 决定。 */}
+      {/* 台面空置（只呈现预览）时整块不渲染：否则会留下空的中下格外框/空网格。 */}
+      {!deskEmpty && (
       <div
         className="ts-desk"
         style={compact
@@ -757,7 +823,7 @@ export function HDesk({ project, sessionId }: Props) {
         {/* 中下：DSH 主对话卡片 —— 消息流就地渲染 + 宿主原生输入条停靠。
             两种布局下都渲染在**同一个 child index**，因此布局切换时组件实例不重建。 */}
         <div
-          className="ts-desk-chat"
+          className={`ts-desk-chat${chatState.hidden || chatState.maximized ? ' ts-desk-chat-empty' : ''}`}
           style={compact ? { gridRow: '1', gridColumn: '1' } : { gridRow: String(rows) }}
           ref={chatCellRef}
         >
@@ -818,6 +884,7 @@ export function HDesk({ project, sessionId }: Props) {
           />
         )}
       </div>
+      )}
 
       {/* 卡片铺满浮层：覆盖整个工作台 */}
       {maximizedCard && (

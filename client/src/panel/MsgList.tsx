@@ -27,6 +27,19 @@ const MAX_TURNS = 40
 const TURNS_PER_PAGE = 20
 /** 距顶部多少像素内算「到顶」，触发回翻 */
 const TOP_LOAD_THRESHOLD = 32
+/** 明确「想往上翻」的按键：按下即上锁并脱离贴底跟随（与滚轮向上同理）。 */
+const UPWARD_KEYS = new Set(['ArrowUp', 'PageUp', 'Home'])
+/** 明确「想往下/回底部」的按键：按下即解除上滚闩锁。 */
+const DOWNWARD_KEYS = new Set(['ArrowDown', 'PageDown', 'End', ' '])
+/**
+ * 解除「上滚闩锁」所需的累计向下位移（像素）。
+ *
+ * 为什么不按单个事件判断：触控板一次上滚手势里常夹杂小幅反向 deltaY
+ * （惯性/噪声），若一见 deltaY>0 就解锁，闩锁会与「接近底部就重新贴底」
+ * 互相翻转——每帧 forceBottom 一次，表现为底部附近持续 2~3 秒的微小抖动
+ * （视觉上像「重影」）。累计一小段真实向下位移才解锁即可消除。
+ */
+const UNLATCH_DOWN_PX = 32
 /** 折叠行单行预览长度 */
 const PREVIEW = 120
 
@@ -86,6 +99,43 @@ function collapseOnBodyClick(close: () => void) {
   }
 }
 /**
+
+ * 消息发出时间（每条消息一行小字）。
+
+ * 数据源：StreamMsg.time（来自 SessionEvent.time，Unix ms），窗口重建与逐事件
+
+ * 两条路径都会带上它；缺失时本组件返回 null，不占位。
+
+ * 格式按「离现在多远」选粒度，与宿主对话 tab 的 clock 口径一致：
+
+ *   今天        → HH:mm
+
+ *   今年以内    → M月D日 HH:mm
+
+ *   跨年        → YYYY年M月D日 HH:mm
+
+ * title 始终挂完整本地时间戳，鼠标悬浮可看精确时刻。
+
+ */
+function MsgTime({ time, className }: { time?: number; className?: string }) {
+  if (typeof time !== 'number' || !Number.isFinite(time) || time <= 0) return null
+  const d = new Date(time)
+  const now = new Date()
+  const pad = (n: number) => String(n).padStart(2, '0')
+  const hm = `${pad(d.getHours())}:${pad(d.getMinutes())}`
+  const sameDay = d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate()
+  const text = sameDay
+    ? hm
+    : d.getFullYear() === now.getFullYear()
+      ? `${d.getMonth() + 1}月${d.getDate()}日 ${hm}`
+      : `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日 ${hm}`
+  return (
+    <span className={className ? `ts-msg-time ${className}` : 'ts-msg-time'} title={d.toLocaleString('zh-CN')}>
+      {text}
+    </span>
+  )
+}
+/**
  * 过程里的一条：默认一行预览，点 ▾ 展开全文。
  *
  * 思考（kind==='reasoning'）与工具同款收纳，但带「思考」标签且弱化显示——
@@ -98,6 +148,8 @@ function ProcItem({ msg }: { msg: StreamMsg }) {
     <div className={`ts-proc-item${isThink ? ' ts-proc-think' : ''}`}>
       <div className="ts-proc-item-head">
         <span className="ts-proc-role">{isThink ? '思考' : ROLE_LABELS[msg.role] || msg.role}</span>
+        {/* 过程项也带时间：每条工具/思考何时发生一目了然（用户要求“每条消息”） */}
+        <MsgTime time={msg.time} className="ts-proc-time" />
         <button
           className="ts-icon-btn ts-msg-toggle"
           onClick={() => setOpen((v) => !v)}
@@ -141,6 +193,7 @@ function InjectionRow({ items }: { items: StreamMsg[] }) {
             <div className="ts-proc-item ts-inject-item" key={i}>
               <div className="ts-proc-item-head">
                 <span className="ts-proc-role">{label(m)}</span>
+                <MsgTime time={m.time} className="ts-proc-time" />
               </div>
               <div className="ts-msg-full"><RichText text={m.content} /></div>
             </div>
@@ -173,6 +226,7 @@ function ProcessGroup({ items }: { items: StreamMsg[] }) {
         <span className="ts-proc-lead">过程 {items.length} 步</span>
         {thinks > 0 && <span className="ts-dim">思考 {thinks} 段</span>}
         {tools > 0 && <span className="ts-dim">工具 {tools} 次</span>}
+        <MsgTime time={items[items.length - 1]?.time} className="ts-proc-time" />
       </button>
       {open && (
         <div className="ts-proc-body" onClick={collapseOnBodyClick(() => setOpen(false))}>
@@ -358,10 +412,17 @@ export function MsgList({
     if (memo && !memo.bottom) {
       pinnedRef.current = false
       setPinned(false)
+      // 回到用户上次的阅读位置：属于「明确不贴底」，同样上锁，
+      // 否则重新挂载后会被贴底循环立刻拽回底部。
+      upwardRef.current = true
+      downPxRef.current = 0
       pendingRestoreRef.current = memo
       el.scrollTop = Math.min(memo.top, Math.max(0, el.scrollHeight - el.clientHeight))
       return
     }
+    // 贴底：解除上滚闩锁（切会话 / 无记忆时都要回到跟随状态）。
+    upwardRef.current = false
+    downPxRef.current = 0
     pinnedRef.current = true
     setPinned(true)
     pendingRestoreRef.current = null
@@ -433,29 +494,109 @@ export function MsgList({
    * 只有真实输入才算用户意图；程序化改 scrollTop 不算。
    */
   const userIntentAtRef = useRef(0)
+  /** 上一次 scroll 事件看到的 scrollTop：用来判断用户此刻在上滚还是下滚。 */
+  const lastTopRef = useRef<number | null>(null)
+  /**
+   * 「上滚闩锁」：用户明确往上翻之后置真，直到他确实向下走回底部才解除。
+   *
+   * 为什么需要闩锁而不是每帧重新判断：滚轮向上时贴底循环可能先一步把
+   * scrollTop 写回底部，随后的 scroll 事件量不到位移（movedUp 为假），
+   * 若此时按「接近底部」重新钉住，刚做出的上滚意图就被抹掉——这正是
+   * 「已经快到最底部了、想往上滚却粘在底部」的观感。
+   *
+   * 闩锁期间**绝不写 scrollTop**（见 onScroll / runSettle / layout effect），
+   * 因此不会与贴底循环形成「写回 → 重钉 → 再写回」的抖动回路。
+   */
+  const upwardRef = useRef(false)
+  /** 闩锁期间累计的向下位移：达到 UNLATCH_DOWN_PX 才解锁（抗触控板噪声）。 */
+  const downPxRef = useRef(0)
+
+  /** 贴底稳定化窗口的截止时刻与 rAF 句柄（见下方 runSettle）。 */
+  const settleUntilRef = useRef(0)
+  const settleRafRef = useRef(0)
+
+  /**
+   * 立刻脱离「贴底跟随」。
+   *
+   * 为什么要「立刻」而不是等 scroll 事件：用户上滚的那一帧里，贴底循环的
+   * rAF 可能已经先把 scrollTop 写回底部，随后的 scroll 事件就量不到位移，
+   * 于是又被判成「还在底部」而重新钉住——表现出来就是「粘在底部」。
+   * 所以滚轮/按键的**方向**一确认就当场停手。
+   */
+  const suspendFollow = useCallback(() => {
+    if (pinnedRef.current) {
+      pinnedRef.current = false
+      setPinned(false)
+    }
+    // 同时结束稳定化窗口：残留的 rAF 会继续 forceBottom，跟用户抢滚动条。
+    settleUntilRef.current = 0
+  }, [])
+
   useEffect(() => {
     const el = ref.current
     if (!el) return
     const mark = () => { userIntentAtRef.current = Date.now() }
+    /** 滚轮：向上立即上锁并脱附；向下累计到位后才解锁。 */
+    const onWheel = (e: WheelEvent) => {
+      mark()
+      if (e.deltaY < 0) {
+        upwardRef.current = true
+        downPxRef.current = 0
+        suspendFollow()
+      } else if (e.deltaY > 0 && upwardRef.current) {
+        downPxRef.current += e.deltaY
+        if (downPxRef.current >= UNLATCH_DOWN_PX) {
+          upwardRef.current = false
+          downPxRef.current = 0
+        }
+      }
+    }
+    /** 翻页/方向键：按键是离散的明确意图，直接上锁/解锁。 */
+    const onKeyDown = (e: KeyboardEvent) => {
+      mark()
+      if (UPWARD_KEYS.has(e.key)) {
+        upwardRef.current = true
+        downPxRef.current = 0
+        suspendFollow()
+      } else if (DOWNWARD_KEYS.has(e.key)) {
+        upwardRef.current = false
+        downPxRef.current = 0
+      }
+    }
     const opts = { passive: true, capture: true } as AddEventListenerOptions
-    const types = ['wheel', 'touchstart', 'touchmove', 'keydown', 'pointerdown', 'mousedown'] as const
+    const types = ['touchstart', 'touchmove', 'pointerdown', 'mousedown'] as const
+    el.addEventListener('wheel', onWheel, opts)
+    el.addEventListener('keydown', onKeyDown, opts)
     for (const t of types) el.addEventListener(t, mark, opts)
-    return () => { for (const t of types) el.removeEventListener(t, mark, opts) }
-  }, [])
+    return () => {
+      el.removeEventListener('wheel', onWheel, opts)
+      el.removeEventListener('keydown', onKeyDown, opts)
+      for (const t of types) el.removeEventListener(t, mark, opts)
+    }
+  }, [suspendFollow])
 
-  /** 上一次量到的尺寸（仅用于识别布局过渡期）。 */
-  const metricsRef = useRef<{ sh: number; ch: number } | null>(null)
-
-  /** 强制滚到底部（不改变 pinned 状态；调用方自己决定是否恢复跟随）。 */
+  /**
+   * 滚到底部，但**只在真的没到底时才写**。
+   *
+   * 为何要加这个判断：本函数由贴底稳定化循环按 rAF 频率调用。若无条件写
+   * `scrollTop`，即使值没变也会触发一次滚动提交；滚动锚定 / 滚动事件 /
+   * 渲染回调跟着再来一轮，就形成每帧一次的空写循环——底部附近的微抖。
+   * 值相等就跳过，循环自然静止。
+   */
   const forceBottom = useCallback(() => {
     const node = ref.current
-    if (!node) return
-    node.scrollTop = node.scrollHeight
-    metricsRef.current = { sh: node.scrollHeight, ch: node.clientHeight }
+    if (!node) return false
+    const target = node.scrollHeight - node.clientHeight
+    if (target - node.scrollTop <= 0.5) return false
+    node.scrollTop = target
+    return true
   }, [])
 
   /** 用户主动回到最新：滚到底并恢复跟随。 */
   const scrollToBottom = useCallback(() => {
+    // 用户明确要求回底部：解除上滚闩锁并恢复跟随。
+    upwardRef.current = false
+    downPxRef.current = 0
     forceBottom()
     pinnedRef.current = true
     setPinned(true)
@@ -467,14 +608,23 @@ export function MsgList({
    * （layout effect + ResizeObserver + 300ms 轮询），补一次往往赶在最终
    * 尺寸之前，于是留下几十像素偏差。用有界 rAF 窗口盯到尺寸稳定为止。
    */
-  const settleUntilRef = useRef(0)
-  const settleRafRef = useRef(0)
   const runSettle = useCallback(() => {
     settleRafRef.current = 0
     if (performance.now() >= settleUntilRef.current) return
     // 用**实时**的 pinned 状态，不能用渲染时的快照：用户一旦往上翻，
     // onScroll 会当场把 pinned 置为 false，循环必须立即停手。
-    if (pinnedRef.current) forceBottom()
+    // 这里还要顺手关掉稳定化窗口——否则残留的 rAF 会在用户上滚期间
+    // 继续 forceBottom，把他逐帧拽回底部（「像被拉住」）。
+    if (!pinnedRef.current) {
+      settleUntilRef.current = 0
+      return
+    }
+    // 写到底。forceBottom 已幂等：已经贴底时不写、不返回副作用，
+    // 所以本循环即使把窗口跑满也不会像以前那样逐帧空写、触发微抖。
+    //
+    // 窗口必须跑满而不能「一次不需写入就退出」：流式输出时内容每帧都在
+    // 长高，必须持续重新贴底才能跟随最新输出。
+    forceBottom()
     settleRafRef.current = requestAnimationFrame(runSettle)
   }, [forceBottom])
   /** 开启（或延长）一段贴底稳定化窗口。 */
@@ -484,37 +634,71 @@ export function MsgList({
   }, [runSettle])
   useEffect(() => () => { if (settleRafRef.current) cancelAnimationFrame(settleRafRef.current) }, [])
 
-
   const onScroll = () => {
     const el = ref.current
     if (!el) return
     const sh = el.scrollHeight
     const ch = el.clientHeight
-    const prev = metricsRef.current
-    const sizeChanged = prev !== null && (prev.sh !== sh || prev.ch !== ch)
-    metricsRef.current = { sh, ch }
+    const top = el.scrollTop
+    const prevTop = lastTopRef.current
+    lastTopRef.current = top
 
-    if (sh - el.scrollTop - ch <= NEAR_BOTTOM) {
-      // 到了底部：恢复跟随（不论是怎么到这里的）。
-      if (!pinnedRef.current) {
-        pinnedRef.current = true
-        setPinned(true)
-      }
-      return
+    // 刚发生过真实输入（滚轮 / 触控 / 键盘 / 拖滚动条）？
+    const freshIntent = Date.now() - userIntentAtRef.current < 900
+    // 位移方向（1px 容差抗亚像素抖动）。
+    const movedUp = prevTop !== null && top < prevTop - 1
+    const atBottom = sh - top - ch <= NEAR_BOTTOM
+
+    // 闩锁期间累计「真实向下位移」，与 onWheel 用**同一个**阈值解除。
+    //
+    // 这里曾是「1px 向下就解锁」，与滚轮路径的 32px 不一致：用户上滚时
+    // 只要出现 1px 的反向抖动（触控板惯性、亚像素重排）就解锁 → 立即被
+    // 判为到底而重新贴底 → forceBottom 写回底部 → 又产生向上位移 → 再解锁。
+    // 这个 1px 级的翻转回路就是「重影 / 持续 2~3s 的微抖」。
+    //
+    // 不附加 freshIntent 条件：闩锁期间我们自己绝不写 scrollTop，所以此刻
+    // 任何向下位移都是用户所为。加上时间窗反而会让「慢速拖滚动条回底部」
+    // （拖过 900ms）永远解不开锁。
+    if (upwardRef.current && prevTop !== null && top > prevTop) {
+      downPxRef.current += top - prevTop
     }
-    // 离开了底部：只有真实用户输入才算「用户自己往上翻」。
-    // 否则（布局钳位 / 回翻锚定）不动贴底状态，由稳定化循环补回去。
-    if (!sizeChanged && Date.now() - userIntentAtRef.current < 900) {
-      if (pinnedRef.current) {
-        pinnedRef.current = false
-        setPinned(false)
-      }
+
+    // 「真实上滚」必须优先于「接近底部」判定。
+    //
+    // 否则：距底 NEAR_BOTTOM 像素的这段带内，每一次上滚都会被重新置
+    // pinned=true → 贴底循环立刻把人拽回去。用户感受就是「已经快到最底部
+    // 了，想往上滚却像粘在底部」。
+    //
+    // 注意这里**不能**附加「尺寸没变」（旧条件 !sizeChanged）：流式输出期间
+    // scrollHeight 几乎每帧都在变，sizeChanged 恒为真，真实上滚会被当成布局
+    // 抖动丢掉、pinned 一直是 true —— 即「在最底部向上滚卡住、要非常大力」。
+    if (freshIntent && movedUp) {
+      upwardRef.current = true
+      downPxRef.current = 0
+      suspendFollow()
       rememberScroll()
       // 滚到顶部就往下回翻（只认真实用户滚动）
-      if (el.scrollTop <= TOP_LOAD_THRESHOLD) requestOlder()
+      if (top <= TOP_LOAD_THRESHOLD) requestOlder()
+      return
+    }
+
+    if (!atBottom) return
+
+    // 到了底部：只有「用户自己向下走回底部」才恢复跟随。
+    //
+    // 闩锁期间若仅因内容长高而落进这段带内，保持不动。
+    //
+    // 解锁条件是「累计向下走够了」（downPxRef，与滚轮同一阈值），
+    // 而不是任意一次 1px 抖动——后者会与重新贴底形成每帧翻转。
+    if (upwardRef.current && downPxRef.current < UNLATCH_DOWN_PX) return
+
+    upwardRef.current = false
+    downPxRef.current = 0
+    if (!pinnedRef.current) {
+      pinnedRef.current = true
+      setPinned(true)
     }
   }
-
   const jumpToBottom = () => {
     scrollToBottom()
     rememberScroll()
@@ -530,7 +714,15 @@ export function MsgList({
    * 只在 pinnedRef 为真（用户本来就在底部）时动手，不会抢用户往上翻的视口。
    */
   useLayoutEffect(() => {
-    if (pinnedRef.current) forceBottom()
+    // 只有用户本来就在底部时才贴底并开窗；他一旦上滚（pinned=false），
+    // 这里既不再贴底，也不该重新开一段稳定化窗口把他拽回去。
+    if (!pinnedRef.current) return
+    forceBottom()
+    // 仍然开窗：输入条高度是**异步**写入的（HDesk 分几步 + 300ms 轮询），
+    // 开窗才能盖住随后的尺寸变化。
+    //
+    // 不会因此长期空转：forceBottom 已幂等（到底就不写），runSettle 一旦
+    // 发现无需写入就立即结束窗口，所以这里续窗只是「有待修正时才续」。
     scheduleSettle()
   })
 
@@ -570,21 +762,40 @@ export function MsgList({
       {parsed.map((t, ti) => (
         <div className="ts-turn" key={ti}>
           {t.users.map((m, i) => (
-            <div className="ts-msg-user" key={`u${i}`}>{m.content}</div>
+            <div className="ts-msg-block ts-msg-block-user" key={`u${i}`}>
+              <div className="ts-msg-user">{m.content}</div>
+              <MsgTime time={m.time} />
+            </div>
           ))}
           <InjectionRow items={t.injects} />
           {t.proc.length > 0 && <ProcessGroup items={t.proc} />}
           {t.answer && (
-            <div className="ts-msg-assistant">
-              <RichText text={t.answer.content} />
+            <div className="ts-msg-block ts-msg-block-assistant">
+              <div className="ts-msg-assistant">
+                <RichText text={t.answer.content} />
+              </div>
+              <MsgTime time={t.answer.time} />
             </div>
           )}
           {t.notice && <TurnNoticeRow notice={t.notice.notice!} />}
         </div>
       ))}
-      {/* 用户滚上去看细节时给一个“回到最新”入口（不自动抢滚动） */}
-      {!pinned && messages.length > 0 && (
-        <button className="ts-jump-latest" onClick={jumpToBottom} title="回到最新">
+      {/* 用户滚上去看细节时给一个“回到最新”入口（不自动抢滚动）。
+         注意：**始终渲染**，只用属性控制可见性。
+         以前是 `!pinned && <button>`——按钮是滚动容器里的一个 flex 项，
+         它的增删会改变 scrollHeight，而 scrollHeight 又决定 atBottom，
+         atBottom 再翻转 pinned：形成「贴底↔离开底部」的自激回路，
+         表现为底部附近持续数秒的微抖 / 重影。常驻 DOM 后 scrollHeight 恒定，
+         回路断开。（visibility 不脱离文档流，仍占位，正是我们要的。） */}
+      {messages.length > 0 && (
+        <button
+          className="ts-jump-latest"
+          data-visible={pinned ? undefined : ''}
+          aria-hidden={pinned || undefined}
+          tabIndex={pinned ? -1 : undefined}
+          onClick={jumpToBottom}
+          title="回到最新"
+        >
           ↓ 回到最新
         </button>
       )}
