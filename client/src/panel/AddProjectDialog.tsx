@@ -31,7 +31,9 @@ function dirName(p: string): string {
   const clean = String(p || '').replace(/\/+$/, '')
   const idx = clean.lastIndexOf('/')
   if (idx <= 0) return '/'
-  return clean.slice(0, idx)
+  const parent = clean.slice(0, idx)
+  // Windows 盘符根：'C:/foo' 的父目录是 'C:/'（而不是 isAbsolute 为假的 'C:'）
+  return /^[A-Za-z]:$/.test(parent) ? `${parent}/` : parent
 }
 
 /** 把展示路径拆成面包屑段（Windows 盘符根 "C:/" → ["C:"]；POSIX "/Users/me" → ["Users","me"]）。 */
