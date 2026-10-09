@@ -147,6 +147,8 @@ let unitWake: (() => void) | null = null
 let stopFlag = false
 /** Web Audio 上下文（合成音用，惰性创建一次） */
 let synthCtx: AudioContext | null = null
+/** 播放代次：后开始的播放顶掉前一个时，旧循环不能把新标签清掉 */
+let playToken = 0
 
 /** 时长模式 → 毫秒（once = 0 表示只响一声；forever = Infinity） */
 function durationMs(s: SoundSettings): number {
@@ -267,6 +269,7 @@ export async function playRole(role: SoundRole, force = false): Promise<void> {
   unitWake = null
   if (wake) wake()
   stopFlag = false
+  const token = ++playToken
   setPlaying(role === 'done' ? '完成' : '中断')
   const started = Date.now()
   const limit = durationMs(s)
@@ -279,7 +282,8 @@ export async function playRole(role: SoundRole, force = false): Promise<void> {
       if (limit !== Infinity && Date.now() - started >= limit - 150) break
     }
   } finally {
-    if (playingLabel) setPlaying(null)
+    // 只有“最后开始的那次播放”才有资格清标签（切歌 / 新告警顶掉旧循环时不会误清新标签）
+    if (playToken === token) setPlaying(null)
   }
 }
 
@@ -300,4 +304,18 @@ export function initSoundBridge(): () => void {
     }
     stopSound()
   }
+}
+
+/**
+ * 目检 / 排查钩子（浏览器 console 里用，不进 UI）：
+ *   __tokensaveSound.get() / .set(patch) —— 读 / 改设置（即刻持久化）
+ *   __tokensaveSound.play('done'|'fail') —— 按当前设置试听
+ *   __tokensaveSound.stop() / .playing() —— 掐断 / 当前是否在响
+ */
+;(globalThis as any).__tokensaveSound = {
+  get: getSoundSettings,
+  set: setSoundSettings,
+  play: (role: SoundRole) => playRole(role, true),
+  stop: stopSound,
+  playing: () => playingLabel,
 }

@@ -2071,3 +2071,104 @@ projectId 沿用原值（session→项目映射不失效）。
 “不灵”多半不是状态机的问题，而是**热区太小**：一个 6px 高的目标，用户以为是 bug。
 把热区从“元素本身”扩大到“语义区域”，灵敏度问题往往一行 CSS 就解决了；
 而一旦面板宽度改自适应，定位 clamp 也要跟着用新的宽度上限，否则窄窗口下会顶出视口。
+
+## Step 58（2026-10-09）：项目卡片「已启动」升级为去调试超链接（预览 + 主对话两窗并存）
+
+**用户需求**：项目中心卡片模式里那枚【已启动 / 未启动】小标，表示该项目的「项目预览」服务
+是否已跑起来。现在要把它增强成**超链接**：已启动时鼠标悬浮其上显示为「去调试」，
+点它跳到对应工作台，且工作台里要**同时**包含【项目预览 + DSH 主对话】两个窗口。
+
+### 实现
+1. **超链接（ProjectCenter.tsx + styles.ts）**
+   - 已启动 → 渲染 `<a class="ts-dev-chip on ts-dev-chip-link">`，内里两段文字叠在同一个格子里：
+     `● 已启动`（常态）与 `去调试 →`（悬停/键盘聚焦）。用 `position:absolute` 叠放而不是替换文本，
+     **宽度取两者较大者**，悬停时不挤动旁边的「＋ 新会话 / 移除」按钮。
+   - 未启动 → 仍是不可点的灰标（没跑起来就没什么可调试的），文案与提示不变。
+   - 点它 `e.stopPropagation()`（否则卡片自己的「进工作台」也接一手，会按默认布局再进一次）
+     并 `enter(p, undefined, 'debug')`；带 Enter/Space 键盘可达。
+2. **意图传递（sessions.ts）**：`enterProjectWorkbench(projectId, targetSessionId?, intent?)`
+   新增第三参 `WorkbenchIntent = 'debug'`，经 `requestWorkbench(sessionId, intent, projectId)` 广播。
+3. **工作台呈现（HDesk.tsx）**：新增 `debug?: boolean` prop——为 true 时主对话卡**不**按
+   「有预览就默认收起」的规则隐藏（初始 `hidden: !debug && cachedPreviewAvailable(...)`），
+   并在预览探测/意图后到时把主对话放回来，于是预览条 + 分隔条 + 中下格主对话同时在场。
+
+### 关键坑：意图为什么不能用「一次性、读完即清」
+点「去调试」后 HDesk 的绑定 effect 会把会话换成**本项目自己的**会话，那一步会让 ControlRoom
+整个重建。第一版用「一次性意图」（读走即清）→ **第一个实例把意图读走了，真正渲染出来的
+那个实例什么也读不到**（实测：卡片点了、也进了工作台，但主对话没出来，仍是默认的只看预览）。
+改成 `peekWorkbenchIntent(projectId)`：**不清除**，带 15s TTL + 按项目过滤，
+清除点交给「下一次进入工作台」（`enterProjectWorkbench` 每次都调 `requestWorkbench`，
+普通进入不带 intent → 当场清空）。这样既不丢，也不会把「去调试」粘到之后每次进入。
+
+### 浏览器目检（无头 Chrome + agent-browser 连 3080，真实点击）
+| 项 | 实测 |
+|---|---|
+| 超链接形态 | 已启动的两张卡（compare-text / info_report）`chip` 的 tagName = `A`；未启动的 dsh / tokensave 仍是 `SPAN` ✓ |
+| 悬浮换字 | 移入前 state=1 / go=0；移入后 state=0 / go=1，`去调试 →` 变蓝（rgb(147,197,253)）、底色转蓝 ✓ |
+| 不挤动按钮 | 悬浮前后 chip 尺寸恒为 64×25，后面按钮位置不变 ✓ |
+| 点击进工作台 | 点 compare-text 的「去调试」→ 工作台 tab 激活、项目名 compare-text ✓ |
+| 两窗并存 | `preview: true` + `chat: true`，且「已关闭」条只剩 共享黑板/协作对话/协作收益（主对话不再列在里面）✓ |
+| 布局 | 预览条 [288,172,977,260] → 分隔条 → 主对话 [297,461,959,322]；输入条 fixed 停靠 [437,613,680,170]，body 带 `ts-hdesk-dock` ✓ |
+| 普通进入不受影响 | 点卡片正文 → preview=true / chat=false（仍是默认只看预览）✓ |
+| 不粘车 | 去调试 compare-text → 回中心普通点 info_report → chat=false；再点 info_report 去调试 → chat=true ✓（四例连测均正确）|
+| 其它 | console errors 空；`tsc` 全绿，`dist/client.js` 473,719B，需刷新页面 |
+
+### 教训
+「一次性」是个陷阱：只要这条路上任何一步会**重建组件**，第一个读到它的实例就是被卸载的那个，
+真正的消费者永远读不到。凡是跨导航传递的意图，要么用**不清除 + TTL + 作用域键**（本步的做法），
+要么把清除点明确地钉在“下一次同类导航”上，不能指望“读到即消费”。
+
+## Step 58（2026-10-09）：结局提示音（类 dsh-complete-notify）——完成/中断两套音、时长可调、面板可设、设置固化
+
+**用户需求**：①不同状态不同提示音；②完成与中断**不同音效且可自定义**；③**持续时长可自定义**；
+④设置入口放在**跑马灯悬浮面板「对话清单」上方**；⑤中断音效要我**从网络取**（用户没有）、
+完成音效可选、时长＝一声响/一分钟/一直响/自定义（分钟数手输）；⑥**设置固化**。
+
+### 素材（网络获取，公有领域）
+从 Wikimedia Commons 下载两段 **Public domain** 录音，ffmpeg 截取约 2 秒（尾部淡出）、
+单声道 44.1kHz、loudnorm 到 I=-16 LUFS、MP3 64kbps，再 base64 内嵌进 `sounds-data.ts`（免网络/免宿主路由）：
+- 完成：`File:Doorbell-classic-dingdong.ogg`（PD，原 266KB→21.4KB）
+- 中断：`File:Alarm or siren.ogg`（PD，原 279KB→18.2KB）
+另有两段 Web Audio 合成音（清脆提示 / 双短音，零文件）与「静音」。出处注释写在 `sounds-data.ts`。
+
+### 实现
+1. **`sound.ts`（新）**：设置（enabled / doneId / failId / duration / customMinutes / volume）
+   + 播放内核（录音走 `new Audio(dataUri)`，合成走 WebAudio 振荡器）+ 循环控制
+   （`once`=0ms、`minute`=60s、`forever`=直到手动停、`custom`=N×60s；`stopSound()` 随时掐断）。
+   - **播放代次 token**：新播放顶掉旧循环时，旧循环的 finally **不能**清掉新标签
+     （否则刚一切歌/新告警就把「正在响」状态清空——实测踩到过）。
+   - autoplay 约束：首次出声前需用户与页面交互过一次；被拦截时该声记 0ms 并**停止循环**（不空转）。
+   - 排查钩子 `__tokensaveSound`（get/set/play/stop/playing）。
+2. **`pulse.ts`**：新增 `onPulseAlert`（fail=中断/失败、done=正常完成）；在 `applyOutcome`
+   （**只在“观察到的停止”那条即时路上**）emit；`alertedKeys` 按 `session:turnAt:kind` 去重
+   ——同一轮绝不响第二次；**用户主动停止（aborted-user）不响**；历史结论（兜底扫描补出来的）不响。
+3. **`SoundPanel.tsx`（新）**：提醒开关 + 音量、完成/中断各一排（下拉 + ▶ 试听）、
+   时长下拉（自定义时出现分钟数输入）+ ■ 停止、一行提示；**改动即写 localStorage
+   `tokensave:sound.v1`**（刷新/重开都在）；点外部或 Esc 关闭。
+4. **`ControlRoomEntry.tsx`**：悬浮面板顶部加 `.ts-hover-tools` 工具行 ——
+   「🔔 提示音」在「对话清单」**上方**；正在响时同排出现「■ 停止完成/中断」；
+   挂载时 `initSoundBridge()` 一次 + 订阅 playing 状态。
+
+### 浏览器目检（无头 Chrome + agent-browser 连 3080，真实音频数据）
+| 项 | 实测 |
+|---|---|
+| 入口位置 | 悬浮面板第一行 = `🔔 提示音`，其下才是「对话清单（N）」✓ |
+| 设置面板 | 提醒[开|关]+音量滑条；完成/中断各[5 项下拉+▶]；时长[一声响/一分钟/一直响/自定义]+■；自定义时出现分钟数输入 ✓（252px、在视口内） |
+| 两套音效确实不同 | Audio 探针：完成=dingdong（len 28,503 / hash 364,945,806），中断=alarm（len 24,323 / hash 45,285,0063）✓ |
+| 播放/停止 | 可信点击 ▶ → `playing='完成'`、循环计数增长；点「■ 停止完成」→ 立刻 `playing=''` ✓ |
+| 告警桥 | `check(失败会话)` → 响**中断音**；伪造停止沿 + `completed` → 响**完成音**；同一轮第二次触发被去重不响 ✓ |
+| aborted-user | 伪造「用户主动停止」→ **不响** ✓ |
+| 时长 | `once`=播完即停；`forever`=循环到手动停（停后 units 不再增长）✓ |
+| 固化 | 改 成=chime/时长=自定义3分钟 → localStorage 立即写入；**刷新后** `get()` 与面板显示都还原 ✓ |
+| 错误 / 构建 | `errors` 空；`tsc` 全绿；`dist/client.js` ≈474KB（含两段 base64 音频，约 +52KB） |
+
+**踩坑记录**：①无头测试里 `el.click()`（JS 合成点击）**不算** autoplay 手势，必须用 CDP 真点击解锁，
+否则 `play()` 被拒 → 我们的循环会把这一声当 0ms 并停止（这是刻意设计，防止后台空转刷屏）；
+②HMR 会在重打包时重载页面，测试用的 `window.__played` 等全局会被清掉，取样前后要打标记确认没被重载；
+③期间并行会话把 HDesk.tsx 改到语法不完整，esbuild 构建失败约 1 分钟，等他们改完才出包（tsc 也一度只报他们的错）。
+
+### 教训
+「提示音」这种**不可见**的功能，验证必须换成可观测的量：用 Audio 探针记录 (长度, 哈希) 区分音源、
+用 `playing` 标签观察生命周期、用 localStorage 断言固化——否则“响没响、响的哪个、停没停”全靠耳朵，
+自动化里根本没法验。另外**切歌竞态**（旧播放的 finally 清掉新播放的标签）是异步状态机的经典坑，
+代次 token 一劳永逸。

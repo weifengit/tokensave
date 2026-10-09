@@ -35,26 +35,24 @@ import { useProjectSessions, openSession, startProjectSession, latestProjectSess
 import { getClientContext } from '../session-subscribe'
 import { rememberOpenedProject } from './store'
 import type { ProjectRecord } from './store'
+import type { CardState, WinState } from './desk-types'
+import { loadDeskPref, saveDeskPref, setDeskLocked } from './desk-layout'
+import type { DeskLayout } from './desk-layout'
 import { reportExplorerCount } from '../float/mount'
 
 import { PreviewPanel, absoluteUrl } from './PreviewPanel'
 interface Props {
   project: ProjectRecord
   sessionId: string
+  /**
+   * 本次进入是否为「去调试」（项目卡片上那枚启动标的超链接）。
+   *
+   * 由 ControlRoom 读**按项目留存**的意图（sessions.peekWorkbenchIntent）后传入，
+   * 而不是 HDesk 自己读：HDesk 会在换项目时重挂，自己读会把同一个意图吃掉两次、
+   * 让用户后来正常进入别的项目时也被当成「去调试」。
+   */
+  debug?: boolean
   onBack: () => void
-}
-
-interface WinState {
-  collapsed: boolean
-  hidden: boolean
-}
-
-/** 非探索者卡片的窗口状态（与探索者窗口同款语义：最小化 / 最大化 / 关闭） */
-interface CardState {
-  collapsed: boolean
-  hidden: boolean
-  /** 铺满整个工作台的浮层 */
-  maximized: boolean
 }
 
 const CARD_DEFAULT: CardState = { collapsed: false, hidden: false, maximized: false }
@@ -320,26 +318,72 @@ function cachedPreviewAvailable(path: string): boolean {
   return !!info && absoluteUrl(info.devUrl || '') !== ''
 }
 
-export function HDesk({ project, sessionId }: Props) {
+/** 默认布局（未锁定 / 从未固化时的落点）——与历史行为完全一致。 */
+function defaultCards(project: ProjectRecord, debug?: boolean): Record<string, CardState> {
+  return {
+    board: { ...CARD_DEFAULT, hidden: true },
+    // 有项目预览的项目：进工作台默认只呈现预览，主对话收进「已关闭」chip（点即恢复）；
+    // 从卡片「去调试」进来时两窗并存（debug 为 true，主对话不收起）。
+    chat: { ...CARD_DEFAULT, hidden: !debug && cachedPreviewAvailable(project.path) },
+    talk: { ...CARD_DEFAULT, hidden: true },
+    save: { ...CARD_DEFAULT, hidden: true },
+    preview: CARD_DEFAULT,
+  }
+}
+
+/**
+ * 锁定态：按快照恢复窗口布局。
+ *
+ * 快照里没有的卡片（版本升级后新增的）用默认值补齐，因此旧快照也能安全升级——
+ * 不会因为「快照是上个版本存的」就把新卡片漏成 undefined。
+ */
+function restoreCards(
+  layout: DeskLayout | null,
+  project: ProjectRecord,
+  debug?: boolean,
+): Record<string, CardState> {
+  const out = defaultCards(project, debug)
+  if (!layout) return out
+  for (const id of Object.keys(out)) {
+    const c = layout.cards[id]
+    if (c) out[id] = { collapsed: c.collapsed, hidden: c.hidden, maximized: c.maximized }
+  }
+  return out
+}
+
+export function HDesk({ project, sessionId, debug }: Props) {
   const [explorers, setExplorers] = useState<TelemetrySession[]>(() => EXPLORER_CACHE.get(project.path) ?? [])
-  const [winState, setWinState] = useState<Record<string, WinState>>({})
+  // —— 项目布局锁（按项目 id 固化布局）——
+  // 首帧就按「锁定态快照」摆好窗口（惰性初始化），从别处跳回来时不会先闪一下默认布局。
+  // 例外：「去调试」是一次**显式**的进入意图（要预览 + 主对话两窗并存），不锁——照旧走默认。
+  const initialPref = useRef(loadDeskPref(project.id))
+  const [layoutLocked, setLayoutLocked] = useState<boolean>(() => initialPref.current?.locked ?? true)
+  /** 本次进入要恢复的快照（锁定 + 有固化 + 非「去调试」时才有值）。 */
+  const seedRef = useRef<DeskLayout | null>(
+    !debug && initialPref.current?.locked ? (initialPref.current.layout ?? null) : null,
+  )
+  // 恢复锁定布局 = 用户的显式选择：抑制两条「默认规则」——有预览就自动收起主对话、
+  // 探索者出现就自动放出三卡——否则它们会把刚恢复的布局当场改掉（锁定也就白锁了）。
+  const chatChoiceRef = useRef(!!seedRef.current)
+  const autoRevealed = useRef(!!seedRef.current)
+  const [winState, setWinState] = useState<Record<string, WinState>>(
+    () => (seedRef.current ? { ...seedRef.current.winState } : {}),
+  )
   const [overlayId, setOverlayId] = useState<string | null>(null)
   const [probeError, setProbeError] = useState<string | null>(null)
   // 项目预览：探测结果（devUrl / 是否在跑）、预览条高度、iframe 重挂计数
   const [devInfo, setDevInfo] = useState<ProjectInfo | null>(() => DEVINFO_CACHE.get(project.path) ?? null)
-  const [previewH, setPreviewH] = useState<number>(() => readPreviewHeight())
+  const [previewH, setPreviewH] = useState<number>(() => {
+    const stored = seedRef.current?.previewH ?? 0
+    return stored > 0 ? stored : readPreviewHeight()
+  })
   const [previewReload, setPreviewReload] = useState(0)
   // 默认（未唤醒 tokensave、无探索者）只呈现「DSH 主对话」：黑板 / 协作对话 / 协作收益
   // 一律以「已关闭」形式列在标题行里，可单独点开恢复 —— 这正是「隐藏窗口明示」的落点。
   // 例外：有项目预览的项目默认只呈现预览，主对话同样以 chip 形式留在标题行可恢复。
-  const [cards, setCards] = useState<Record<string, CardState>>({
-    board: { ...CARD_DEFAULT, hidden: true },
-    // 有项目预览的项目：进工作台默认只呈现预览，主对话收进「已关闭」chip（点即恢复）
-    chat: { ...CARD_DEFAULT, hidden: cachedPreviewAvailable(project.path) },
-    talk: { ...CARD_DEFAULT, hidden: true },
-    save: { ...CARD_DEFAULT, hidden: true },
-    preview: CARD_DEFAULT,
-  })
+  const [cards, setCards] = useState<Record<string, CardState>>(
+    () => (seedRef.current ? restoreCards(seedRef.current, project, debug) : defaultCards(project, debug)),
+  )
   const overlayRef = useRef<HTMLDivElement>(null)
   const chatCellRef = useRef<HTMLDivElement>(null)
   // 主对话铺满时，输入条改停靠到浮层里的那张卡上
@@ -386,6 +430,39 @@ export function HDesk({ project, sessionId }: Props) {
       setProbeError('切换本项目会话失败：会话导航服务不可用')
     }
   }, [project.path, sessionId])
+
+  // —— 布局锁：把当前布局固化到项目上 ——
+  //
+  // 锁定时快照随台内每一次窗口变动（一键切换 / 卡片三键 / 探索者三键 / 预览条高度）
+  // 即时重写，于是「从别处回到本项目」总能还原成用户最后看到的样子；解锁则不再回写，
+  // 快照冻结在解锁前的最后一帧（用户再锁回来仍能恢复，而不是被清成默认）。
+  //
+  // 不变量：**任何一次落库都以内存里的锁定态为准**，不读 localStorage——切换开关的瞬间
+  // 两件事同时发生（setLayoutLocked 异步生效 + 本 effect 重跑），读盘会把刚写的值又当
+  // 成新值处理，还会让依赖里的 layoutLocked 与数据自相矛盾。
+  useEffect(() => {
+    if (!layoutLocked) return
+    saveDeskPref(project.id, {
+      locked: true,
+      layout: { v: 1, cards, winState, previewH },
+    })
+  }, [layoutLocked, project.id, cards, winState, previewH])
+
+  /** 标题行「锁定布局 / 解锁布局」按钮：切开关，并当场把快照对齐到用户意图。 */
+  const toggleLayoutLock = () => {
+    const next = !layoutLocked
+    setLayoutLocked(next)
+    if (next) {
+      // 重新锁定 → 立刻固化当前（解锁期间用户摆出来的）布局，不等下一次变动
+      saveDeskPref(project.id, {
+        locked: true,
+        layout: { v: 1, cards, winState, previewH },
+      })
+    } else {
+      // 解锁 → 只翻开关，保留快照（见 setDeskLocked 的说明）
+      setDeskLocked(project.id, false)
+    }
+  }
 
   const cardOf = (id: string): CardState => cards[id] || CARD_DEFAULT
   const setCard = (id: string, patch: Partial<CardState>) =>
@@ -474,7 +551,6 @@ export function HDesk({ project, sessionId }: Props) {
 
   // 探索者一出现（tokensave_delegate 跑起来）就把黑板 / 协作对话 / 协作收益 一并放出，
   // 保持既有的「跑起来自动还原 H 台」行为；只做一次，之后不再抢用户手动收起的选择。
-  const autoRevealed = useRef(false)
   useEffect(() => {
     if (autoRevealed.current || explorers.length === 0) return
     autoRevealed.current = true
@@ -502,17 +578,27 @@ export function HDesk({ project, sessionId }: Props) {
   const chatMaximized = chatState.maximized
   const chatDocked = chatMaximized || (!chatState.collapsed && !chatState.hidden)
   // 用户手动收放过主对话（恢复 chip / 一键切换 / 卡片 ✕）后，预览的显隐不再替他做主。
-  const chatChoiceRef = useRef(false)
   // 有预览 → 默认只呈现预览（主对话收进「已关闭」chip）；无预览 → 呈现主对话。
   // 预览探测晚到（缓存未命中）或 dev server 停掉时在这里收/放一次。
   useEffect(() => {
-    if (chatChoiceRef.current) return
+    // 「去调试」进来的那一次不适用：它要的是预览与主对话**并存**（且已由初始状态摆好），
+    // 这里再插一手会把刚打开的主对话当场收走——正是用户点「去调试」时看到的闪没。
+    if (chatChoiceRef.current || debug) return
     setCards((prev) => {
       const want = previewAvailable // 主对话默认隐藏 ⇔ 有可用预览
       if (!!prev.chat?.hidden === want) return prev
       return { ...prev, chat: { ...(prev.chat || CARD_DEFAULT), hidden: want } }
     })
-  }, [previewAvailable])
+  }, [previewAvailable, debug])
+  // 「去调试」意图**后到**时（点卡片时工作台已经挂着，只剩 prop 变化）在这里把两窗摆开：
+  // 预览本就已经呈现，只需要把被默认收起的 DSH 主对话放回来。若用户随后自己又收起了它，
+  // chatChoiceRef 会置位，这里不再插手（与其它入口的手动选择语义一致）。
+  useEffect(() => {
+    if (!debug || chatChoiceRef.current) return
+    setCards((prev) => (prev.chat && !prev.chat.hidden
+      ? prev
+      : { ...prev, chat: { ...(prev.chat || CARD_DEFAULT), hidden: false } }))
+  }, [debug])
   // 台面空置：主对话未呈现（已关闭/铺满浮层），且没有探索者、其余卡片全关
   // → 整块 .ts-desk 不渲染（不留空的中下格外框），预览条撑满标题行以下的全部高度。
   const deskEmpty = compact && (chatState.hidden || chatState.maximized)
@@ -718,7 +804,26 @@ export function HDesk({ project, sessionId }: Props) {
       <div className="ts-bar">
         {/* 左侧只留项目名（显著标识）：原「← 项目中心」按钮与项目路径已移除，
             返回项目列表改由左侧边栏的「项目中心」入口承担。 */}
-        <span className="ts-title ts-title-proj" title={project.path}>
+        <span
+          className={`ts-title ts-title-proj ${layoutLocked ? 'ts-proj-locked' : 'ts-proj-unlocked'}`}
+          title={`${project.path}${layoutLocked ? ' · 布局已锁定' : ' · 布局未锁定'}`}
+        >
+          <span className="ts-title-proj-icon" aria-hidden="true">🗂</span>
+          <span className="ts-title-proj-name">{project.name}</span>
+        </span>
+        {/* 布局锁（紧贴项目名）：锁定 = 从别处回到本项目时按固化的布局恢复；
+            解锁 = 每次进入都用默认布局。台内的一键切换 / 卡片三键照常可用，
+            锁定的只是「离开再回来」这一次的还原。 */}
+        <button
+          className={`ts-btn ts-btn-sm ts-lock-btn ${layoutLocked ? 'ts-lock-on' : 'ts-lock-off'}`}
+          onClick={toggleLayoutLock}
+          aria-pressed={layoutLocked}
+          title={layoutLocked
+            ? '布局已锁定：从其它位置跳回本项目（含同项目的其它对话）时按你摆好的布局恢复。点此解锁，解锁后每次进入都回归默认布局。'
+            : '布局未锁定：每次进入本项目都回归默认布局。点此锁定，把当前布局固化到这个项目上。'}
+        >
+          {layoutLocked ? '🔒 锁定布局' : '🔓 解锁布局'}
+        </button>
           <span className="ts-title-proj-icon" aria-hidden="true">🗂</span>
           <span className="ts-title-proj-name">{project.name}</span>
         </span>

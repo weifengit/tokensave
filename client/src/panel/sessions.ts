@@ -767,6 +767,30 @@ const listListeners = new Set<() => void>()
 /** 工作台恢复监听；可带目标会话 id（跨会话切换时 ControlRoom 会忽略，等 prop 更新后自己恢复）。 */
 const deskListeners = new Set<(sessionId?: string) => void>()
 
+/**
+ * 本次导航的意图（进入工作台时一并带上）。
+ *   - 不传 / 其它值：默认布局（有预览的项目默认只呈现预览，主对话收进「已关闭」chip）；
+ *   - 'debug'：用户点的是项目卡片上的「去调试」——预览与 DSH 主对话必须**同时呈现**。
+ */
+export type WorkbenchIntent = 'debug'
+
+/**
+ * 意图的留存（带 TTL，按项目记）。
+ *
+ * 为何要跨模块存、又要带 TTL：点「去调试」时宿主的 conversation.view 不一定重挂，
+ * 而 HDesk 自己的绑定 effect 会把会话换成**本项目自己的**会话——那一步会让 ControlRoom
+ * 整个重建。于是「一次性、读完即清」在这个流程里一定会丢：第一次读走意图的那个实例
+ * 随后就被卸载了，真正渲染出来的那个实例什么也读不到（实测：卡片点了但主对话没出来）。
+ *
+ * 因此改成**按项目留一段时间**：每个挂载的实例都带自己的项目来问，命中才返回 debug。
+ * 普通导航（侧边栏 / 点卡片 / 点会话）不带 intent，会把整份留存清掉；
+ * 即使用户再也不点别的，TTL 也保证它不会永久粘着。
+ */
+const INTENT_TTL_MS = 15_000
+let workbenchIntent: WorkbenchIntent | undefined
+let workbenchIntentAt = 0
+let workbenchIntentProject = ''
+
 function emit(set: Set<() => void>, what: string): void {
   for (const fn of Array.from(set)) {
     try {
@@ -787,6 +811,23 @@ function emitDesk(sessionId?: string): void {
   }
 }
 
+/**
+ * 看本次导航意图（**不清除**，带 TTL 与项目过滤）。
+ *
+ * 为何不清除：点「去调试」后 HDesk 的绑定 effect 会打开本项目自己的会话，那一步会让
+ * ControlRoom 整个重建——若第一个实例把意图读走（一次性），真正渲染出来的那个实例
+ * 就什么也读不到（实测：卡片点了但主对话没出来）。清除交给**下一次进入工作台**：
+ * enterProjectWorkbench 每次都调 requestWorkbench（普通进入不带 intent → 当场清空），
+ * 所以上一个项目的「去调试」不会粘到下一次。
+ * @param projectId - 当前正在渲染的项目；只有它的「去调试」才算数（防串台）
+ */
+export function peekWorkbenchIntent(projectId?: string): WorkbenchIntent | undefined {
+  const fresh = workbenchIntent !== undefined
+    && Date.now() - workbenchIntentAt < INTENT_TTL_MS
+    && (!projectId || projectId === workbenchIntentProject)
+  return fresh ? workbenchIntent : undefined
+}
+
 /** 请求「项目中心」显示项目列表（而非工作台）。保留工作台记忆，供切回时用。 */
 export function requestProjectList(): void {
   forceList = true
@@ -796,11 +837,26 @@ export function requestProjectList(): void {
   emit(listListeners, '项目列表')
 }
 
-/** 请求「项目中心」回到**上次那个**工作台。可带目标会话 id（导航中已知）。 */
-export function requestWorkbench(sessionId?: string): void {
+/**
+ * 请求「项目中心」回到**上次那个**工作台。可带目标会话 id（导航中已知）；
+ * intent 会一并发给已挂载的 ControlRoom（「去调试」要求预览与主对话两窗并存），
+ * 并**按项目**留存一段时间（见上方 workbenchIntent 的说明）。
+ * @param projectId - 意图归属的项目；只有它才吃得到这次 intent
+ */
+export function requestWorkbench(
+  sessionId?: string,
+  intent?: WorkbenchIntent,
+  projectId?: string,
+): void {
   forceList = false
   // 同上：意图即真值，让下一次点击读到的方向是刚切过去的那个屏。
   controlRoomScreen = 'desk'
+  // 先存意图再广播：已挂载的 ControlRoom 当场接住，重建的那个实例（HDesk 绑定本项目
+  // 会话时 ControlRoom 会重挂）靠 peekWorkbenchIntent(projectId) 补齐。
+  // 注意：**每次进入工作台都要写**（不带 intent 就写 undefined）——这就是「去调试」的清除点。
+  workbenchIntent = intent
+  workbenchIntentAt = Date.now()
+  workbenchIntentProject = intent ? String(projectId || '') : ''
   emitDesk(sessionId)
 }
 /** 订阅「显示项目列表」信号；返回取消订阅函数。 */
@@ -880,13 +936,22 @@ export function switchToView(
  *
  * @param projectId - 目标项目
  * @param targetSessionId - 可选：直接落到该会话（序号点点击 = 快速进入对应对话的工作台）
+ * @param intent - 可选：本次导航的意图；'debug' = 卡片上的「去调试」（预览 + 主对话两窗并存）
  * @returns 是否发起了导航
  */
-export function enterProjectWorkbench(projectId: string, targetSessionId?: string): boolean {
+export function enterProjectWorkbench(
+  projectId: string,
+  targetSessionId?: string,
+  intent?: WorkbenchIntent,
+): boolean {
   if (!projectId) return false
   // 进入工作台 = 使用过这个项目 → 刷新「上次更新时间」
   touchProject(projectId)
   const current = getCurrentSessionId()
+  // 本次导航的意图以这里为准：先广播（已挂载的 ControlRoom 当场接住），再按项目留存
+  // 一段时间（因本项目会话绑定而重建的那个实例靠 peekWorkbenchIntent 补齐）。
+  // **不带 intent 的进入也要调用**：它把上一项目的「去调试」当场清掉（见 peekWorkbenchIntent）。
+  requestWorkbench(undefined, intent, projectId)
   if (current) rememberOpenedProject(current, projectId)
   if (targetSessionId) {
     rememberOpenedProject(targetSessionId, projectId)

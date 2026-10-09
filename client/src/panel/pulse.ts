@@ -187,8 +187,8 @@ export interface PulseAlert {
   title: string
 }
 const alertListeners = new Set<(a: PulseAlert) => void>()
-/** 同一轮只告警一次（即时判定会重试） */
-let lastAlertKey = ''
+/** 已告警过的键（session:turnAt:kind）：同一轮绝不响第二次（即时判定会重试） */
+const alertedKeys = new Set<string>()
 /** 订阅结局告警；返回解绑函数（sound.ts 的告警桥用） */
 export function onPulseAlert(cb: (a: PulseAlert) => void): () => void {
   alertListeners.add(cb)
@@ -196,8 +196,15 @@ export function onPulseAlert(cb: (a: PulseAlert) => void): () => void {
 }
 function emitAlert(kind: 'done' | 'fail', sessionId: string, title: string, turnAt: number): void {
   const key = `${sessionId}:${turnAt}:${kind}`
-  if (key === lastAlertKey) return
-  lastAlertKey = key
+  if (alertedKeys.has(key)) return
+  alertedKeys.add(key)
+  if (alertedKeys.size > 50) {
+    // Set 按插入序迭代：淘汰最旧的几条即可
+    for (const k of alertedKeys) {
+      alertedKeys.delete(k)
+      if (alertedKeys.size <= 40) break
+    }
+  }
   for (const l of [...alertListeners]) {
     try {
       l({ kind, sessionId, title })

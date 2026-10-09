@@ -167,6 +167,26 @@ body.ts-hdesk-nochat [data-conversation-region="composer"] {
 .ts-warn-pop { position:fixed; z-index:60; width:300px; max-width:calc(100vw - 24px); max-height:60vh; display:flex; flex-direction:column; border-radius:12px; border:1px solid rgba(127,127,127,.35); background:rgba(24,27,33,.97); color:#e6e8eb; box-shadow:0 14px 40px rgba(0,0,0,.5); backdrop-filter:blur(12px) saturate(1.2); overflow:hidden; }
 /* 跑马灯悬浮面板：宽度按清单里**最长的那条对话标题**自适应（上限 560px，超了才省略号） */
 .ts-hover-pop { width:max-content; max-width:min(560px, calc(100vw - 24px)); }
+/* 悬浮面板顶部工具行：🔔 提示音设置入口（用户要求放在「对话清单」上方）+ 播放中一键停止 */
+.ts-hover-tools { flex:none; display:flex; align-items:center; gap:6px; padding:6px 8px; border-bottom:1px solid rgba(127,127,127,.22); }
+.ts-hover-tools + .ts-warn-pop-head { border-bottom:0; }
+.ts-hover-tool { flex:none; border:1px solid rgba(127,127,127,.4); background:rgba(127,127,127,.12); color:inherit; font-size:11px; line-height:1; padding:4px 8px; border-radius:7px; cursor:pointer; opacity:.88; }
+.ts-hover-tool:hover { background:rgba(127,127,127,.26); opacity:1; }
+.ts-hover-tool.is-playing { border-color:rgba(245,158,11,.6); color:#fbbf24; }
+
+/* —— 提示音设置面板（完成/中断音效、持续时长、音量；改动即存 localStorage） —— */
+.ts-sound-pop { width:250px; }
+.ts-sound-body { display:flex; flex-direction:column; gap:8px; padding:9px 10px 10px; }
+.ts-sound-row { display:flex; align-items:center; gap:7px; font-size:12px; }
+.ts-sound-row > label { flex:none; width:40px; opacity:.7; }
+.ts-sound-row .ts-select { flex:1; min-width:0; }
+.ts-sound-toggle { flex:none; width:34px; border:1px solid rgba(127,127,127,.45); background:rgba(127,127,127,.14); color:inherit; font-size:11px; line-height:1; padding:4px 0; border-radius:6px; cursor:pointer; }
+.ts-sound-toggle.on { border-color:rgba(74,222,128,.6); background:rgba(74,222,128,.2); color:#86efac; }
+.ts-sound-range { flex:1; min-width:0; accent-color:#38bdf8; cursor:pointer; }
+.ts-sound-mini { flex:none; width:24px; border:1px solid rgba(127,127,127,.4); background:rgba(127,127,127,.14); color:inherit; font-size:10.5px; line-height:1; padding:4px 0; border-radius:6px; cursor:pointer; }
+.ts-sound-mini:hover { background:rgba(127,127,127,.3); }
+.ts-sound-min { flex:none; width:54px; padding:4px 6px; font-size:11px; }
+.ts-sound-hint { font-size:10.5px; opacity:.55; line-height:1.5; }
 .ts-warn-pop-head { flex:none; display:flex; align-items:center; justify-content:space-between; gap:8px; padding:8px 10px 8px 12px; font-size:11.5px; font-weight:600; opacity:.8; border-bottom:1px solid rgba(127,127,127,.25); letter-spacing:.03em; }
 .ts-warn-pop-title { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 /* 头部「全部已读」：一键把清单里的都标上（黄灯随之回绿 / 第 3 点随之消隐） */
@@ -817,6 +837,16 @@ body.ts-vsplit-dragging .ts-card { transition:none !important; animation:none !i
 /* 启动情况小标：已启动=绿，未启动=灰（放在「进入工作台」之前） */
 .ts-dev-chip { font-size:11px; padding:2px 8px; border-radius:99px; border:1px solid rgba(127,127,127,.45); background:rgba(127,127,127,.12); opacity:.72; }
 .ts-dev-chip.on { border-color:rgba(74,222,128,.55); background:rgba(74,222,128,.18); color:#86efac; opacity:1; }
+
+/* 已启动那枚小标的「超链接」形态：平时就是原样的绿标，悬停/键盘聚焦才变成可点的
+   「去调试 →」——两段文字叠在同一个格子里（宽度取较大者），所以悬停时不挤动旁边的按钮。
+   注意 .ts-center-card-click 整卡也是 role=button（进工作台），这里要把它自己的默认光标改回指针链。 */
+.ts-dev-chip-link { position:relative; display:inline-flex; align-items:center; text-decoration:none; cursor:pointer; transition:border-color .14s ease, background .14s ease, box-shadow .14s ease; }
+.ts-dev-chip-link .ts-dev-chip-go { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; opacity:0; transition:opacity .14s ease; color:#93c5fd; }
+.ts-dev-chip-link .ts-dev-chip-state { transition:opacity .14s ease; }
+.ts-dev-chip-link:hover, .ts-dev-chip-link:focus-visible { border-color:rgba(96,165,250,.85); background:rgba(96,165,250,.22); box-shadow:0 0 0 1px rgba(96,165,250,.35); outline:none; }
+.ts-dev-chip-link:hover .ts-dev-chip-state, .ts-dev-chip-link:focus-visible .ts-dev-chip-state { opacity:0; }
+.ts-dev-chip-link:hover .ts-dev-chip-go, .ts-dev-chip-link:focus-visible .ts-dev-chip-go { opacity:1; }
 
 /* —— 标题行「探索者设置」：按钮 + 浮动面板（默认 / 免费 / 收费 三组开关） —— */
 .ts-expset { flex:none; display:inline-flex; align-items:center; }
