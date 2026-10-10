@@ -48,6 +48,7 @@ import type { CardState, WinState } from './desk-types'
 import { loadDeskPref, saveDeskPref, setDeskLocked } from './desk-layout'
 import type { DeskLayout } from './desk-layout'
 import { reportExplorerCount } from '../float/mount'
+import { takeFirstSeenClosures } from './desk-win-seed'
 
 import { PreviewPanel, absoluteUrl } from './PreviewPanel'
 interface Props {
@@ -622,17 +623,28 @@ export function HDesk({ project, sessionId, debug }: Props) {
   // 这里在列表到达后做一次**只关不放**的补登：快照说关就关，没说就不动——于是
   //   ① 已固化「关掉」的探索者不会因为列表晚到就先闪出来；
   //   ② 快照里没有的新探索者默认呈现，探索者一跑起来该出现还是会出现。
+  //
+  // 关键：每个探索者**只补登一次**（按 id 记账，见 seedApplied）。seed 是**进入时**读的
+  // （seedRef 冻结在挂载那一刻，之后不再更新），而 explorers 每 8s 轮询都会换一个新数组
+  // 引用。若每轮都拿这份过期快照重放「只关不放」，用户手动放出的探索者窗口会在下一个
+  // 轮询周期被重新关掉——实测：一键切换放出全部窗口后，隔几秒探索者集体自行关闭、列
+  // 轨道随之塌缩，看着就像「屏幕自己刷了一下」；而这次重放还会被写回布局快照，于是
+  // 「关掉」这个状态会一直粘住（再点开，几秒后又关）。按 id 记账后，之后一律以用户
+  // 当场的三键选择为准。
+  const seedApplied = useRef<Set<string>>(new Set())
   useEffect(() => {
     const seed = seedRef.current
     if (!seed || explorers.length === 0) return
+    // 只对**本次首次出现**的探索者做补登；已经在场的（用户可能刚点开）绝不回关。
+    // 「每个 id 只补登一次」的记账与自检见 desk-win-seed.ts。
+    const toClose = takeFirstSeenClosures(seed, explorers.map((s) => s.id), seedApplied.current)
+    if (toClose.length === 0) return
     setWinState((prev) => {
       let changed = false
       const out = { ...prev }
-      for (const s of explorers) {
-        const saved = seed.winState[s.id]
-        if (!saved?.hidden) continue
-        if (out[s.id]?.hidden) continue
-        out[s.id] = { ...(out[s.id] || { collapsed: false, hidden: false }), hidden: true }
+      for (const id of toClose) {
+        if (out[id]?.hidden) continue
+        out[id] = { ...(out[id] || { collapsed: false, hidden: false }), hidden: true }
         changed = true
       }
       return changed ? out : prev

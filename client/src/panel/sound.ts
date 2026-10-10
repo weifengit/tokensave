@@ -15,6 +15,7 @@
  */
 import { ALARM_MP3, DINGDONG_MP3 } from './sounds-data'
 import { onPulseAlert } from './pulse'
+import { initAutoContinue } from './auto-continue'
 
 /** 音效 id：两段录音 + 两段合成 + 静音 */
 export type SoundId = 'dingdong' | 'alarm' | 'chime' | 'beep' | 'muted'
@@ -319,6 +320,9 @@ let bridgeOff: (() => void) | null = null
 
 /** 挂上告警桥（幂等）；返回解绑函数。ControlRoomEntry 挂载时调用一次。 */
 export function initSoundBridge(): () => void {
+  // 自动继续引擎同生命周期：它在「告警」这条路上判该不该自动发「继续」，
+  // 不依赖面板是否打开（面板收起时 max-tokens 一样要被接上）。
+  const offContinue = initAutoContinue()
   if (!bridgeOff) {
     bridgeOff = onPulseAlert((a) => {
       // 角标先上屏、声音随后半拍（两帧 ≈ 16-32ms）：两者同步感知，不再“先听到后看到”
@@ -331,6 +335,7 @@ export function initSoundBridge(): () => void {
     })
   }
   return () => {
+    offContinue()
     if (bridgeOff) {
       bridgeOff()
       bridgeOff = null

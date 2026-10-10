@@ -175,58 +175,110 @@ body.ts-hdesk-nochat [data-conversation-region="composer"] {
 
 /* 清单浮层：portal 到 body + position:fixed（top/left 由 JSX 按按钮矩形给），
    所以 rail（56px 收起）与展开态都从按钮右缘飞出，不被侧边栏 overflow 裁剪 */
-.ts-warn-pop { position:fixed; z-index:60; width:300px; max-width:calc(100vw - 24px); max-height:60vh; display:flex; flex-direction:column; border-radius:12px; border:1px solid rgba(127,127,127,.35); background:rgba(24,27,33,.97); color:#e6e8eb; box-shadow:0 14px 40px rgba(0,0,0,.5); backdrop-filter:blur(12px) saturate(1.2); overflow:hidden; }
-/* 跑马灯悬浮面板：宽度按清单里**最长的那条对话标题**自适应（上限 560px，超了才省略号） */
-.ts-hover-pop { width:max-content; max-width:min(560px, calc(100vw - 24px)); }
-/* —— 提示音设置区（内嵌在跑马灯悬浮面板顶部，与「对话清单」同面板同现）——
-   所有控件统一身高/字号/圆角/描边：下拉框与自定义分钟输入框长得一模一样，
-   整行对齐、不挤不突兀（自定义那行额外有「分钟」单位与 ■ 停止 */
-.ts-sound-body { flex:none; width:272px; max-width:100%; display:flex; flex-direction:column; gap:5px; padding:7px 8px 8px; border-bottom:1px solid rgba(127,127,127,.22); }
-.ts-sound-row { display:flex; align-items:center; gap:5px; }
-.ts-sound-row > label { flex:none; width:28px; font-size:10.5px; opacity:.6; letter-spacing:.02em; }
-/* 下拉框与数字输入框同款：同高 22px、同字号 10.5px、同圆角 6px、同描边/底色 */
-.ts-sound-row .ts-select,
-.ts-sound-row .ts-sound-min { height:22px; box-sizing:border-box; border:1px solid rgba(127,127,127,.35); border-radius:6px; background:rgba(127,127,127,.1); color:inherit; font-family:inherit; font-size:10.5px; line-height:1; padding:0 5px; }
-.ts-sound-row .ts-select { flex:1; min-width:0; }
-.ts-sound-row .ts-sound-min { flex:none; width:46px; text-align:center; -moz-appearance:textfield; appearance:textfield; }
+.ts-warn-pop { position:fixed; z-index:60; max-width:calc(100vw - 24px); max-height:60vh; display:flex; flex-direction:column; border-radius:12px; border:1px solid rgba(127,127,127,.35); background:rgba(24,27,33,.97); color:#e6e8eb; box-shadow:0 14px 40px rgba(0,0,0,.5); backdrop-filter:blur(12px) saturate(1.2); overflow:hidden; }
+/* 跑马灯悬浮面板：**宽度由 JS 固定给**（见 ControlRoomEntry 的 panelWidth）。
+   这里只保证它是个全宽容器 —— 设置区 / 清单区都是 width:100%，
+   整块面板只有一种宽度，不再出现“清单被长标题撐宽、设置区停在原宽”的割裂感。 */
+.ts-hover-pop { width:100%; }
+/* 一个区域 = 标题行 + 内容，区域之间用一条分隔线（不再是各块各自一条 border-bottom，
+   那样最后一个区域会多出一条悬空的线） */
+.ts-sec { flex:none; width:100%; box-sizing:border-box; }
+.ts-sec + .ts-sec { border-top:1px solid rgba(127,127,127,.22); }
+/* 区域标题行：与「对话清单」原头部同款排版，但中性色（不再是某一区的专属样式） */
+.ts-sec-head { display:flex; align-items:center; gap:8px; padding:9px 12px 8px; font-size:11px; font-weight:600; opacity:.62; letter-spacing:.04em; }
+.ts-sec-title { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+/* 标题右侧的浅色计数（如「对话清单 3」里的 3） */
+.ts-sec-note { flex:none; font-weight:500; opacity:.75; }
+/* 标题行右侧的操作推到最右（「全部已读」按钮、主开关都靠这个定位） */
+.ts-sec-head > .ts-mark-all-read-btn,
+.ts-sec-head > .ts-cont-sw { margin-left:auto; }
+/*
+ * 外框（box）：把一组子控件包起来（提示音的四行、自动继续的两行、清单的条目列表）。
+ * 用底色 + 描边区分于面板背景，一眼看出“这是某个区域的子内容”。
+ * 不画自身分隔线 —— 区域之间的分隔由 .ts-sec + .ts-sec 负责。
+ *
+ * 类名刻意叫 ts-box 而不是 ts-card：ts-card 已被 HDesk 的桌面布局占用
+ * （.ts-card { display:flex; overflow:hidden } 加子元素 flex:1），
+ * 复用会让面板里的外框继承那套行为。
+ */
+.ts-box { box-sizing:border-box; width:100%; border:1px solid rgba(127,127,127,.2); background:rgba(127,127,127,.07); border-radius:9px; }
+/* 外框里的一行 */
+.ts-box-row { display:flex; align-items:center; gap:6px; min-width:0; padding:6px 9px; }
+.ts-box-row > label { flex:none; font-size:10.5px; opacity:.62; letter-spacing:.02em; cursor:help; }
+/* 清单外框：装 .ts-warn-pop-list（它自己管滚动与行间距） */
+.ts-box-list { display:flex; flex-direction:column; min-height:0; overflow:hidden; padding:3px; }
+/* 清单区内容容器：与提示音 / 自动继续同款外距（0 12px 10px），保证三个外框左右对齐、内距一致 */
+.ts-list-body { flex:none; width:100%; box-sizing:border-box; padding:0 12px 10px; }
+/* —— 提示音设置区（内嵌在悬浮面板顶部，与「对话清单」同面板同现）—— */
+   width:100%（不再写死 272px）：与自动继续区、清单区严格同宽、同边距。 */
+.ts-sound-body { flex:none; width:100%; box-sizing:border-box; display:flex; flex-direction:column; gap:6px; padding:0 12px 10px; }
+.ts-box-row .ts-select,
+.ts-box-row .ts-sound-min { height:22px; box-sizing:border-box; border:1px solid rgba(127,127,127,.35); border-radius:6px; background:rgba(127,127,127,.1); color:inherit; font-family:inherit; font-size:10.5px; line-height:1; padding:0 5px; }
+.ts-box-row .ts-select { flex:1; min-width:0; }
+.ts-box-row .ts-sound-min { flex:none; width:46px; text-align:center; -moz-appearance:textfield; appearance:textfield; }
 /* 数字输入框去掉原生上下箭头（它才是“跟别的控件不一样”的元凶） */
-.ts-sound-row .ts-sound-min::-webkit-outer-spin-button,
-.ts-sound-row .ts-sound-min::-webkit-inner-spin-button { -webkit-appearance:none; appearance:none; margin:0; }
-.ts-sound-toggle { flex:none; width:30px; height:22px; box-sizing:border-box; border:1px solid rgba(127,127,127,.45); background:rgba(127,127,127,.14); color:inherit; font-size:10.5px; line-height:1; padding:0; border-radius:6px; cursor:pointer; }
-.ts-sound-toggle.on { border-color:rgba(74,222,128,.6); background:rgba(74,222,128,.2); color:#86efac; }
+.ts-box-row .ts-sound-min::-webkit-outer-spin-button,
+.ts-box-row .ts-sound-min::-webkit-inner-spin-button { -webkit-appearance:none; appearance:none; margin:0; }
+/* 统一开关（提示音区 / 自动继续区共用同一颗滑块）：极简，不写「开/关」二字，
+   状态由颜色 + 滑块位置表达；具体含义全走 title 悬浮提示。 */
+.ts-cont-sw { flex:none; position:relative; width:28px; height:16px; box-sizing:border-box; padding:0; border:1px solid rgba(127,127,127,.45); background:rgba(127,127,127,.18); border-radius:999px; cursor:pointer; transition:background .15s, border-color .15s; }
+.ts-cont-sw > i { position:absolute; top:1px; left:1px; width:12px; height:12px; border-radius:50%; background:rgba(180,186,196,.95); transition:transform .15s, background .15s; }
+.ts-cont-sw.on { border-color:rgba(74,222,128,.6); background:rgba(74,222,128,.28); }
+.ts-cont-sw.on > i { transform:translateX(12px); background:#86efac; }
+.ts-cont-sw:focus-visible { outline:2px solid rgba(96,165,250,.85); outline-offset:1px; }
 .ts-sound-range { flex:1; min-width:0; height:14px; accent-color:#38bdf8; cursor:pointer; }
 .ts-sound-mini { flex:none; width:22px; height:22px; box-sizing:border-box; border:1px solid rgba(127,127,127,.4); background:rgba(127,127,127,.14); color:inherit; font-size:10px; line-height:1; padding:0; border-radius:6px; cursor:pointer; display:inline-flex; align-items:center; justify-content:center; }
 .ts-sound-mini:hover { background:rgba(127,127,127,.3); }
 .ts-sound-mini.is-playing { border-color:rgba(245,158,11,.65); background:rgba(245,158,11,.16); color:#fbbf24; }
 .ts-sound-unit { flex:none; font-size:10px; opacity:.55; }
-.ts-warn-pop-head { flex:none; display:flex; align-items:center; justify-content:space-between; gap:8px; padding:8px 10px 8px 12px; font-size:11.5px; font-weight:600; opacity:.8; border-bottom:1px solid rgba(127,127,127,.25); letter-spacing:.03em; }
-.ts-warn-pop-title { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-/* 头部「全部已读」：一键把清单里的都标上（黄灯随之回绿 / 第 3 点随之消隐） */
-.ts-warn-allread { flex:none; border:1px solid rgba(245,158,11,.55); background:rgba(245,158,11,.16); color:#fbbf24; font-size:10.5px; font-weight:600; line-height:1; padding:4px 9px; border-radius:999px; cursor:pointer; }
-.ts-warn-allread:hover { background:rgba(245,158,11,.32); }
-.ts-warn-allread:focus-visible { outline:2px solid rgba(96,165,250,.85); outline-offset:1px; }
-.ts-warn-pop-list { overflow:auto; padding:4px; display:flex; flex-direction:column; gap:2px; min-height:32px; }
-.ts-warn-item { display:flex; align-items:flex-start; gap:8px; width:100%; padding:7px 8px; border:0; border-radius:8px; background:transparent; color:inherit; font:inherit; text-align:left; cursor:pointer; }
-.ts-warn-item:hover { background:rgba(245,158,11,.16); }
+/* —— 自动继续设置块（嵌在悬浮面板里，与声音设置同款紧凑排版）—— */
+.ts-cont-block { flex:none; width:100%; box-sizing:border-box; display:flex; flex-direction:column; gap:6px; padding:0 12px 10px; }
+.ts-cont-gap { flex:1 1 auto; min-width:8px; }
+/* 自动继续三个子开关：水平均匀分布（每格等宽、内容居中） */
+.ts-box-row > .ts-cont-sw-item { flex:1 1 0; display:flex; align-items:center; justify-content:center; gap:6px; min-width:0; }
+.ts-cont-sw-item > label { flex:none; font-size:10.5px; opacity:.62; letter-spacing:.02em; cursor:help; }
+.ts-cont-sw-item > .ts-cont-sw { flex:none; }
+.ts-cont-num { flex:none; width:46px; height:22px; box-sizing:border-box; border:1px solid rgba(127,127,127,.35); border-radius:6px; background:rgba(127,127,127,.1); color:inherit; font-family:inherit; font-size:10.5px; line-height:1; padding:0 5px; text-align:center; -moz-appearance:textfield; appearance:textfield; }
+.ts-cont-num::-webkit-outer-spin-button, .ts-cont-num::-webkit-inner-spin-button { -webkit-appearance:none; appearance:none; margin:0; }
+.ts-cont-unit { flex:none; font-size:10px; opacity:.5; }
+/* 头部「全部已读」：牌形按钮，与行内「已读」同一套视觉语言（不再是一个孤零零的黄胖按钮） */
+.ts-mark-all-read-btn { flex:none; display:inline-flex; align-items:center; gap:3px; border:1px solid rgba(127,127,127,.36); background:rgba(127,127,127,.12); color:inherit; font-size:10.5px; font-weight:500; line-height:1; padding:4px 9px; border-radius:999px; cursor:pointer; opacity:.82; transition:background .12s, opacity .12s; }
+.ts-mark-all-read-btn:hover { opacity:1; background:rgba(127,127,127,.26); }
+.ts-mark-all-read-btn:focus-visible { outline:2px solid rgba(96,165,250,.85); outline-offset:1px; }
+.ts-mark-all-read-btn:disabled { opacity:.4; cursor:not-allowed; pointer-events:none; }
+.ts-warn-pop-list { overflow:auto; overflow-x:hidden; padding:5px; display:flex; flex-direction:column; gap:2px; min-height:32px; }
+/* 一行 = 条目（点它跳转）+ 右侧操作区。align-items:center 让操作按钮与两行文本居中对齐，
+   不再像以前那样贴顶显得歪。 */
+.ts-warn-row { display:flex; align-items:center; gap:6px; box-sizing:border-box; padding-right:4px; border-radius:9px; }
+.ts-warn-item { flex:1; min-width:0; display:flex; align-items:flex-start; gap:8px; padding:7px 8px; border:0; border-radius:9px; background:transparent; color:inherit; font:inherit; text-align:left; cursor:pointer; }
+.ts-warn-row:not(.is-active) .ts-warn-item:hover { background:rgba(245,158,11,.14); }
+.ts-warn-row.is-active .ts-warn-item:hover { background:rgba(34,197,94,.12); }
 .ts-warn-item:focus-visible { outline:1px solid rgba(96,165,250,.8); }
-.ts-warn-icon { flex:none; font-size:12px; line-height:1.55; }
-.ts-warn-body { min-width:0; display:flex; flex-direction:column; gap:4px; }
-.ts-warn-title { font-size:12.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-/* 第二行只留**项目名**（状态由左侧图标表达，极简不重复）：轻胶囊一眼分清归属 */
-.ts-warn-sub { align-self:flex-start; max-width:100%; box-sizing:border-box; font-size:10.5px; line-height:1.55; padding:0 7px; border-radius:999px; background:rgba(127,127,127,.15); border:1px solid rgba(127,127,127,.26); opacity:.9; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-/* 每一行 = 条目（点它跳转）+ 右侧「已读」小按钮（只标注不跳转） */
-.ts-warn-row { display:flex; align-items:stretch; gap:4px; }
-.ts-warn-row .ts-warn-item { flex:1; min-width:0; width:auto; }
-.ts-warn-read { flex:none; align-self:center; border:1px solid rgba(127,127,127,.4); background:rgba(127,127,127,.14); color:inherit; font-size:10.5px; line-height:1; padding:5px 7px; border-radius:7px; cursor:pointer; opacity:.72; }
-.ts-warn-read:hover { opacity:1; background:rgba(127,127,127,.3); }
+.ts-warn-icon { flex:none; font-size:11px; line-height:1.7; opacity:.9; }
+/* min-width:0 是防撐宽的关键：这两层只要有一层没写，长标题就会把整个面板顶宽 */
+.ts-warn-body { min-width:0; flex:1; display:flex; flex-direction:column; gap:3px; }
+.ts-warn-title { min-width:0; font-size:12.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+/* 第二行：项目胶囊 + 中断原因短标签（如「截断」「余额」）并排；负空间时才省略 */
+.ts-warn-tags { display:flex; align-items:center; gap:4px; min-width:0; max-width:100%; }
+.ts-warn-sub { flex:0 1 auto; min-width:0; box-sizing:border-box; font-size:10.5px; line-height:1.5; padding:0 7px; border-radius:999px; background:rgba(127,127,127,.15); border:1px solid rgba(127,127,127,.26); opacity:.9; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+/* 中断原因：与项目胶囊同形但用警告色，一眼区分「归属」与「毛病」 */
+.ts-warn-reason { flex:none; box-sizing:border-box; font-size:10px; line-height:1.5; padding:0 6px; border-radius:999px; background:rgba(245,158,11,.16); border:1px solid rgba(245,158,11,.42); color:#fbbf24; white-space:nowrap; }
+/* 计时器：距上次正常发言的耗时（仅活跃对话显示） */
+.ts-warn-timer { flex:none; font-size:10px; opacity:.55; font-variant-numeric:tabular-nums; white-space:nowrap; margin-left:4px; }
+/* 行内「已读」：轻牌按钮 + 对勾图标（以前那个裸「✓」太小、难看出是按钮） */
+.ts-warn-read { flex:none; display:inline-flex; align-items:center; gap:3px; border:1px solid rgba(127,127,127,.34); background:rgba(127,127,127,.12); color:inherit; font-size:10.5px; line-height:1; padding:4px 8px; border-radius:999px; cursor:pointer; opacity:.68; transition:background .12s, opacity .12s, border-color .12s; }
+.ts-warn-read:hover { opacity:1; background:rgba(74,222,128,.18); border-color:rgba(74,222,128,.5); color:#86efac; }
 .ts-warn-read:focus-visible { outline:2px solid rgba(96,165,250,.85); outline-offset:1px; }
-/* 行内「继续」：不跳转，直接给那条对话发一条「继续」（黄灯清单里上一轮未正常结束的行才有） */
-.ts-warn-cont { flex:none; align-self:center; border:1px solid rgba(245,158,11,.6); background:rgba(245,158,11,.18); color:#fbbf24; font-size:10.5px; font-weight:600; line-height:1; padding:5px 7px; border-radius:7px; cursor:pointer; }
-.ts-warn-cont:hover:not(:disabled) { background:rgba(245,158,11,.34); }
-.ts-warn-cont:disabled { opacity:.8; cursor:default; }
-.ts-warn-cont.is-sent { background:rgba(74,222,128,.2); border-color:rgba(74,222,128,.6); color:#86efac; }
-.ts-warn-cont.is-error { background:rgba(248,113,113,.2); border-color:rgba(248,113,113,.6); color:#fca5a5; }
-.ts-warn-cont:focus-visible { outline:2px solid rgba(96,165,250,.85); outline-offset:1px; }
+/* 行内「继续」：不能自动时的唯一手动入口，做成主色调强调 */
+.ts-warn-continue-btn { flex:none; border:1px solid rgba(96,165,250,.6); background:rgba(96,165,250,.18); color:#93c5fd; font-size:10.5px; font-weight:600; line-height:1; padding:5px 9px; border-radius:999px; cursor:pointer; transition:background .12s; }
+.ts-warn-continue-btn:hover:not(:disabled) { background:rgba(96,165,250,.34); }
+.ts-warn-continue-btn:disabled { opacity:.6; cursor:default; }
+.ts-warn-continue-btn.is-error { border-color:rgba(248,113,113,.6); background:rgba(248,113,113,.18); color:#fca5a5; }
+.ts-warn-continue-btn:focus-visible { outline:2px solid rgba(96,165,250,.85); outline-offset:1px; }
+/* 已发送：不是按钮，只是告诉用户「机器已经接手了，不用管」 */
+.ts-warn-done { flex:none; display:inline-flex; align-items:center; gap:3px; font-size:10.5px; line-height:1; padding:4px 8px; border-radius:999px; border:1px solid rgba(74,222,128,.45); background:rgba(74,222,128,.14); color:#86efac; white-space:nowrap; }
+.ts-warn-done.is-busy { border-color:rgba(96,165,250,.45); background:rgba(96,165,250,.14); color:#93c5fd; }
+.ts-warn-empty { display:flex; align-items:center; justify-content:center; gap:6px; padding:18px 8px; font-size:11.5px; opacity:.45; }
 @media (prefers-reduced-motion: reduce) { .ts-side-badge { animation:none; opacity:1; } }
 
 /* 呼吸灯：侧边栏「项目中心」入口的存活指示（3 个小圆点，wide 时右对齐）。

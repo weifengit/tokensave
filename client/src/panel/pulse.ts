@@ -33,7 +33,7 @@
  */
 import { useEffect, useState } from 'react'
 import { getClientContext, readService } from '../session-subscribe'
-import { readProjectActivity, statusSnapshot } from './activity'
+import { readProjectActivity, statusSnapshot, lastPromptMs } from './activity'
 import { readProjectSessions } from './sessions'
 import { loadProjects } from './store'
 import type { ProjectRecord } from './store'
@@ -51,8 +51,11 @@ export interface WarnItem {
   title: string
   /** pending = 弹着选择框待你确认；failed = 上一轮没正常结束（含输出被截断） */
   kind: 'pending' | 'failed'
+  /** 失败时的中断类型（仅 kind='failed' 时有值） */
+  interruptKind?: InterruptKind
+  /** 中断的完整事实（用于判定是否自动发「继续」）；仅 kind='failed' 时有值 */
+  interrupt?: InterruptInfo
 }
-
 /** 一条「正常结束且未标注已读」的对话（第 3 个圆点点开的清单） */
 export interface DoneItem {
   /** 已读标注用的稳定键：`d:sessionId:turnAt`（同一轮只提醒一次） */
@@ -64,15 +67,15 @@ export interface DoneItem {
   /** 正常结束的那一轮 turn/end 时间（排序与去重用） */
   turnAt: number
 }
-
 /** 一条「正在跑」的对话（绿色跑马灯悬浮面板用：项目 + 标题，可点击跳转） */
 export interface ActiveItem {
   sessionId: string
   projectId: string
   project: string
   title: string
+  /** 最近一次人发正常消息的时间（Unix ms），用于算「距上次发言过了多久」 */
+  lastPromptAt: number
 }
-
 export interface PulseState {
   /** 存活对话数：正在跑 + 待确认 + 上一轮失败 */
   alive: number
@@ -114,6 +117,10 @@ interface OutcomeEntry {
   /** 判定时读到的那轮 turn/end 时间（失败条目已读标注的键、完成通知的去重依据） */
   turnAt: number
   checkedAt: number
+  /** 失败时的中断类型（仅 failed=true 时有值） */
+  interruptKind?: InterruptKind
+  /** 中断的完整事实（分类自动继续用）；仅 failed=true 时有值 */
+  interrupt?: InterruptInfo
 }
 const outcomeCache = new Map<string, OutcomeEntry>()
 /** 已判定失败的条目多久复核一次：黄灯必须能自己熄灭（复核到正常结束就写回 false）。
@@ -164,7 +171,6 @@ let scanStartedAt = 0
 let scanning = false
 
 /** 算作「被故障中断」的 turn/end reason。completed / forked / aborted（用户主动停止）不算。 */
-/** 算作「被故障中断」的 turn/end reason。completed / forked / aborted（用户主动停止）不算。 */
 const FAILED_TURN_KINDS = new Set(['error', 'interrupted', 'blocked', 'max-tokens', 'consent', 'permission', 'awaiting-consent'])
 
 // —— 即时判定（停止信号 → 立刻读结局）——
@@ -182,13 +188,12 @@ function notifyOutcome(): void {
 
 // —— 告警（提示音）：只在「观察到的停止」那条路上发 ——
 /** 一条结局告警（提示音用）：fail=中断/失败，done=正常完成 */
-/** 一条结局告警（提示音用）：fail=中断/失败，done=正常完成 */
 export interface PulseAlert {
   kind: 'done' | 'fail'
   sessionId: string
   title: string
-  /** 失败类型：用于前端决定是否自动发送「继续」（仅 kind==='fail' 时有效） */
-  interruptKind?: InterruptKind
+  /** 中断的完整事实（判定自动继续用）；仅 kind==='fail' 时有值 */
+  interrupt?: InterruptInfo
 }
 /** 中断类型：用于前端决定自动化行为 */
 export type InterruptKind =
@@ -203,13 +208,30 @@ export type InterruptKind =
   | 'agent/error'       // agent 错误
   | string              // 其它宿主扩展的 reason.kind
 
+/** 中断的完整事实（码 / 文案 / 状态码 / aborted 子类型）——分类器的输入 */
+export interface InterruptInfo {
+  /** 宿主 turn/end 的 reason.kind（error / max-tokens / blocked / aborted / …） */
+  kind: string
+  /** aborted 的子类型（user = 用户主动停止） */
+  subKind?: string
+  /** 宿主错误码（如 REASONING_LOOP、ACCOUNT_SIGNED_OUT） */
+  code?: string
+  /** 给人看的错误说明（常带上游原文，分类主要靠它） */
+  message?: string
+  /** HTTP 状态码（宿主给了就优先按它判） */
+  status?: number
+}
+
+/** 告警订阅者（sound.ts 的告警桥注册进来） */
+const alertListeners = new Set<(a: PulseAlert) => void>()
+
 const alertedKeys = new Set<string>()
 /** 订阅结局告警；返回解绑函数（sound.ts 的告警桥用） */
 export function onPulseAlert(cb: (a: PulseAlert) => void): () => void {
   alertListeners.add(cb)
   return () => alertListeners.delete(cb)
 }
-function emitAlert(kind: 'done' | 'fail', sessionId: string, title: string, turnAt: number, interruptKind?: InterruptKind): void {
+function emitAlert(kind: 'done' | 'fail', sessionId: string, title: string, turnAt: number, interrupt?: InterruptInfo): void {
   const key = `${sessionId}:${turnAt}:${kind}`
   if (alertedKeys.has(key)) return
   alertedKeys.add(key)
@@ -222,7 +244,7 @@ function emitAlert(kind: 'done' | 'fail', sessionId: string, title: string, turn
   }
   for (const l of [...alertListeners]) {
     try {
-      l({ kind, sessionId, title, interruptKind })
+      l({ kind, sessionId, title, interrupt })
     } catch {
       /* 单个订阅者出错不影响其它订阅者 */
     }
@@ -296,6 +318,8 @@ interface TurnOutcome {
   /** 宿主的原始 reason kind（completed / forked / aborted / error / max-tokens …）；
    *  「正常结束」清单只收 completed / forked（用户主动停止不算“完成”） */
   kind: string
+  /** 中断的完整事实（码 / 文案 / aborted 子类型）；分类自动继续用 */
+  info: InterruptInfo
 }
 
 /** 给任意 promise 加超时；超时按读不到处理（null），绝不让调用方永久挂起。 */
@@ -378,15 +402,33 @@ async function readTurnOutcome(ctx: any, sessionId: string): Promise<TurnOutcome
       }
       if (!last) return null
       const turnAt = Number(last.time) || 0
-      if (last.type === 'agent/error') return { failed: true, turnAt, kind: 'agent/error' }
-      const kind = String(last?.data?.reason?.kind || '')
+      if (last.type === 'agent/error') {
+        const msg = typeof last?.data?.message === 'string' ? last.data.message : ''
+        const code = typeof last?.data?.code === 'string' ? last.data.code : undefined
+        return { failed: true, turnAt, kind: 'agent/error', info: { kind: 'agent/error', message: msg, ...(code ? { code } : {}) } }
+      }
+      const reason = last?.data?.reason && typeof last.data.reason === 'object' ? last.data.reason : {}
+      const kind = String(reason.kind || '')
       if (kind === '') return null
+      // 错误码 / 上游原文：分类器判「瞬时 vs 永久」全靠它们
+      const err = reason.error && typeof reason.error === 'object' ? reason.error : {}
+      const code = typeof err.code === 'string' ? err.code : undefined
+      const message = typeof err.message === 'string' ? err.message : ''
+      const status = Number(err.status ?? err.statusCode) || undefined
       if (kind === 'aborted') {
         // 用户主动按的停止不算故障；登出/钩子等异常中止与工作台提示同一口径
-        const sub = String(last?.data?.reason?.reason?.kind || '')
-        return { failed: sub !== 'user', turnAt, kind }
+        const r = reason.reason && typeof reason.reason === 'object' ? reason.reason : {}
+        const sub = String(r.kind || '')
+        const subCode = sub === 'hook' && String(r.reason || '') === 'deepseek-account/signed-out' ? 'ACCOUNT_SIGNED_OUT' : code
+        const subMsg = typeof r.message === 'string' && r.message ? r.message : message
+        return { failed: sub !== 'user', turnAt, kind, info: { kind, subKind: sub, message: subMsg, ...(subCode ? { code: subCode } : {}) } }
       }
-      return { failed: FAILED_TURN_KINDS.has(kind), turnAt, kind }
+      return {
+        failed: FAILED_TURN_KINDS.has(kind),
+        turnAt,
+        kind,
+        info: { kind, message, ...(code ? { code } : {}), ...(status ? { status } : {}) },
+      }
     })
     return raw ?? null
   } catch {
@@ -418,6 +460,8 @@ function applyOutcome(ctx: any, sessionId: string, o: TurnOutcome | null): boole
     projectId: proj?.id || '',
     turnAt: o.turnAt,
     checkedAt: Date.now(),
+    interruptKind: o.failed ? (o.kind as InterruptKind) : undefined,
+    interrupt: o.failed ? o.info : undefined,
   })
   // 正常结束（completed / forked）且是“观察到的这轮” → 记进第 3 个圆点的完成清单
   // （用户主动停止 aborted 不算“完成”，不产生提醒）
@@ -428,8 +472,7 @@ function applyOutcome(ctx: any, sessionId: string, o: TurnOutcome | null): boole
   // 否则耳朵先听到、眼睛后看到（用户反馈“声音先出、角标后出”）。
   notifyOutcome()
   // 提示音：中断/失败一套、正常完成一套；用户主动停止（aborted）不响
-  // 提示音：中断/失败一套、正常完成一套；用户主动停止（aborted）不响
-  if (o.failed) emitAlert('fail', sessionId, title, o.turnAt, o.kind as InterruptKind)
+  if (o.failed) emitAlert('fail', sessionId, title, o.turnAt, o.info)
   else if (o.kind === 'completed' || o.kind === 'forked') emitAlert('done', sessionId, title, o.turnAt)
   return true
 }
@@ -511,8 +554,7 @@ async function scanOutcomes(ctx: any, projects: ProjectRecord[]): Promise<void> 
       const stale = stop > 0 && o.turnAt + TURN_FRESH_SLACK_MS < stop
       // 窗口还没写进刚结束的轮次：这次读到的是上一轮的旧结局，不落缓存（10s 后再读）
       if (stale && Date.now() - stop < STALE_NEGATIVE_GRACE_MS) continue
-      outcomeCache.set(c.id, { at, failed: o.failed, title, project: c.project, projectId: c.projectId, turnAt: o.turnAt, checkedAt: Date.now() })
-      // 刚观察到停止（≤1 分钟内）且这轮正常结束 → 兼作完成清单的兜底录入
+      outcomeCache.set(c.id, { at, failed: o.failed, title, project: c.project, projectId: c.projectId, turnAt: o.turnAt, checkedAt: Date.now(), interruptKind: o.failed ? (o.kind as InterruptKind) : undefined, ...(o.failed ? { interrupt: o.info } : {}) })
       //（即时路读不到时，兜底扫描补上，不漏“正常结束”提醒）
       if (!o.failed && (o.kind === 'completed' || o.kind === 'forked') && stop > 0 && Date.now() - stop < 60_000) {
         recordDone({ sessionId: c.id, project: c.project, projectId: c.projectId, title, turnAt: o.turnAt })
@@ -614,7 +656,7 @@ export function useActivityPulse(): PulseState {
           } else {
             running++
             active.push({ sessionId: a.sessionId, projectId: project.id, project: project.name, title: a.title })
-            // 跑马灯悬浮面板 / tip 里不再写「进行中」三个字：项目 + 标题足矣
+            active.push({ sessionId: a.sessionId, projectId: project.id, project: project.name, title: a.title, lastPromptAt: lastPromptMs(ctx, a.sessionId, a.updatedAt) })
             tips.push(`${project.name ? `【${project.name}】` : ''}${a.title}`)
           }
         }
@@ -628,7 +670,7 @@ export function useActivityPulse(): PulseState {
         warn++
         const label = hit.project ? `【${hit.project}】` : ''
         tips.push(`⚠️ 上一轮未正常结束：${label}${hit.title}`)
-        items.push({ key, sessionId: id, projectId: hit.projectId || '', project: hit.project, title: hit.title, kind: 'failed' })
+        items.push({ key, sessionId: id, projectId: hit.projectId || '', project: hit.project, title: hit.title, kind: 'failed', interruptKind: hit.interruptKind, interrupt: hit.interrupt })
       }
       // 第 3 个圆点的数据：最近正常结束、还没标注已读的对话
       const doneAll: DoneItem[] = []

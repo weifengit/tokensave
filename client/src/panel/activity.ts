@@ -62,17 +62,7 @@ export function statusSnapshot(ctx: any): SessionStatusMap {
  * 优先用宿主投影 sessionListMetadata.lastPromptAt（字面就是最近一条人发的消息）；
  * 投影缺失（冷会话/未加载）时退回列表行的 updatedAt，保证顺序仍然可用。
  */
-function lastPromptMs(ctx: any, sessionId: string, fallbackMs: number): number {
-  try {
-    const list = readService<any>(ctx, 'sessions')?.list?.getSnapshot?.()
-    const at = Number(list?.projectionsBySession?.[sessionId]?.values?.sessionListMetadata?.lastPromptAt)
-    if (Number.isFinite(at) && at > 0) return at
-  } catch {
-    /* 投影不可读：回退 */
-  }
-  return fallbackMs
-}
-
+export function lastPromptMs(ctx: any, sessionId: string, fallbackMs: number): number {
 /**
  * 读一个项目的活跃对话列表（已按约定排序并完成紧凑编号）。
  *

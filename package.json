@@ -22,7 +22,12 @@
   },
   "scripts": {
     "check": "tsc --noEmit",
-    "build:client": "node scripts/build-client.mjs"
+    "build:client": "node scripts/build-client.mjs",
+    "test:continue": "node scripts/check-continue-policy.mjs && node scripts/check-auto-continue-flow.mjs",
+    "test:ui": "node scripts/check-panel-ui.mjs",
+    "test:width": "node scripts/check-panel-width.mjs",
+    "test:hover": "node scripts/check-hover-corridor.mjs",
+    "test": "pnpm check && pnpm test:continue && pnpm test:width && pnpm test:hover && pnpm test:ui"
   },
   "dependencies": {
     "@deepseek-ai/dsh-brand": "0.2.0-rc.2",

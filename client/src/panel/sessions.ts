@@ -563,11 +563,21 @@ export function sessionBelongsToProject(ctx: any, sessionId: string, projectPath
  *
  * 工作台的主对话必须关联**本项目**的会话：优先最近活动的非空白会话（真正有内容的那个），
  * 没有非空白会话时退回空白会话（可用于开新对话），都没有返回 null。
+ *
+ * **探索者会话不算『自己的会话』**：它们是本项目的 root 会话（cwd = 项目路径，
+ * 侧边栏可见），而且刚跑完时 updatedAt 往往最新——若不排除，自动选会话就会选中某条
+ * tokensave-* 探索者，工作台的「主对话」被悄悄切到探索者身上（用户看到的「对话 ID
+ * 不匹配」）；归档后挑下一条会话也会踩同一个坑。
  */
+/** 从一批项目会话里挑「用户自己的那条」：跳过探索者，优先非空白。 */
+function pickOwnSession(list: ProjectSession[]): ProjectSession | null {
+  const own = list.filter((s) => !s.explorer)
+  if (own.length === 0) return null
+  return own.find((s) => !s.blank) ?? own[0]
+}
+
 export function latestProjectSession(ctx: any, projectPath: string): ProjectSession | null {
-  const all = readProjectSessions(ctx, projectPath)
-  if (all.length === 0) return null
-  return all.find((s) => !s.blank) ?? all[0]
+  return pickOwnSession(readProjectSessions(ctx, projectPath))
 }
 
 // —— 会话 → 工作台 自动绑定（#2）————————————
@@ -993,7 +1003,7 @@ export function stayInProjectAfterArchive(
   const ctx: any = getClientContext()
   if (!ctx || !projectPath || !projectId) return false
   const remaining = readProjectSessions(ctx, projectPath).filter((s) => s.id !== archivedId)
-  const next = remaining.find((s) => !s.blank) ?? remaining[0]
+  const next = pickOwnSession(remaining)
   if (next) return enterProjectWorkbench(projectId, next.id)
   void startProjectSession(projectPath, projectId, archivedId)
   return true
