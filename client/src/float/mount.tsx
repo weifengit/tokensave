@@ -2,10 +2,11 @@
 // 挂载点策略：优先 root 层浮层槽 shell.overlay（经 slots.inject 等待就绪），
 // 8s 未就绪降级注册到 KB 示例槽 conversation.session.header.actions（FloatWindow
 // 自身为 fixed 定位浮层，DOM 位置不影响浮动表现）。
-// FloatWindow 由 dsh-float-window 源码包直接内联进本 bundle（其 README 官方消费方式），
+// FloatWindow 源码已 vendor 进仓库（client/vendor/dsh-float-window/，v0.4.1 快照 + LICENSE），
+// 构建时打进本 bundle——不再依赖 npm 包 dsh-float-window（去第三方源码依赖，防上游变更/失联）。
 // 老板键/几何持久化/多窗协调由组件 + window.__dshFloatWindows 注册表自动处理。
 import type { Context } from '@deepseek-ai/cordis'
-import { FloatWindow } from 'dsh-float-window'
+import { FloatWindow } from '../../vendor/dsh-float-window/index.tsx'
 import { ExplorerStream } from '../components/ExplorerStream'
 import { BriefViewer } from '../components/BriefViewer'
 

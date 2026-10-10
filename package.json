@@ -35,7 +35,7 @@
     "@deepseek-ai/dsh-system-prompt": "0.2.0-rc.2",
     "@types/node": "^24.19.1",
     "@types/react": "^19.2.0",
-    "dsh-float-window": "0.4.1",
+
     "esbuild": "^0.28.2",
     "react": "18.3.1",
     "typescript": "^5.9.0"

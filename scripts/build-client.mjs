@@ -3,8 +3,8 @@
 //   window.__ModuleLoader__.load({ id, factory(require) → exports })
 // esbuild 以 CJS 格式打包（外部包经 factory 的 require 走运行时模块表：react 等平台种子），
 // 外层信封提供 module/exports 变量并返回 module.exports —— 与 dsh-deepseek-web-login
-// 等官方插件产物结构一致。tsconfigRaw 置空以忽略项目 tsconfig 的 paths
-//（types/dsh-float-window.d.ts 垫片只给 tsc 用，构建时打包真实源码包）。
+// 等官方插件产物结构一致。FloatWindow 已 vendor 进 client/vendor/dsh-float-window/
+//（源码快照，构建时直接打包），不再依赖 npm 包 dsh-float-window。
 import { build } from 'esbuild'
 import { mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs'
 

@@ -2362,14 +2362,24 @@ localStorage 桩，覆盖默认态 / 写读回环 / 解锁保留快照 / 按项�
 ```
 本模块只做三件事，全部围绕宿主的那个 CSS 变量：
 1. **自动加高**：量「滚动口内边距 + 内容盒 scrollHeight」→ 把 `--dsh-composer-text-max-height`
-   写成 `max(内容高, min(视口×70%, 视口-24))`。内容装得下就没有内部滚动条（一眼看全），
+   写成 `max(视口-160, 160)`（余量留给头部/工具栏）。内容装得下就没有内部滚动条（一眼看全），
    超过上限才回到滚动。
 2. **手动拉高**：滚动口上沿一条 16px 抓手（`position:fixed` 挂在 body，**不进宿主 React 树**，
-   因此不会被 React 重排打断）。按住拖动改上限，松手写入 localStorage
-   （`tokensave:composer-height.v1`，每 origin 一份：桌面 127.0.0.1 与手机网关各记各的）。
-3. **交还自动**：抓手右侧「重置」按钮或双击抓手，把上限交还给自动加高。
+   因此不会被 React 重排打断）。按住拖动改的是**固定盒**：`max-height`（CSS 变量）与
+   `min-height` 成对写 —— 只写 max 的话，内容比目标矮的盒子根本不会变高，空输入框往上拖
+   毫无反应。松手写入 localStorage（`tokensave:composer-height.v1`，每 origin 一份：
+   桌面 127.0.0.1 与手机网关各记各的）。
+3. **交还自动**：抓手右侧「重置」按钮或双击抓手，把固定盒交还给自动加高（同时移除 min-height）。
    手动高度一旦拖出来就**固定住**（内容变少也不自动收回）——「松手后固定为这个高度」
    是用户的明确意图，不替他改；要回自动就点重置。
+
+### 返工二（用户反馈「没有实现哦」—— 只写 max-height，短内容拖不动）
+首版把手动高度只写进了 `--dsh-composer-text-max-height`（max）。`box = min(content, cap)`，
+所以**内容比目标矮时，往上拖 cap 再大 box 也不动**：空/短输入框拖高全程零视觉反馈，
+看起来就是「功能没做」。改成 `applyLimits()` 成对写 `min-height` + `max-height`（固定盒），
+拖动中 box 即时 = 目标值（WYSIWYG），松手保持；内容变少也不缩（符合「固定」），
+内容超出固定高度则在盒内滚动（固定是用户自己的选择，悬停出「重置」可退回自动）。
+同时把自动上限从「视口×70%」放宽为「视口-160」，长文本更少触发内部滚动。
 
 ### 关键坑（真机测出来的）
 - **抓手不能跟盒子一起动**：拖动时滚动口高度在变，抓手又钉在它上沿 —— 指针位移会被
@@ -2381,6 +2391,87 @@ localStorage 桩，覆盖默认态 / 写读回环 / 解锁保留快照 / 按项�
   自动加高/拖高都自然向上展开，不需要额外分支（只用于判断是否抬抓手，最终统一按 rect 摆位）。
 - **`Input.insertText` 只成功一次**：CDP 里连续 `Input.insertText` 只有第一次进 Lexical，
   拖拽/排版验证因此一度被误判。改用「每次输入前重新点一次真鼠标」或直接看 DOM。
+
+### 视觉返工（用户反馈「浅蓝粗线突兀、圆角处出线露头」）
+首轮实现的抓手线是 3px、且 `data-ts-manual=1` 时整条变浅蓝，位置又恰好压在卡片顶边
+（滚动口无内边距，线画在 `scrollTop-8` = 卡片顶边）—— 圆角处必然超出卡片轮廓。改法：
+1. **圆角内缩**：按滚动口父卡片的 `borderTopLeftRadius`（实测 28px）写 `--ts-grab-inset = radius+2`
+   （钳到 `[10, 宽/3]`），线与「重置」胶囊两端都吃这个变量 —— 实测 grip 左内缩 30px、右内缩 34px（含滚动口右 4px 边距）。
+2. **线落在顶边内侧**：抓手浮层从 `scrollTop-12` 改为 `scrollTop-8`，2px 的线画在 `cardTop+4`
+   —— dy=4 处圆角边界仅在离边 5.4px 内，30px 内缩下完全不出线（截图复核过左上角）。
+3. **降噪**：2px、默认中性灰 `rgba(127,127,127,.16)`（内容已装下时 `.10`），悬停 `.42`；
+   固定过的状态不改色，由悬停浮出的「重置」表达。
+4. **全程无蓝**（用户追加要求「不要出现蓝色那条线」）：拖动中的瞬时反馈也改为**压深的灰**
+   `rgba(127,127,127,.6)`（保持 2px 不变粗），px 数字胶囊与「重置」描边同步去蓝。
+   该组件内已无任何蓝色值；`dist/client.js` 里剩余的 `96,165,250` 全部来自
+   `panel/styles.ts`（工作台开关等既有配色），与抓手无关。
+
+### 返工四（用户反馈三连：拖动残影 / 页面一直“刷新”抖动 / 切 tab 丢滚动位）
+
+**1. 拖动残影**：拖动中 `positionHandle()` 曾把抓手冻结在按下时的视口矩形，盒子顶边
+   实时上移 → 2px 横线连同胶囊滞留原地。而高度数学是 origin 基准（`originH +
+   (originY-clientY)`，从不读抓手位置），冻结对跟手毫无贡献 —— 直接去掉 drag 分支，
+   抓手按实时 rect 跟随盒顶；`DragState` 删掉 left/width/top；`sync()` 加
+   `if (drag) return`（拖动中禁止重绑丢 pointer capture）。
+
+**2. 抖动/“刷新”**：先排查了外部因素（无 `dev:web`/vite 进程、DSH 日志无 HMR 刷屏），
+   再锁定自身四处空转：① `setInterval(sync,1000)` 每秒轮询；② `apply()/positionHandle()/reflect()`
+   **无条件写** DOM，且 scroll 事件直写未 rAF 合并；③ attach 重绑时抓手整颗摘除重插（闪动）；
+   ④ 拖动中每次 pointermove 同步写 localStorage（掉帧）。全部修掉：差量写助手
+   `setStyle/setDs`（值不变不碰 DOM）+ scroll 布局 rAF 合并 + 删轮询 + 抓手常驻
+   （`hideHandle` 只切 display，卸载插件才 `removeHandle`）+ 拖动中只改内存、松手一次落盘。
+   诊断计数挂 `window.__TS_COMPOSER_STATS`（apply/styleWrites/attach/sync/detach）。
+
+**3. 切 tab 丢滚动位**：新增 `client/src/scroll-memory.ts`（与 composer 同在 `apply()` 安装）：
+   - **记账**：scroll(capture) 按 `{会话id, scrollTop, 贴底≤48px}` 实时记；容器首次挂载补基线
+     （覆盖“从未滚动就贴底”的场景）。
+   - **离开保护**：点 tab（白名单：对话/轨迹/看板/项目中心/工作台）离开「对话」或 conv-scroll
+     被卸载 → `frozen`，期间回填的滚动事件不许覆盖账本。
+   - **回来恢复**：conv-scroll 重挂（或点回「对话」）→ rAF 等内容稳定（3 帧不变；空态最多
+     等 2s）→ 贴底则 pin 到底并**贴底跟随**（800ms 慢轮询 + 150ms 自我标记，用户上滚一次退出），
+     否则 clamp 回原 scrollTop。
+   - **恢复键**：两侧都是真实会话 id 且不同才丢弃（切会话不串位置）；空键领养 ——
+     基线常记在 Probe 上报会话 id 之前，首版严格比对会把恢复全打回（实测 discarded:2）。
+     诊断挂 `window.__TS_SCROLL_MEMORY`。
+
+**验证（无头 Chrome + 裸 CDP，最终构建 507,979B）**
+
+| 项 | 实测 |
+|---|---|
+| 静置防抖 | 10s/15s 两轮静置：styleWrites **14→14 / 12→12（零写入）**；navs=1（全程零 reload）✓ |
+| 无残影 | 拖动逐帧采样 `scrollTop - grabberTop`：pressed/-60/-150/松手 **恒为 8px**（贴实时盒顶）✓ |
+| 无蓝 | 拖动中 grip `rgba(127,127,127,.6)`、松手 `.42`（全程灰）✓ |
+| 固定/重置 | 拖后 stored=186 + min-height=186；重置 → stored null + min-height 移除、cap 回 540 自动 ✓ |
+| 中位恢复 | 滚到 966 → 切「轨迹」→ 切回「对话」：**966→966**（restored 累计、discarded 0）✓ |
+| 贴底恢复 | 滚到 1931(max) → 切「看板」→ 切回：**st=1931=max（回到最新）** ✓ |
+| 贴底跟随 | 恢复到底后插入 400px 块：2.5s 内 st 回到新 max（pin 计数有记录；宿主同场景也会拉回，双保险）✓ |
+| 重绑次数 | 全程 attach≤2、sync≤3（无重绑风暴）✓ |
+| tsc/build | `tsc --noEmit` 全绿；`dist/client.js` 507,979B ✓ |
+
+**教训**：CDP 里的「页面卡死」可能是假的 —— `pkill -f "Google Chrome for Testing"` 会把
+浏览器的子渲染进程一起杀掉，`/json/list` 仍留着指向死渲染器的条目，evaluate 永远无响应，
+看起来像“页面主线程死循环”。先用 `about:blank`/`data:` 控制页做对照实验，再判页面本身。
+
+### 返工五（用户反馈：拖动仍闪屏留横线残影 / 要求彻底去掉横线）
+
+**1. 横线彻底移除**（用户明确要求）：删除 `.ts-composer-grip` 元素及其全部 CSS
+   （含 hover/拖动态变色、透明度过渡 —— 过渡本身就是拖动中的“淡出重影”来源）。
+   抓手只保留一条**不可见**的 16px 命中区（background/border/shadow 全无），
+   可发现性靠 `cursor:ns-resize` + title 提示；拖动反馈靠 px 数字胶囊，
+   固定高度的退路靠悬停浮出的「重置」。`reflect()` 同步删掉无人消费的 `tsOverflow`。
+
+**2. 拖动闪屏**：`onPointerMove` 原来**每次鼠标移动都同步改 min/max-height + 摆位**，
+   pointermove 频率可高于刷新率，等于把消息区/座位连续重排。改为逐帧合并：
+   move 只算 `pendingPx` 并排一个 rAF（`applyDrag`），每帧最多应用一次；
+   `pointerup` 若先于 rAF 到达则同步冲刷，保证松手值不丢。
+
+| 验证（真机，最终构建 507,279B） | 实测 |
+|---|---|
+| 无横线 | `document.querySelector('.ts-composer-grip') === null`；抓手子元素只剩 [size, reset]；computed bg=transparent / border=0 / shadow=none；拖动中与松手后截图目检均无任何横线 ✓ |
+| 拖动正常 | 逐帧合并后 box 36→176→236 跟手；cap/min-height=236；stored=236；px 胶囊实时显示 ✓ |
+| 重置 | stored→null、min-height 移除、上限回自动 ✓ |
+| 防抖未回退 | 静置 8s：styleWrites 14→14（零写入）；navs=1 无 reload ✓ |
+| tsc/build | `tsc --noEmit` 全绿；`dist/client.js` 507,279B ✓ |
 
 ### 验证
 本环境 `agent-browser` 的 socket 目录 `~/.agent-browser` 被沙箱拒绝写，改用
@@ -2403,6 +2494,13 @@ localStorage 桩，覆盖默认态 / 写读回环 / 解锁保留快照 / 按项�
 | 松手固定 | 拖到 36 后松手：`manual=1`、stored=36、内部滚动开启（真正的"固定高度"，内容变少也不自动收回）✓ |
 | 刷新 | 重新载入后 cap 仍为存储值 ✓ |
 | 重置 | 点「重置」→ cap 回自动、`localStorage` 为 null ✓ |
+| 真机·自动加高 | 输入 12 行中文（578 字）：box 36 → **490**（=700×70%），卡片 98 → 552 ✓ |
+| 真机·圆角不露头 | grip 左内缩 30 / 右内缩 34（卡片圆角 28），`gripTop = cardTop+4` 恒成立；2px 中性灰，拖动中才是蓝（0.8），松手回灰 ✓ |
+| 真机·拖动 | 拖 120px：cap 490 → 550 → 610，抓手 y 冻结在 127（卡片已上移），stored=610、manual=1；重置后回 490 ✓ |
+| 返工二·沙箱 | 短内容（52px）往上拖：box **52→102→152** 实时变高（min-height 生效）；松手固定 152；内容缩到 36 仍是 152；重置 → min-height 移除、box=内容、cap 回自动 ✓ |
+| 返工二·真机 | 空/短输入框（36）拖 +80/+160：box **36→116→196** 即时跟手，minH 同步；刷新后仍固定 196；重置回 36/自动（cap=视口-160=540）✓ |
+| 返工二·圆角 | 真机 radius=28 → inset 30/34，`gripTop-cardTop=4`，2px 灰线 ✓ |
+| 返工三·无蓝 | 真机逐状态读 computed style：idle `.10` / hover `.42` / **dragging `.6`（灰，非蓝）** / 松手回 `.42`；拖动中盒 36→126 正常、松手固定、重置回自动；size 胶囊与重置描边均为中性灰 ✓ |
 
 `tsc --noEmit` 全绿；`dist/client.js` 已重建（499KB，需刷新页面生效）。
 
@@ -2427,3 +2525,42 @@ localStorage 桩，覆盖默认态 / 写读回环 / 解锁保留快照 / 按项�
 ### 教训
 「自动停」这类副作用要挂**全局捕获**监听而不是绑在某个按钮上，并留一个短宽限，
 否则用户正在打字/滚动时刚好响起的提醒会被瞬间抹掉，等于没提醒。
+
+## Step 62（2026-10-09）：去 dsh-call-session 化（会话创建半边）——官方原语直建探索者
+
+**用户需求**：tokensave 不再受第三方插件（dsh-call-session）更新/失联拖累；两条候选路线
+（①官方 dsh-session API 自建会话 / ②官方 subagent continuable）都确认后择优实现，不行就用②。
+
+### 调查结论（dsh 0.2.0-rc.2 安装源码逐层核实）
+- `session_create`（dsh-call-session）内部 = 三步官方原语编排：`agentsService.create()`
+  （dsh-agent 服务 + dsh-agent-loop 工厂：建会话/装配/启动 loop）→ `agentPresets.resolve/mount`
+  （预设装配，官方 `sessionController.composeAgent` 同款）→ `sessionTitle.rename`（ADR-0017 标题事件）；
+  另两步（attachWorkspace、黑板引导公告）是协作特性，探索者不需要。
+- 官方 `ctx.sessionController`（dsh-api-session-controller，profile 已启用）暴露 create/selectModel/
+  prompt/rename，其 createOrAdopt 内部即 `ctx.agents.create({ sessionId, agentOptions, meta:{cwd}, setup })`
+  ——`meta.cwd` 原生支持，`AgentOptions` 即 `{provider, model}`。**方案①完全成立且优于②**
+  （②的 continuable sendMessage 只允许直接父子路由，改造面大且探索者不再是侧边栏独立会话）。
+
+### 实现
+- 新模块 `src/session/create-explorer-session.ts`：`createExplorerSession(ctx, {cwd,title,model})`
+  直调官方三原语（服务经 ctx.get reflect 层免 inject 取得并兜异常）；agents 服务缺席即抛、
+  agentPresets 缺席降级不挂 setup（与官方 composeAgent 降级一致）、标题失败不阻断。
+- `parallel-explorer.ts`：`callTool('session_create')` 删除；新增 `resolveExplorerCwd()`
+  （工作台项目作用域优先、调用方 session.header.cwd 回退）；**withProjectCwd Proxy hack 退役**
+  （meta.cwd 原生）。dead code 清理：callTool/nextCallId/SessionCreateValue。
+- `agent` 参数语义收窄：仅作 cwd 回退（CONTRACTS 已注记）。
+
+### 端到端实测（web profile，HMR 热加载后真实委派）
+- 探针经 tokensave_delegate 真实运行：探索者设置存过选择 → 5 探索者并行经**新路径**建会话，
+  真实轮次跑完、黑板产出（post-1791587086848-g200y1）、简报回收成功。
+- 新路径判别：黑板 `session:bootstrap` 主题 **0 条**（旧 call-session 路径建会话必发引导公告）。
+- 持久化抽查（session-59c2063d…/session.v4.jsonl.zstd）：header `{cwd:/Users/sonoma/code/tokensave,
+  agentPreset:standard, delegationDepth:0}` ✓（meta.cwd + 预设装配都生效）；
+  `session/title` 事件 seq=3 source.kind='user' ✓（标题持久化生效）。
+- `pnpm run check` 全绿；dsh-call-session 依赖从「建会话+黑板」收敛为**仅黑板**
+  （boardStore/board_post/board_list，黑板自集成为下一步候选）。
+
+### 教训
+「第三方工具只是官方原语的编排壳」——去依赖前先把它的实现逐层读完：session_create 拆开全是官方
+`agents.create` + preset + title 三件套，直接复刻比绕道 subagent 改造便宜一个数量级；且旧路径
+「往公共黑板发引导公告」这个副作用，反过来成了端到端验证新旧路径的天然判别器。

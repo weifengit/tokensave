@@ -44,7 +44,7 @@ import {
   enterProjectWorkbench, getLiveScreen, onRequestProjectList, onRequestWorkbench, openControlRoom,
   sendToSession,
 } from './sessions'
-import { markPulseRead, useActivityPulse } from './pulse'
+import { markPulseRead, useActivityPulse, type InterruptKind } from './pulse'
 import {
   DURATION_OPTIONS, SOUND_OPTIONS, getSoundSettings, initSoundBridge, playRole,
   setSoundSettings, stopSound, subscribePlaying,
@@ -82,7 +82,13 @@ function sidebarRightOf(btn: HTMLElement): number {
 /** 黄灯清单里「继续」按钮直接发出去的原文（宿主 max-tokens 提示就是让用户发「继续」） */
 const CONTINUE_TEXT = '继续'
 
-/** 浮层里的一行（黄灯清单与完成清单共用结构）。 */
+/** 中断类型：决定是否自动发送「继续」 */
+type InterruptKind = 'max-tokens' | 'blocked' | 'interrupted' | 'error' | 'hook' | 'aborted-user' | 'aborted-parent' | 'aborted-hook' | 'aborted-disposed' | 'aborted-legacy' | 'unknown'
+
+/** 哪些中断类型应该自动发送「继续」 */
+const AUTO_CONTINUE_KINDS: ReadonlySet<InterruptKind> = new Set(['max-tokens'])
+
+/** 浮层里的一行（活跃/需要处理/已完成共用结构）。 */
 interface PopItem {
   /** 已读标注键（markPulseRead 用） */
   key: string
@@ -95,6 +101,10 @@ interface PopItem {
   projectKey: string
   /** 是否给「继续」按钮（只有上一轮没正常结束的那类才有意义） */
   canContinue: boolean
+  /** 中断类型（仅 kind='failed' 时有值） */
+  interruptKind?: InterruptKind
+  /** 是否为待确认类型 */
+  isPending?: boolean
 }
 
 type PopKind = 'warn' | 'done'
@@ -274,16 +284,29 @@ function PulseDots({
 }
 
 /**
- * 跑马灯悬浮面板：鼠标停在呼吸圆点上弹出的「对话清单」——每行 = 对话标题 + 项目胶囊，
- * **点条目直达那条对话的工作台**（原生 tooltip 做不到点击，所以自绘）。
- * portal 到 body + position:fixed，与两枚角标的清单同款定位（rail / 展开态都向右飞出）。
+ * 跑马灯悬浮面板（合并了原黄灯/蓝灯清单 + 声音设置）：
+ * - 标签页：活跃 / 需要处理 / 已完成
+ * - 每行：图标 + 标题 + 项目胶囊 + 操作（直达 / 标记已读 / 继续）
+ * - 顶部：声音设置（内嵌，同面板同现）
+ * - 底部：一键全部标记已读（针对当前标签页）
+ * portal 到 body + position:fixed，贴按钮右缘飞出。
  */
-function HoverPanel({ pos, items, onPick, onHover }: {
+function HoverPanel({ pos, items, onPick, onHover, onMarkRead, onMarkAllRead, onContinue, activeTab, setActiveTab }: {
   pos: { top?: number; bottom?: number; left: number; maxWidth?: number }
   items: PopItem[]
   onPick: (item: PopItem) => void
   /** 鼠标进出面板：父级据此保持打开 / 计时关闭 */
   onHover: (inside: boolean) => void
+  /** 标记单条已读 */
+  onMarkRead: (key: string) => void
+  /** 一键全部标记已读（当前标签页） */
+  onMarkAllRead: () => void
+  /** 发送继续 */
+  onContinue: (item: PopItem) => Promise<void>
+  /** 当前激活的标签页 */
+  activeTab: 'active' | 'warn' | 'done'
+  /** 切换标签页 */
+  setActiveTab: (tab: 'active' | 'warn' | 'done') => void
 }) {
   // 提示音设置**直接嵌在面板里**（与「对话清单」同面板同现，不再单独弹一层）；
   // 改动即持久化，这里只是本地镜像，用来驱动控件显示。
@@ -291,6 +314,20 @@ function HoverPanel({ pos, items, onPick, onHover }: {
   const [playingLabel, setPlayingLabel] = useState<string | null>(null)
   useEffect(() => subscribePlaying(setPlayingLabel), [])
   const update = (patch: Partial<SoundSettings>) => setS(setSoundSettings(patch))
+  const [sendState, setSendState] = useState<Record<string, 'sending' | 'sent' | 'error'>>({})
+
+  // 按标签页分组
+  const activeItems = items.filter((it) => {
+    if (activeTab === 'active') return it.icon === '●'
+    if (activeTab === 'warn') return it.icon !== '●' && it.icon !== '✅'
+    if (activeTab === 'done') return it.icon === '✅'
+    return false
+  })
+
+  const warnCount = items.filter((it) => it.icon !== '●' && it.icon !== '✅').length
+  const doneCount = items.filter((it) => it.icon === '✅').length
+  const activeCount = items.filter((it) => it.icon === '●').length
+
   return createPortal(
     <div
       className="ts-warn-pop ts-hover-pop"
@@ -300,6 +337,43 @@ function HoverPanel({ pos, items, onPick, onHover }: {
       onMouseEnter={() => onHover(true)}
       onMouseLeave={() => onHover(false)}
     >
+      {/* 标签页导航 */}
+      <div className="ts-hover-tabs" role="tablist" aria-label="对话分类">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeTab === 'active'}
+          className={`ts-hover-tab${activeTab === 'active' ? ' active' : ''}`}
+          onClick={() => setActiveTab('active')}
+        >
+          <span className="ts-hover-tab-icon" aria-hidden="true">●</span>
+          <span className="ts-hover-tab-label">活跃</span>
+          {activeCount > 0 && <span className="ts-hover-tab-count">{activeCount}</span>}
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeTab === 'warn'}
+          className={`ts-hover-tab${activeTab === 'warn' ? ' active' : ''}`}
+          onClick={() => setActiveTab('warn')}
+        >
+          <span className="ts-hover-tab-icon" aria-hidden="true">⚠</span>
+          <span className="ts-hover-tab-label">需处理</span>
+          {warnCount > 0 && <span className="ts-hover-tab-count">{warnCount}</span>}
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeTab === 'done'}
+          className={`ts-hover-tab${activeTab === 'done' ? ' active' : ''}`}
+          onClick={() => setActiveTab('done')}
+        >
+          <span className="ts-hover-tab-icon" aria-hidden="true">✅</span>
+          <span className="ts-hover-tab-label">已完成</span>
+          {doneCount > 0 && <span className="ts-hover-tab-count">{doneCount}</span>}
+        </button>
+      </div>
+
       {/* 提示音设置：直接内嵌在面板顶部（与「对话清单」同面板同现，不再单独弹一层）；
          紧凑字号，改完即持久化 */}
       <div className="ts-sound-body">
@@ -400,11 +474,22 @@ function HoverPanel({ pos, items, onPick, onHover }: {
           </button>
         </div>
       </div>
+
       <div className="ts-warn-pop-head">
-        <span className="ts-warn-pop-title">对话清单（{items.length}）</span>
+        <span className="ts-warn-pop-title">对话清单（{activeItems.length}）</span>
+        {activeItems.length > 0 && (
+          <button
+            type="button"
+            className="ts-mark-all-read-btn"
+            title="将当前分类下的所有条目标记为已读"
+            onClick={onMarkAllRead}
+          >
+            全部标记已读
+          </button>
+        )}
       </div>
       <div className="ts-warn-pop-list">
-        {items.map((it) => (
+        {activeItems.map((it) => (
           <div className="ts-warn-row" key={it.key}>
             <button
               type="button"
@@ -414,11 +499,45 @@ function HoverPanel({ pos, items, onPick, onHover }: {
               <span className="ts-warn-icon" aria-hidden="true">{it.icon}</span>
               <span className="ts-warn-body">
                 <span className="ts-warn-title">{it.title}</span>
-                {it.sub && <span className="ts-warn-sub" style={pillStyle(it.projectKey)}>{it.sub}</span>}
+                {it.sub && <span className="ts-warn-sub" style={pillStyle(it.projectKey)}>{it.sub}</span>
               </span>
             </button>
+            <div className="ts-warn-actions">
+              {it.canContinue && (
+                <button
+                  type="button"
+                  className="ts-warn-continue-btn"
+                  title={it.interruptKind === 'max-tokens' ? '输出被截断：自动发送「继续」让模型接着写' : '点击发送「继续」'}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onContinue(it)
+                  }}
+                  disabled={sendState[it.key] === 'sending'}
+                >
+                  {sendState[it.key] === 'sending' ? '发送中…' : sendState[it.key] === 'sent' ? '已发送' : '继续'}
+                </button>
+              )}
+              <button
+                type="button"
+                className="ts-warn-mark-read-btn"
+                title="标记为已读（黄/蓝灯计数减一）"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onMarkRead(it.key)
+                }}
+              >
+                ✓
+              </button>
+            </div>
           </div>
         ))}
+        {activeItems.length === 0 && (
+          <div className="ts-warn-empty">
+            {activeTab === 'active' && '没有正在进行的对话'}
+            {activeTab === 'warn' && '没有需要处理的对话'}
+            {activeTab === 'done' && '没有已完成的对话'}
+          </div>
+        )}
       </div>
     </div>,
     document.body,

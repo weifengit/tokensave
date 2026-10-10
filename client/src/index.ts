@@ -29,6 +29,7 @@ import { ProjectCenter } from './panel/ProjectCenter'
 import { ControlRoomEntry } from './panel/ControlRoomEntry'
 import { applyDockkitPatch } from './dockkit-patch'
 import { installComposerResize } from './composer-resize'
+import { installScrollMemory } from './scroll-memory'
 
 export const inject = { slots: true }
 
@@ -214,6 +215,12 @@ export function apply(ctx: Context) {
     installComposerResize()
   } catch (e) {
     console.warn('[composer-resize] install failed:', e)
+  }
+  // 聊天记录滚动位记忆：拉到最新切走再切回，仍停在最新（或回到原中间位置）。
+  try {
+    installScrollMemory()
+  } catch (e) {
+    console.warn('[scroll-memory] install failed:', e)
   }
   // DockKit 补丁：关闭主对话窗口后，空出的 docked pane 自动合并（相邻窗口扩展，不残留空白/遮罩）
   try {

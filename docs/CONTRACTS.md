@@ -133,9 +133,9 @@ export async function parallelExplore(
   taskDescription: string,
   codeContext: string | null,
   explorerCount: number,
-  agent?: Agent   // 调用方 agent：透传给 session_create/session_call 的 exec.agent——
-                  // dsh-call-session 的 preset/driver 接线依赖 callerAgent（exec?.agent），
-                  // 缺省创建的 peer 轮次永远不会启动（Step 10 实测），必须由 tokensave_delegate 的 exec.agent 传入
+  agent?: Agent   // 调用方 agent：仅用于回退解析探索者 cwd（agent.session.header.cwd）——
+                  // 2026-10-09 去 dsh-call-session 化后不再透传给 session_create；
+                  // 工作台项目作用域优先，其次此回退（官方 agents.create 的 meta.cwd 直传）
 ): Promise<Array<{ sessionId: string; label: string }>>
 ```
 ### 返回值
@@ -153,6 +153,15 @@ Array<{ sessionId: string; label: string }>
 > 平台 dsh-acp 同款构造）构造消息，按 agent.status 直调 followup（空闲，唤醒首轮）
 > / steer（运行中），镜像原 dispatchNativeMessage 语义；投递失败直接抛出（不再
 > allSettled 静默吞错）。签名与返回值不变，EXPLORER_PRESETS 不变。
+>
+> 2026-10-09 变更（去 dsh-call-session 化，方案①）：探索者会话创建不再经
+> `ctx.tools.execute('session_create')`——新模块 `src/session/create-explorer-session.ts`
+> 直调官方原语：`agents.create`（meta.cwd 原生指定工作区，withProjectCwd Proxy hack 退役；
+> agentOptions 直传 provider/model）+ `agentPresets.resolve/mount`（预设装配，同官方
+> sessionController.composeAgent）+ `sessionTitle.rename`（标题持久化，回退 session/title 事件）。
+> 探索者仍是普通 root 会话（侧边栏可见，非 subagent）。`agent` 参数语义变更：仅作 cwd 回退。
+> 端到端实测通过（5 探索者并行建会话/真实轮次/黑板产出/简报回收；黑板 session:bootstrap
+> 零公告证实走新路径）。消息投递路径（followup/steer 直投）不变。
 ## 浮窗 storageKey 规则
 ```
 tokensave:explorer:${sessionId}
@@ -274,11 +283,18 @@ export function registerSystemPrompt(ctx: Context): void
 // })
 ```
 
-## 跨插件依赖（版本要求）
-- dsh-call-session >= 最新
-- dsh-float-window >= 0.2
-- dsh-llm-fallbacks
-- dsh-hashline-edittool 或 dsh-smarter-edit
+## 跨插件依赖（2026-10-09 去依赖改造后）
+- dsh-call-session >= 0.1.6（**仅剩黑板依赖**：boardStore/board_post/board_list 读写；
+  session_create 建会话已于 2026-10-09 去除——`createExplorerSession`（src/session/create-explorer-session.ts）
+  直调官方原语 agents.create + agentPresets.resolve/mount + sessionTitle.rename，实测通过）
+- ~~dsh-float-window~~ **已移除**：v0.4.1 源码快照 vendor 进 `client/vendor/dsh-float-window/`（含 LICENSE 与
+  [vendor-patch] labels 可选+默认合并），构建时直接打包，npm 依赖已删；升级/换实现完全自控
+- dsh-llm-fallbacks（**配置级零代码耦合**：代码从不 import/调用，仅 profile 配置给探索者/执行者配模型回退链；
+  卸载不影响编译与运行，仅失去自动故障切换）
+- dsh-hashline-edittool 或 dsh-smarter-edit（UI 编辑体验，无代码耦合）
+- 免费 provider（deepseek-web / our-free-model / opencode-zen 等）：**硬编码已解除**——
+  `parallelExplore` 建会话前经 `llm.listProviders()` 探测，provider 未注册的预设/选择项降级剔除并告警，
+  全部不可用时抛出可读错误（llm 未就绪时探测跳过、保持原行为）；探索者设置面板本就按 live 目录列候选
 
 ## 文件路径约定
 ```

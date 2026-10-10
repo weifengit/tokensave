@@ -36,9 +36,6 @@ importers:
       '@types/react':
         specifier: ^19.2.0
         version: 19.3.0
-      dsh-float-window:
-        specifier: 0.4.1
-        version: 0.4.1(react@18.3.1)
       esbuild:
         specifier: ^0.28.2
         version: 0.28.2
@@ -366,11 +363,6 @@ packages:
   csstype@3.2.3:
     resolution: {integrity: sha512-z1HGKcYy2xA8AGQfwrn0PAy+PB7X/GSj3UVJW9qKyn43xWa+gl5nXmU4qqLMRzWVLFC8KusUX8T/0kCiOYpAIQ==}
 
-  dsh-float-window@0.4.1:
-    resolution: {integrity: sha512-lQrm8ulR1vwze0q70XuqeXg20xvMGyK2yH+mUiD8U6Plc3RMo6QLRep8Z3XuWHrGQBrWvJkIIww/aIkk2NbeXA==}
-    peerDependencies:
-      react: ^18.0.0
-
   esbuild@0.28.2:
     resolution: {integrity: sha512-HKVLS8dvII+xoKW9kmqxbRKrnWEXfJJr/FZhhJmiqIB0e053QNYFqOBouTMO/k5sID4MvCiUCvv8b9M4h32wIA==}
     engines: {node: '>=18'}
@@ -630,10 +622,6 @@ snapshots:
       csstype: 3.2.3
 
   csstype@3.2.3: {}
-
-  dsh-float-window@0.4.1(react@18.3.1):
-    dependencies:
-      react: 18.3.1
 
   esbuild@0.28.2:
     optionalDependencies:

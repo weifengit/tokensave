@@ -164,7 +164,8 @@ let scanStartedAt = 0
 let scanning = false
 
 /** 算作「被故障中断」的 turn/end reason。completed / forked / aborted（用户主动停止）不算。 */
-const FAILED_TURN_KINDS = new Set(['error', 'interrupted', 'blocked', 'max-tokens'])
+/** 算作「被故障中断」的 turn/end reason。completed / forked / aborted（用户主动停止）不算。 */
+const FAILED_TURN_KINDS = new Set(['error', 'interrupted', 'blocked', 'max-tokens', 'consent', 'permission', 'awaiting-consent'])
 
 // —— 即时判定（停止信号 → 立刻读结局）——
 /** 结局缓存一变就通知 useActivityPulse 立刻重算，不必等 4s 轮询 */
@@ -181,20 +182,34 @@ function notifyOutcome(): void {
 
 // —— 告警（提示音）：只在「观察到的停止」那条路上发 ——
 /** 一条结局告警（提示音用）：fail=中断/失败，done=正常完成 */
+/** 一条结局告警（提示音用）：fail=中断/失败，done=正常完成 */
 export interface PulseAlert {
   kind: 'done' | 'fail'
   sessionId: string
   title: string
+  /** 失败类型：用于前端决定是否自动发送「继续」（仅 kind==='fail' 时有效） */
+  interruptKind?: InterruptKind
 }
-const alertListeners = new Set<(a: PulseAlert) => void>()
-/** 已告警过的键（session:turnAt:kind）：同一轮绝不响第二次（即时判定会重试） */
+/** 中断类型：用于前端决定自动化行为 */
+export type InterruptKind =
+  | 'error'             // 普通错误（网络、API 等）
+  | 'interrupted'       // 被外部中断
+  | 'blocked'           // 被阻塞
+  | 'max-tokens'        // 输出被截断 —— **自动发送继续**
+  | 'consent'           // 权限提示（需人工确认）
+  | 'permission'        // 权限提示（需人工确认）
+  | 'awaiting-consent'  // 等待同意（需人工确认）
+  | 'aborted-hook'      // 非用户主动的中止（如账号登出）
+  | 'agent/error'       // agent 错误
+  | string              // 其它宿主扩展的 reason.kind
+
 const alertedKeys = new Set<string>()
 /** 订阅结局告警；返回解绑函数（sound.ts 的告警桥用） */
 export function onPulseAlert(cb: (a: PulseAlert) => void): () => void {
   alertListeners.add(cb)
   return () => alertListeners.delete(cb)
 }
-function emitAlert(kind: 'done' | 'fail', sessionId: string, title: string, turnAt: number): void {
+function emitAlert(kind: 'done' | 'fail', sessionId: string, title: string, turnAt: number, interruptKind?: InterruptKind): void {
   const key = `${sessionId}:${turnAt}:${kind}`
   if (alertedKeys.has(key)) return
   alertedKeys.add(key)
@@ -207,7 +222,7 @@ function emitAlert(kind: 'done' | 'fail', sessionId: string, title: string, turn
   }
   for (const l of [...alertListeners]) {
     try {
-      l({ kind, sessionId, title })
+      l({ kind, sessionId, title, interruptKind })
     } catch {
       /* 单个订阅者出错不影响其它订阅者 */
     }
@@ -413,7 +428,8 @@ function applyOutcome(ctx: any, sessionId: string, o: TurnOutcome | null): boole
   // 否则耳朵先听到、眼睛后看到（用户反馈“声音先出、角标后出”）。
   notifyOutcome()
   // 提示音：中断/失败一套、正常完成一套；用户主动停止（aborted）不响
-  if (o.failed) emitAlert('fail', sessionId, title, o.turnAt)
+  // 提示音：中断/失败一套、正常完成一套；用户主动停止（aborted）不响
+  if (o.failed) emitAlert('fail', sessionId, title, o.turnAt, o.kind as InterruptKind)
   else if (o.kind === 'completed' || o.kind === 'forked') emitAlert('done', sessionId, title, o.turnAt)
   return true
 }

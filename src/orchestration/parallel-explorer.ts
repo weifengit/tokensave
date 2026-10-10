@@ -1,46 +1,17 @@
 import type { Context } from '@deepseek-ai/cordis'
-import { brandString } from '@deepseek-ai/dsh-brand'
-import { createUserMessage, type ToolCallId } from '@deepseek-ai/dsh-llm'
+import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { readProjectScope, readExplorerSelection } from '../board-web-route.ts'
 import type { ExplorerConfig } from '../types.ts'
 import { EXPLORER_PRESETS } from '../types.ts'
-import { selectionToConfigs } from '../explorer-catalog.ts'
+import { selectionToConfigs, splitModel } from '../explorer-catalog.ts'
+import { createExplorerSession } from '../session/create-explorer-session.ts'
 
-// 进程内 callSeq 保证 callId 唯一（registry 以 callId 关联一次执行）
-let callSeq = 0
-function nextCallId(tag: string): ToolCallId {
-  return brandString<ToolCallId>(`tokensave-${tag}-${++callSeq}-${Date.now().toString(36)}`)
-}
-
-// 0.2.0-rc.2 无 ctx.tools.call（文档 API 过时第 3 例）——统一走 ctx.tools.execute，
-// 规范值在 result.value（KB cordis-tutorial/07 模式）
-async function callTool(ctx: Context, name: string, args: Record<string, unknown>, agent?: Agent) {
-  const result = await ctx.tools.execute({
-    callId: nextCallId(name),
-    name,
-    arguments: args,
-    // 透传调用方 agent：dsh-call-session 的 preset/driver 接线读 exec?.agent（缺省 peer 轮次不启动）
-    ...(agent ? { agent } : {}),
-    signal: new AbortController().signal,
-  })
-  if (result.isError) {
-    throw new Error(`tokensave: tool ${name} failed: ${JSON.stringify(result.error).slice(0, 300)}`)
-  }
-  return result.value as unknown
-}
-
-interface SessionCreateValue {
-  success?: boolean
-  sessionId?: string
-  error?: string | null
-}
-
-// —— 宿主侧直投（Step 11.1，经用户决策的绕过方案）——
-// dsh-call-session 构造的消息 source.kind='plugin' 会被 0.2.0-rc.2 的 v4 格式校验拒绝
-// （"format v4 message requires a producer-owned source kind"，见 PROGRESS 已知问题），
-// 探索者消息改为：createUserMessage({ content, source: { kind: 'user' } })（平台 dsh-acp
-// 同款构造）+ agent.followup/steer 直投（镜像其 dispatchNativeMessage 语义）。
+// —— 探索者消息直投（官方 agents 服务）——
+// createUserMessage({ content, source: { kind: 'user' } })（平台 dsh-acp / 官方
+// sessionController.prompt 同款构造）+ agent.followup/steer 按状态投递。历史背景：
+// 曾经的 dsh-call-session session_call 会构造 kind='plugin' 消息被 v4 格式校验拒绝
+// （Step 11.1 绕过），去依赖后本路径已是唯一投递方式，与官方 prompt 语义一致。
 interface ExplorerAgentHandle {
   status: string
   followup(message: unknown): void
@@ -66,40 +37,45 @@ function dispatchExplorerMessage(ctx: Context, sessionId: string, text: string):
   else agent.followup(message)
 }
 
-// —— 探索者工作区强制跟随「当前打开的工作台项目」————————————
-//
-// session_create 没有 cwd 参数：它的工作区取自 exec.agent 的 session.header.cwd
-// （call-session resolveCwd）。所以默认是「在哪个项目的会话里发起，探索者就落在哪个项目」。
-// 用户要求改为**强制跟随当前打开的工作台项目**，于是在传给 session_create 的 agent 上
-// 用 Proxy 只改写 cwd 读取路径——id/title/ctx/options/preset/requestHeader 等一律透传，
-// 因此 session_create 的标题去重、配额、预设装配全部照常生效，只有工作区被替换。
-function withProjectCwd<T extends object>(agent: T, cwd: string): T {
-  return new Proxy(agent, {
-    get(target, prop, receiver) {
-      if (prop === 'session') {
-        const sess = (target as any).session
-        if (!sess) return sess
-        return new Proxy(sess, {
-          get(st, sp, sr) {
-            if (sp === 'header') {
-              const header = st.header
-              if (!header) return { cwd }
-              return new Proxy(header, {
-                get(ht, hp, hr) { return hp === 'cwd' ? cwd : Reflect.get(ht, hp, hr) },
-                has(ht, hp) { return hp === 'cwd' ? true : Reflect.has(ht, hp) }
-              })
-            }
-            // 兑底：有些路径直接读 session.cwd
-            if (sp === 'cwd') return cwd
-            return Reflect.get(st, sp, sr)
-          }
-        })
-      }
-      return Reflect.get(target, prop, receiver)
-    }
-  })
+/**
+ * 解析探索者工作区：优先「当前打开的工作台项目」作用域，其次调用方会话 cwd。
+ *
+ * 原实现在调用方 agent 上套 Proxy 篡改 cwd 读取（因 session_create 无 cwd 参数）；
+ * 官方 agents.create 的 meta.cwd 原生支持工作区指定，hack 已退役。
+ */
+function resolveExplorerCwd(agent?: Agent): string {
+  const scope = readProjectScope()
+  if (scope.workspace) {
+    console.log(`[dsh-tokensave] 探索者工作区跟随当前工作台项目: ${scope.workspace}`)
+    return scope.workspace
+  }
+  const callerCwd = (agent as any)?.session?.header?.cwd
+  if (typeof callerCwd === 'string' && callerCwd) {
+    console.log('[dsh-tokensave] 无工作台项目作用域，探索者工作区跟随发起会话')
+    return callerCwd
+  }
+  throw new Error('tokensave: 无法确定探索者工作区（无工作台项目作用域，调用方会话也无 cwd）')
 }
 
+/**
+ * 已注册 provider 的 id 集合（探测失败/llm 未就绪返回 null = 无法判断，维持原行为）。
+ *
+ * 预设/用户选择里的 `provider/model` 来自第三方 provider 插件（deepseek-web /
+ * our-free-model / opencode-zen…）：插件没装或凭据未配时 provider 未注册，
+ * session_create 会创建出死模型会话。这里用 llm.listProviders()（同步目录，
+ * 与 explorer-settings 面板同一口径）在建会话前收敛，未注册的一律降级剔除。
+ */
+function liveProviderIds(ctx: Context): Set<string> | null {
+  let llm: any
+  try { llm = (ctx as any).llm ?? (ctx as any).get?.('llm') } catch { llm = undefined }
+  try {
+    const list = llm?.listProviders?.() ?? null
+    if (!Array.isArray(list)) return null
+    return new Set(list.map((p: any) => String(p?.id ?? '')).filter(Boolean))
+  } catch {
+    return null
+  }
+}
 export async function parallelExplore(
   ctx: Context, taskDescription: string,
   codeContext: string | null, explorerCount: number, agent?: Agent
@@ -107,36 +83,46 @@ export async function parallelExplore(
   // 探索者集合：用户若在「探索者设置」里存过选择，就**完全按选择跑**（自行控制）；
   // 从未配置时保持旧行为——内置预设按 explorer_count 截取。
   const saved = readExplorerSelection()
-  const presets: ExplorerConfig[] = saved && saved.length
+  const chosen: ExplorerConfig[] = saved && saved.length
     ? selectionToConfigs(saved)
     : EXPLORER_PRESETS.slice(0, explorerCount)
+  // provider 探测降级（去第三方 provider 硬编码依赖）：预设/选择里的 provider 插件
+  // 未装或凭据未配时，剔除对应项而不是创建死模型会话；全部不可用则明确报错。
+  // llm 未就绪（探测返回 null）时不拦截，保持原行为。
+  const live = liveProviderIds(ctx)
+  let presets: ExplorerConfig[] = chosen
+  if (live) {
+    presets = chosen.filter((p) => live.has(splitModel(p.model)[0]))
+    const dropped = chosen.filter((p) => !live.has(splitModel(p.model)[0]))
+    if (dropped.length) {
+      console.warn(
+        `[dsh-tokensave] ${dropped.length} 个探索者因 provider 未注册被降级剔除: ` +
+        `${dropped.map((p) => p.model).join(', ')}（请安装/配置对应 provider 插件或在探索者设置里重选）`
+      )
+    }
+    if (!presets.length) {
+      throw new Error(
+        `tokensave: 所有选中探索者的 provider 均未注册（${chosen.map((p) => p.model).join(', ')}）——` +
+        '请先在「探索者设置」里改选已注册 provider 的模型，或配置对应插件凭据。'
+      )
+    }
+  }
   console.log(
-    `[dsh-tokensave] 探索者集合(${saved ? '用户设置' : '内置默认'}): ${presets.map((p) => p.label).join(', ')}`
+    `[dsh-tokensave] 探索者集合(${saved ? '用户设置' : '内置默认'}，provider 探测${live ? '已启用' : '不可用'}): ${presets.map((p) => p.label).join(', ')}`
   )
 
-  // 探索者强制跟随「当前打开的工作台项目」：把 cwd 注入传给 session_create 的 agent。
-  // 无作用域（未发布/已清除）时保持原行为（跟随发起会话），不静默改到未知目录。
-  const scope = readProjectScope()
-  const scopedAgent = scope.workspace && agent ? withProjectCwd(agent, scope.workspace) : agent
-  if (scope.workspace) {
-    console.log(`[dsh-tokensave] 探索者工作区跟随当前工作台项目: ${scope.workspace}`)
-  } else {
-    console.log('[dsh-tokensave] 无工作台项目作用域，探索者工作区跟随发起会话')
-  }
-
-  // 1. 并行创建探索者会话（真实 schema：title/model，返回 sessionId；不带 initial_message——
-  //    dsh-call-session 会用 kind='plugin' 构造初始消息被 v4 拒，消息改由步骤 2 合法直投）
+  // 探索者工作区：优先当前打开的工作台项目，其次发起会话 cwd（官方 meta.cwd 直传）。
+  const cwd = resolveExplorerCwd(agent)
+  // 1. 并行创建探索者会话——官方原语直建（agents.create + 预设装配 + 标题事件），
+  //    见 src/session/create-explorer-session.ts；不再依赖 dsh-call-session 的 session_create。
   const created = await Promise.all(
-    presets.map(async (p) => {
-      const value = await callTool(ctx, 'session_create', {
+    presets.map(async (p) => ({
+      sessionId: await createExplorerSession(ctx, {
+        cwd,
         title: `tokensave-${p.label}`,
         model: p.model,
-      }, scopedAgent) as SessionCreateValue
-      if (!value?.success || !value.sessionId) {
-        throw new Error(`tokensave: session_create(${p.label}) failed: ${value?.error ?? 'unknown error'}`)
-      }
-      return { sessionId: value.sessionId }
-    })
+      }),
+    }))
   )
 
   // 2. 宿主直投合法消息（Step 11.1 绕过）：首条探索提示 followup 唤醒首轮；
