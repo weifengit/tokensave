@@ -185,7 +185,7 @@ body.ts-hdesk-nochat [data-conversation-region="composer"] {
 .ts-sec { flex:none; width:100%; box-sizing:border-box; }
 .ts-sec + .ts-sec { border-top:1px solid rgba(127,127,127,.22); }
 /* 区域标题行：与「对话清单」原头部同款排版，但中性色（不再是某一区的专属样式） */
-.ts-sec-head { display:flex; align-items:center; gap:8px; padding:9px 12px 8px; font-size:11px; font-weight:600; opacity:.62; letter-spacing:.04em; }
+.ts-sec-head { display:flex; align-items:center; gap:8px; padding:9px 22px 8px 12px; font-size:11px; font-weight:600; opacity:.62; letter-spacing:.04em; }
 .ts-sec-title { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 /* 标题右侧的浅色计数（如「对话清单 3」里的 3） */
 .ts-sec-note { flex:none; font-weight:500; opacity:.75; }
@@ -209,8 +209,8 @@ body.ts-hdesk-nochat [data-conversation-region="composer"] {
 .ts-box-list { display:flex; flex-direction:column; min-height:0; overflow:hidden; padding:3px; }
 /* 清单区内容容器：与提示音 / 自动继续同款外距（0 12px 10px），保证三个外框左右对齐、内距一致 */
 .ts-list-body { flex:none; width:100%; box-sizing:border-box; padding:0 12px 10px; }
-/* —— 提示音设置区（内嵌在悬浮面板顶部，与「对话清单」同面板同现）—— */
-   width:100%（不再写死 272px）：与自动继续区、清单区严格同宽、同边距。 */
+/* —— 提示音设置区（内嵌在悬浮面板顶部，与「对话清单」同面板同现）——
+   宽度 100%（不再写死 272px）：与自动继续区、清单区严格同宽、同边距。 */
 .ts-sound-body { flex:none; width:100%; box-sizing:border-box; display:flex; flex-direction:column; gap:6px; padding:0 12px 10px; }
 .ts-box-row .ts-select,
 .ts-box-row .ts-sound-min { height:22px; box-sizing:border-box; border:1px solid rgba(127,127,127,.35); border-radius:6px; background:rgba(127,127,127,.1); color:inherit; font-family:inherit; font-size:10.5px; line-height:1; padding:0 5px; }
@@ -234,8 +234,10 @@ body.ts-hdesk-nochat [data-conversation-region="composer"] {
 /* —— 自动继续设置块（嵌在悬浮面板里，与声音设置同款紧凑排版）—— */
 .ts-cont-block { flex:none; width:100%; box-sizing:border-box; display:flex; flex-direction:column; gap:6px; padding:0 12px 10px; }
 .ts-cont-gap { flex:1 1 auto; min-width:8px; }
-/* 自动继续三个子开关：水平均匀分布（每格等宽、内容居中） */
-.ts-box-row > .ts-cont-sw-item { flex:1 1 0; display:flex; align-items:center; justify-content:center; gap:6px; min-width:0; }
+/* 自动继续三个子开关：等距分布（首项左缘对齐下一行「发送上限」，末项右缘对齐「秒」）。
+   用 space-between 而不是 flex:1 居中 —— 居中会让首项左缩、末项右缩，与上下两行对不齐。 */
+.ts-cont-sw-row { justify-content:space-between; }
+.ts-box-row > .ts-cont-sw-item { flex:0 0 auto; display:flex; align-items:center; gap:6px; min-width:0; }
 .ts-cont-sw-item > label { flex:none; font-size:10.5px; opacity:.62; letter-spacing:.02em; cursor:help; }
 .ts-cont-sw-item > .ts-cont-sw { flex:none; }
 .ts-cont-num { flex:none; width:46px; height:22px; box-sizing:border-box; border:1px solid rgba(127,127,127,.35); border-radius:6px; background:rgba(127,127,127,.1); color:inherit; font-family:inherit; font-size:10.5px; line-height:1; padding:0 5px; text-align:center; -moz-appearance:textfield; appearance:textfield; }
@@ -249,8 +251,9 @@ body.ts-hdesk-nochat [data-conversation-region="composer"] {
 .ts-warn-pop-list { overflow:auto; overflow-x:hidden; padding:5px; display:flex; flex-direction:column; gap:2px; min-height:32px; }
 /* 一行 = 条目（点它跳转）+ 右侧操作区。align-items:center 让操作按钮与两行文本居中对齐，
    不再像以前那样贴顶显得歪。 */
-.ts-warn-row { display:flex; align-items:center; gap:6px; box-sizing:border-box; padding-right:4px; border-radius:9px; }
+.ts-warn-row { display:flex; align-items:center; gap:6px; box-sizing:border-box; padding-right:1px; border-radius:9px; }
 .ts-warn-item { flex:1; min-width:0; display:flex; align-items:flex-start; gap:8px; padding:7px 8px; border:0; border-radius:9px; background:transparent; color:inherit; font:inherit; text-align:left; cursor:pointer; }
+.ts-warn-actions { flex:none; display:flex; align-items:center; gap:5px; }
 .ts-warn-row:not(.is-active) .ts-warn-item:hover { background:rgba(245,158,11,.14); }
 .ts-warn-row.is-active .ts-warn-item:hover { background:rgba(34,197,94,.12); }
 .ts-warn-item:focus-visible { outline:1px solid rgba(96,165,250,.8); }
@@ -264,7 +267,7 @@ body.ts-hdesk-nochat [data-conversation-region="composer"] {
 /* 中断原因：与项目胶囊同形但用警告色，一眼区分「归属」与「毛病」 */
 .ts-warn-reason { flex:none; box-sizing:border-box; font-size:10px; line-height:1.5; padding:0 6px; border-radius:999px; background:rgba(245,158,11,.16); border:1px solid rgba(245,158,11,.42); color:#fbbf24; white-space:nowrap; }
 /* 计时器：距上次正常发言的耗时（仅活跃对话显示） */
-.ts-warn-timer { flex:none; font-size:10px; opacity:.55; font-variant-numeric:tabular-nums; white-space:nowrap; margin-left:4px; }
+.ts-warn-timer { flex:none; font-size:10px; opacity:.55; font-variant-numeric:tabular-nums; white-space:nowrap; margin-left:0; }
 /* 行内「已读」：轻牌按钮 + 对勾图标（以前那个裸「✓」太小、难看出是按钮） */
 .ts-warn-read { flex:none; display:inline-flex; align-items:center; gap:3px; border:1px solid rgba(127,127,127,.34); background:rgba(127,127,127,.12); color:inherit; font-size:10.5px; line-height:1; padding:4px 8px; border-radius:999px; cursor:pointer; opacity:.68; transition:background .12s, opacity .12s, border-color .12s; }
 .ts-warn-read:hover { opacity:1; background:rgba(74,222,128,.18); border-color:rgba(74,222,128,.5); color:#86efac; }

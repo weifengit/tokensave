@@ -56,8 +56,8 @@ export const POP_W_MAX = 360
 
 // —— 行内固定装饰（只在这里加一次）——
 
-/** 行自身的内边距：.ts-warn-item 左右各 8 + .ts-warn-row 右内边距 4 */
-const ROW_PAD_W = 20
+/** 行自身的内边距：.ts-warn-item 左右各 8 + .ts-warn-row 右内边距 1 */
+const ROW_PAD_W = 17
 /** 图标 11 + 图标与文本的间隔 8 */
 const ICON_W = 19
 /** 条目区与操作区之间的间距（.ts-warn-row 的 gap） */

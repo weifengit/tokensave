@@ -88,16 +88,16 @@ check('区域之间才画分隔线（最后一个不悬空）', css.includes('.t
 check('各块不再自画 border-bottom（改由 .ts-sec 统一给）',
   !/ts-(sound-body|cont-block) \{[^}]*border-bottom/.test(css))
 // 同一区域里标题行与内容要同边距，否则标题会与控件左右错开
-check('标题行与内容同为 12px 边距',
-  (ruleOf('.ts-sec-head') || '').includes('padding:9px 12px 8px')
-  && ['ts-sound-body', 'ts-cont-block'].every((c) => (ruleOf(`.${c}`) || '').includes('padding:0 12px 10px')))
+check('标题行左内距与内容同为 12px（右侧 22px：让标题行控件与子行控件同列）',
+  (ruleOf('.ts-sec-head') || '').includes('padding:9px 22px 8px 12px')
+  && ['ts-sound-body', 'ts-cont-block', 'ts-list-body'].every((c) => (ruleOf(`.${c}`) || '').includes('padding:0 12px 10px')))
 
 // —— 本轮反馈：开关上标题行 + 子内容用外框包住 ——
 // 外框类名是 ts-box / ts-box-row / ts-box-list。
 // 注意**不能用 ts-card**：那是 HDesk 桌面布局已有的类（.ts-card { display:flex; overflow:hidden }），
 // 复用会让面板里的外框继承桌面卡片的行为。下面有一条专门守这个。
 const boxes = (tsx.match(/className="ts-box( ts-box-list)?"/g) || []).length
-const boxRows = (tsx.match(/className="ts-box-row"/g) || []).length
+const boxRows = (tsx.match(/className="ts-box-row(?=[ "])/g) || []).length
 check('三个区域各有一张外框（提示音 / 自动继续 / 对话清单）', boxes === 3, `${boxes} 张`)
 check('子内容行共 6 行（提示音 4 + 自动继续 2）', boxRows === 6, `${boxRows} 行`)
 check('外框样式存在（底色+描边+圆角）',
@@ -139,7 +139,7 @@ check('数字输入框的箭头隐藏规则也跟过来了',
 
 // —— 宽度常量必须与实际 CSS 对得上（不然算出来的宽度是假的）——
 // panel-width.ts 里的 ROW_PAD_W / ROW_GAP_W 是按这些实际数值估的：
-//   .ts-warn-item padding 左右 8px、.ts-warn-row 右 4px、行间距 6px
+//   .ts-warn-item padding 左右 8px、.ts-warn-row 右 1px、行间距 6px
 check('行内边距与 ROW_PAD_W 对应（item 左右 8px）', /\.ts-warn-item \{[^}]*padding:7px 8px/.test(css))
 check('行间距与 ROW_GAP_W 对应（gap:6px）', /\.ts-warn-row \{[^}]*gap:6px/.test(css))
 // PANEL_PAD_W 是“非内容宽度”的累加：12(body) + 1(box边框) + 3(box内距) + 5(list) 单边。
@@ -202,6 +202,52 @@ const panelClasses = [...defined].filter((c) => PANEL_PREFIXES.some((p) => c.sta
 const dead = panelClasses.filter((c) => !tsx.includes(c))
 check('面板相关 CSS 无死代码', dead.length === 0,
   dead.length ? `无人用: ${dead.join(', ')}` : `已核对 ${panelClasses.length} 个`)
+
+// —— 本轮反馈 1/6：三个区域的外框必须同边距 ——
+// 根因不是 CSS 写错，而是 styles.ts 里一段注释只开了头没收尾，
+// 下一行的「宽度 100%… */」成了游离文本，浏览器把紧跟其后的
+// `.ts-sound-body {…}` 整条规则当成「非法选择器」丢掉 —— 于是提示音外框
+// 没了 12px 内距，直接贴上浮动面板边缘（其他两块正常）。
+const commentScan = (() => {
+  let inComment = false
+  for (let i = 0; i < css.length; i++) {
+    if (!inComment && css.startsWith('/*', i)) { inComment = true; i++ }
+    else if (inComment && css.startsWith('*/', i)) { inComment = false; i++ }
+    else if (!inComment && css.startsWith('*/', i)) return i
+  }
+  return inComment ? -1 : -2
+})()
+check('CSS 注释配对（无游离的 */，否则会吞掉后面的规则）', commentScan === -2,
+  commentScan === -1 ? '有注释没闭合' : commentScan >= 0 ? `位置 ${commentScan}` : '')
+for (const sel of ['.ts-sound-body', '.ts-cont-block', '.ts-list-body']) {
+  check(`${sel} 与另两块同边距（padding:0 12px 10px）`,
+    (ruleOf(sel) || '').includes('padding:0 12px 10px'))
+}
+
+// —— 本轮反馈 2+5：三个子开关等距，且首项左缘 / 末项右缘与下一行对齐 ——
+check('第二行改为 space-between（每格等宽，不用 flex:1 居中）',
+  /\.ts-cont-sw-row \{[^}]*justify-content:space-between/.test(css))
+check('子开关项不再 flex:1（否则首项左缩、末项右缩，对不上上下两行）',
+  /\.ts-box-row > \.ts-cont-sw-item \{[^}]*flex:0 0 auto/.test(css) &&
+  !/\.ts-box-row > \.ts-cont-sw-item \{[^}]*flex:1/.test(css))
+check('第二行用了 ts-cont-sw-row 类', /className="ts-box-row ts-cont-sw-row"/.test(tsx))
+
+// —— 本轮反馈 3：计时器挪到「项目名称」同一行（原来被挤到第三行）——
+check('计时器渲染在标签行内（与项目胶囊同行，不在下面另起一行）',
+  /<span className="ts-warn-tags">[\s\S]*?<Timer at=/.test(tsx))
+check('标签行下方不再有计时器兄弟节点',
+  !/\n\s*\{it\.icon === '●' && <Timer at=\{it\.lastPromptAt\} \/>\}\n\s*<\/span>/.test(tsx))
+
+// —— 本轮反馈 4+5：标题行控件与子行控件同列（右侧一律落在 22px 内距上）——
+check('标题行右内距 22px（= 12 区块 + 1 边框 + 3 + 5 + 1 行内距）',
+  (ruleOf('.ts-sec-head') || '').includes('padding:9px 22px 8px 12px'))
+check('清单行右内距 1px（行内「已读」与标题行「全部已读」同列）',
+  /\.ts-warn-row \{[^}]*padding-right:1px/.test(css))
+check('操作区有样式定义（继续 + 已读，5px 间隔与 ACTIONS_CONTINUE_W 对应）',
+  !!ruleOf('.ts-warn-actions') && /\.ts-warn-actions \{[^}]*gap:5px/.test(css))
+const widthSrc = readFileSync(join(root, 'client/src/panel/panel-width.ts'), 'utf8')
+check('ROW_PAD_W 与清单行右内距对得上（8×2 + 1 = 17）',
+  /const ROW_PAD_W = 17\b/.test(widthSrc), widthSrc.match(/const ROW_PAD_W = \d+/)?.[0] ?? '未找到')
 
 console.log(fail === 0 ? '\nALL PASS' : `\n${fail} FAILED`)
 process.exitCode = fail === 0 ? 0 : 1

@@ -237,8 +237,8 @@ function ContinueSettingsBlock() {
       <div className="ts-cont-block">
         {/* 第二·三行用**一张** card 包住（与提示音区同构：一张卡装多行子内容） */}
         <div className="ts-box">
-          {/* 第二行：三个子开关 —— 水平均匀分布 */}
-          <div className="ts-box-row">
+          {/* 第二行：三个子开关 —— 等距分布（首项左缘对齐「发送上限」，末项右缘对齐「秒」） */}
+          <div className="ts-box-row ts-cont-sw-row">
             <div className="ts-cont-sw-item">
               <label title="错误分类：开启后，鉴权 / 余额 / 未知模型 / 上下文超长这类重试也不会成功的错误会被识别出来，不自动重试，只给手动按钮">分类</label>
               <button
@@ -557,9 +557,9 @@ function HoverPanel({ pos, panelRef, items, onPick, onHover, onMarkRead, onMarkA
                   <span className="ts-warn-title">{it.title}</span>
                   <span className="ts-warn-tags">
                     {it.sub && <span className="ts-warn-sub" style={pillStyle(it.projectKey)}>{it.sub}</span>}
+                    {it.icon === '●' && <Timer at={it.lastPromptAt} />}
                     {it.shortReason && <span className="ts-warn-reason">{it.shortReason}</span>}
                   </span>
-                  {it.icon === '●' && <Timer at={it.lastPromptAt} />}
                 </span>
               </button>
               <div className="ts-warn-actions">
