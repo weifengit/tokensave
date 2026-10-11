@@ -2741,3 +2741,49 @@ full 拉正文，digest 每主题最多 12 帖、每帖截 1500 字——评审 
 HMR 热应用确认（marker 06:43:21 重写 tools_ok=3/3）。CONTRACTS 已同步
 （runs.ts 契约、parallelExplore 返回值 +model、getBriefFromBoard opts、
 board_post metadata 兜底、BUG-2 三道闸）。
+
+## Step 68（2026-10-12）：刷新后左侧边栏保持关闭（自动收起）
+
+用户反馈：「当页面刷新之后，左侧边栏会展开，我希望保持左侧边栏是关闭的状态。」
+
+### 根因（宿主缺陷，非本插件）
+
+侧边栏宽/收起状态存在 `@deepseek-ai/dsh-client-ui-layout` 的根 store：
+`createLayoutStore()` 用 `defineStore({ init, actions })` 定义，**没有 persist 键**；
+`dsh-client-store` 只有声明 persist 才 `attachPersistence`（写 localStorage）。
+于是每次刷新 `layoutInfo.sidebar` 回到初始 280（展开）、`narrowExpanded` 回到
+false；窄视口（<1024 = SIDEBAR_AUTO_COLLAPSE）默认收起、宽视口默认展开。
+已 grep 全部 client 包与前端产物的 localStorage 键，无别处持久化；config-catalog
+里 ui-layout 也无配置项（"—"）。宿主 LayoutController 只暴露 `toggleSidebar()`，
+无状态读取 → 状态判定走 DOM（AppFrame 只在收起时挂 `data-sidebar-collapsed`）。
+
+### 修法（用户选定「总是收起」）
+
+新增 `client/src/sidebar-collapse.ts`（`installSidebarCollapse(ctx)`，在
+`index.ts` apply() 里 try/catch 挂载）：
+
+- **等服务**：`readService(ctx,'layout')` → `ctx.inject(['layout'])` → 100ms 轮询，
+  5s 上限（与 wrapSessionNavigation 同口径），超时只 warn 不阻断其它功能。
+- **判态**（纯函数 `decideSidebarCollapse`）：已收起→skip；已展开→toggle；
+  帧未渲染→按 store 初始值推断（≥1024 视为展开→toggle，首帧前收掉不闪宽栏；
+  <1024 默认收起→skip，盲目 toggle 会反向展开）。帧是否渲染用
+  `data-rightbar-collapsed` / `.ts-side-entry` 旁证（`readSidebarCollapsed`
+  三态：true/false/null）。
+- **一次语义**：`window.__tsSidebarCollapse` 标记——同一次页面加载（含 HMR
+  热重应用）只处理一次；真刷新标记消失→重新收起，正是要的语义；会话中你
+  手动展开绝不被再按回去。toggle 后 3s 轮询校验属性落位，失败只 warn 不重试。
+
+### 验证
+
+- `pnpm check`（tsc）全绿；全量测试链 9 项 ALL PASS（新增
+  `test:sidebar` → `scripts/check-sidebar-collapse.mjs`：决策表 6 项、
+  DOM 三态 4 项、选择器/常量锚定宿主源码 3 项、幂等 3 项、挂载点 3 项）。
+- 运行时冒烟（真实 `dist/client.js` 产物 eval）：注册 id=dsh-tokensave ✓；
+  无服务 ctx 下 apply 不抛异常（marker pending、优雅降级）✓；
+  有 layout 服务 + 帧已渲染 → toggle 一次、reason=boot-default-expanded/expanded ✓；
+  二次 apply（模拟 HMR）仍为 1 次 ✓。
+- `pnpm build:client` 重建 `dist/client.js`（529,118B）+ `node --check` 通过。
+
+**注意**：本修复在客户端产物里，需刷新页面（或 HMR 推送）后生效；宿主侧
+布局 store 无 persist 的根因仍待上游修复（届时本补丁自动变为 no-op：
+判态已是收起 → skip）。

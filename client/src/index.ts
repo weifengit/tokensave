@@ -28,6 +28,7 @@ import { ControlRoomEntry } from './panel/ControlRoomEntry'
 import { applyDockkitPatch } from './dockkit-patch'
 import { installComposerResize } from './composer-resize'
 import { installScrollMemory } from './scroll-memory'
+import { installSidebarCollapse } from './sidebar-collapse'
 
 export const inject = { slots: true }
 
@@ -181,6 +182,14 @@ export function apply(ctx: Context) {
     installScrollMemory()
   } catch (e) {
     console.warn('[scroll-memory] install failed:', e)
+  }
+  // 刷新后左侧边栏自动收起：宿主 ui-layout 的布局 store 无 persist，
+  // 刷新必回默认展开（用户要求保持关闭）。同一次页面加载只处理一次，
+  // 故 HMR 重应用不会把会话中手动展开的又收掉（详见 sidebar-collapse.ts）。
+  try {
+    installSidebarCollapse(ctx)
+  } catch (e) {
+    console.warn('[sidebar-collapse] install failed:', e)
   }
   // DockKit 补丁：关闭主对话窗口后，空出的 docked pane 自动合并（相邻窗口扩展，不残留空白/遮罩）
   try {
