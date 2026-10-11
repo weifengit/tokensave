@@ -96,10 +96,10 @@ body.ts-hdesk-nochat [data-conversation-region="composer"] {
 }
 
 /* —— 通用条/按钮 —— */
-.ts-bar { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+.ts-bar { display:flex; align-items:center; gap:10px; flex-wrap:nowrap; height:40px; box-sizing:border-box; }
 .ts-bar-right { margin-left:auto; flex:0 1 auto; min-width:0; }
 /* 右侧工具簇：已关闭列表 + 一键切换 + 历史/新建会话；项多时允许换行，整体右对齐 */
-.ts-bar-tools { display:flex; align-items:center; justify-content:flex-end; gap:8px; flex-wrap:wrap; min-width:0; }
+.ts-bar-tools { display:flex; align-items:center; justify-content:flex-end; gap:8px; flex-wrap:nowrap; min-width:0; }
 /* 会话操作固定单行，不换行 */
 .ts-bar-sessions { flex:none; flex-wrap:nowrap; }
 .ts-title { font-size:16px; font-weight:600; }
@@ -666,8 +666,9 @@ body.ts-hsplit-dragging .ts-card { transition:none !important; animation:none !i
 .ts-card-overlay { position:absolute; inset:0; z-index:40; background:rgba(12,14,18,.92); backdrop-filter:blur(8px) saturate(1.2); border-radius:10px; display:flex; flex-direction:column; padding:10px; box-sizing:border-box; }
 .ts-card-overlay-inner { flex:1; min-height:0; display:flex; flex-direction:column; }
 /* 已关闭列表（标题行内）：卡片与探索者窗口的恢复 chip 统一收口 */
-.ts-closed-bar { flex:0 1 auto; min-width:0; max-width:100%; display:flex; align-items:center; gap:6px; flex-wrap:wrap; padding:4px 8px; border:1px dashed rgba(127,127,127,.45); border-radius:9px; }
-.ts-closed-label { font-size:11.5px; opacity:.6; }
+.ts-closed-bar { flex:0 1 auto; min-width:0; max-width:100%; display:flex; align-items:center; gap:6px; flex-wrap:nowrap; overflow-x:auto; overflow-y:hidden; scrollbar-width:none; padding:4px 8px; border:1px dashed rgba(127,127,127,.45); border-radius:9px; }
+.ts-closed-bar::-webkit-scrollbar { display:none; }
+.ts-closed-label { flex:none; white-space:nowrap; font-size:11.5px; opacity:.6; }
 
 /* —— 主对话卡（中下） —— */
 /* 中下卡片的外框由 .ts-desk-chat 提供（含 border/padding，供输入条内缩定位），
@@ -804,7 +805,7 @@ body.ts-hsplit-dragging .ts-card { transition:none !important; animation:none !i
 /* 行内删除线 */
 .ts-rich del { opacity:.65; }
 .ts-win-hidden-bar { display:flex; gap:6px; flex-wrap:wrap; }
-.ts-chip { font-size:11px; padding:3px 9px; border-radius:99px; border:1px dashed rgba(127,127,127,.5); background:transparent; color:inherit; cursor:pointer; }
+.ts-chip { flex:none; white-space:nowrap; font-size:11px; padding:3px 9px; border-radius:99px; border:1px dashed rgba(127,127,127,.5); background:transparent; color:inherit; cursor:pointer; }
 .ts-chip:hover { background:rgba(127,127,127,.18); }
 
 /* —— 黑板 —— */

@@ -216,6 +216,12 @@ const COMPOSER_SEAT = '[data-conversation-region="composer"]'
 function useDockNativeComposer(
   ref: React.RefObject<HTMLDivElement | null>,
   enabled: boolean,
+  /**
+   * 停靠目标是否在铺满浮层里（.ts-card-overlay，z-index 40）。
+   * 是 → 输入条要浮到浮层**之上**（否则被最大化卡片的背景盖住，用户反馈
+   * 「最大化之后聊天输入框被面板遮挡」）；否 → 维持原来的 35。
+   */
+  aboveOverlay: boolean,
   deps: unknown[],
 ): void {
   useLayoutEffect(() => {
@@ -267,7 +273,9 @@ function useDockNativeComposer(
         seat.style.top = 'auto'
         // 向下锚定：聚焦/多行输入时向上生长，不挤动网格
         seat.style.bottom = `${Math.round(window.innerHeight - r.bottom + insetY)}px`
-        seat.style.zIndex = '35'
+        // 层级：浮层里停靠时要压过 .ts-card-overlay（40）；普通格子里 35 就够，
+        // 太高反而会盖住其它卡片的浮层/下拉。
+        seat.style.zIndex = aboveOverlay ? '42' : '35'
         // 输入条实际高度（含边框）→ 消息流底部留白，末尾几行不被遮挡
         const seatH = Math.ceil(seat.getBoundingClientRect().height) || 0
         const seatPx = `${seatH}px`
@@ -807,6 +815,8 @@ export function HDesk({ project, sessionId, debug }: Props) {
   useDockNativeComposer(
     chatMaximized ? overlayChatRef : chatCellRef,
     chatDocked,
+    // 主对话卡最大化时停靠目标在 .ts-card-overlay 里（z 40）：输入条要压过它
+    chatMaximized,
     // 不再把 previewH / midSplit 放进依赖：拖分隔条时 chat cell 尺寸变化会经它自己的
     // ResizeObserver 触发重定位；把高度写进依赖会让每次拖动都重建观察器（拖拽发卡）。
     [presentKey, sessionId, visible.length, chatMaximized, previewInStrip],

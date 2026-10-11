@@ -35,6 +35,7 @@ import { useEffect, useState } from 'react'
 import { getClientContext, readService } from '../session-subscribe'
 import { readProjectActivity, statusSnapshot } from './activity'
 import { readProjectSessions } from './sessions'
+import { onSessionStopped } from './todo-collapse'
 import { loadProjects } from './store'
 import type { ProjectRecord } from './store'
 
@@ -628,6 +629,9 @@ export function useActivityPulse(): PulseState {
             window.setTimeout(() => checkStoppedNow(ctx, id, 0), STOP_CHECK_DELAY_MS)
             console.debug(`[tokensave] 会话停止 → 立即判定结局：${id}`)
           }
+          // 任务规划清单：当前会话这一轮跑完（running→停、不在等确认）→ 把展开的
+          // todo 面板收起（用户反馈：跑完 reply 之后清单一直挂在输入框上方不关）
+          onSessionStopped(id, was === true, isRunning, isPending)
           if (!wasPending && isPending) {
             let changed = false
             for (const k of [...readMarks.keys()]) {
