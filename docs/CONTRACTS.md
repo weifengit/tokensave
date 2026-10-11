@@ -65,7 +65,15 @@ const PROJECT_MARKERS = [
 const editKeywords = ['修改', '修复', '改一下', '优化', '重构', '更新', '替换', '删除']
 ```
 
-## 黑板契约（src/tools/blackboard-ops.ts）
+## 黑板契约（2026-10-09 起自建：src/blackboard/store.ts + tools.ts）
+
+> 此前黑板由第三方插件 dsh-call-session 提供（boardStore 服务 + board_post/board_list 工具），
+> 已于 2026-10-09 以**同语义自建**取代：存储 `~/.dsh/tokensave/board.json`（原子落盘，300 条 FIFO），
+> 同名工具 board_post / board_list / board_clear 自注册（探索者提示词零改动）。
+> blackboard-ops 与 H 台 /board 路由均直读自建存储，不再经 ctx.get('boardStore')。
+> 语义对齐项：TTL 默认 3600s/上限 86400s、惰性过期 active→expired、工作区隔离
+> （authorWorkspace 不匹配即过滤，空 = global 全可见）、topic 精确/前缀匹配、保留主题
+> （telemetry:/call:/sys:）拦截。实测：15 项行为断言全部通过。
 
 ### Topic 枚举
 ```typescript
@@ -82,16 +90,44 @@ export interface BlackboardEntry {
     confidence: 'high' | 'medium' | 'low'
     digest: string
     explorerLabel?: string
+    title?: string   // 2026-10-11：条目标题列（中文）；缺省时由 extractTitle 从正文首行提取
   }
   ttl?: number
 }
 ```
 
-### 函数签名
+### 标题提取规则（extractTitle，store 与 /board 路由共用同一实现）
+1. 优先 `metadata.title`；
+2. 否则正文首个非空、非 `<!--` 注释行（**跳过简报标记行**，避免标题变成
+   `<!-- tokensave-brief:v1:start -->`）；
+3. 去 markdown 前缀（`# `/`- `/`1. `）与强调记号（`**`/`__`/`~~`/反引号/`*`），
+   截 60 字——黑板标题列是纯文本观测面，不渲染 markdown（黑板正文展开同样纯文本）；
+4. 全空兑底 `'(无标题内容)'`。提取发生在读取时——存量条目无需迁移，改规则即时生效。
+
+### 函数签名（ctx 参数保留但不再使用；内部直调自建存储）
 ```typescript
 export async function postToBoard(ctx: Context, entry: BlackboardEntry): Promise<any>
-export async function getBriefFromBoard(ctx: Context, topic: BoardTopic): Promise<any>
+export async function getBriefFromBoard(
+  ctx: Context, topic: BoardTopic,
+  opts?: { workspace?: string; full?: boolean }   // 2026-10-11：workspace=工作区收敛；full=带正文（评审用）
+): Promise<any>
 ```
+
+> 2026-10-11：`BlackboardEntry` 新增可选 `workspace?`——引擎帖（requirement/brief）带工作区，
+> 在该项目板可见且可按轮归档；缺省仍为全局帖（旧行为）。
+
+### 自建工具（src/blackboard/tools.ts，与原第三方同名）
+```typescript
+board_post:   { topic(必填), content(必填), tags?, ttl?(默认3600,上限86400), metadata? }
+board_list:   { id?, topic?, topic_prefix?, tag?, active_only?(默认true),
+                cross_workspace?(默认false), titles_only?(默认true), limit?(默认20,上限100) }
+board_clear:  { id?, topic?, mode?('dismiss'|'purge', 默认 dismiss) }
+```
+
+> 2026-10-11 metadata 兑底（BUG-4）：`board_post` 在服务端统一补全 metadata——
+> `title` ← 正文首行（extractTitle）、`source` ← 会话标题、`confidence` ← 'medium'、
+> `digest` ← 首行截 80 字。提示词已要求探索者自带，但四模型遵守度不一（测试报告仅 MiMo 完整），
+> 服务端补全保证交叉验证永远可归属信源。
 
 ## 探索者预设（src/orchestration/parallel-explorer.ts）
 
@@ -126,7 +162,7 @@ const EXPLORER_PRESETS: ExplorerConfig[] = [
 > - `POST /projects` 加固：请求体缺 `projects` 数组一律 400（避免误写把项目注册表清空）。
 
 
-### parallelExplore 签名（2026-10-06 Step 10 补记：新增 agent 透传参数）
+### parallelExplore 签名（2026-10-06 Step 10 补记：新增 agent 透传参数；2026-10-11 返回值加 model）
 ```typescript
 export async function parallelExplore(
   ctx: Context,
@@ -136,13 +172,30 @@ export async function parallelExplore(
   agent?: Agent   // 调用方 agent：仅用于回退解析探索者 cwd（agent.session.header.cwd）——
                   // 2026-10-09 去 dsh-call-session 化后不再透传给 session_create；
                   // 工作台项目作用域优先，其次此回退（官方 agents.create 的 meta.cwd 直传）
-): Promise<Array<{ sessionId: string; label: string }>>
+): Promise<Array<{ sessionId: string; label: string; model: string }>>
 ```
 ### 返回值
 ```typescript
-// parallelExplore 返回
-Array<{ sessionId: string; label: string }>
+// parallelExplore 返回（model 供简报标注未发帖者）
+Array<{ sessionId: string; label: string; model: string }>
 ```
+
+> 2026-10-11 轮次隔离（BUG-1/BUG-3/优化-6）：parallelExplore 内部依次调用
+> `beginRun(cwd)`（归档上一轮 tokensave 帖 + 重置登记）→ 建会话 →
+> `recordRunSessions(cwd, …)`（登记本轮会话，见下节 runs.ts）。
+### 轮次登记（src/blackboard/runs.ts，2026-10-11 多探索者测试报告 BUG-1/优化-6）
+```typescript
+export interface RunSessionInfo { sessionId: string; label: string; model: string }
+export interface RunRecord { runId: string; startedAtMs: number; sessions: RunSessionInfo[] }
+beginRun(workspace: string): { runId: string; archived: number }
+recordRunSessions(workspace: string, sessions: RunSessionInfo[]): void
+currentRun(workspace: string): RunRecord | null
+```
+- 持久化：`~/.dsh/tokensave/runs.json`（每工作区一条当前轮记录，原子落盘）；
+- `beginRun` 归档口径：上轮探索者帖（authorSessionId ∈ 上轮 sessions）+ 引擎 brief 帖
+  （source=tokensave-engine 且工作区匹配/legacy 空）；他项目帖一律不动；无上轮记录不归档；
+- `/explorers` 路由按 `currentRun(workspace).sessions` 过滤（无登记不过滤），响应带 `runId`；
+- 探索者建完即登记 → 旧轮窗口在 H 台 8s 轮询内自动消失。
 
 
 > 2026-10-06 Step 11.1 变更（经用户决策的宿主侧绕过）：parallelExplore 不再使用
@@ -162,10 +215,10 @@ Array<{ sessionId: string; label: string }>
 > 探索者仍是普通 root 会话（侧边栏可见，非 subagent）。`agent` 参数语义变更：仅作 cwd 回退。
 > 端到端实测通过（5 探索者并行建会话/真实轮次/黑板产出/简报回收；黑板 session:bootstrap
 > 零公告证实走新路径）。消息投递路径（followup/steer 直投）不变。
-## 浮窗 storageKey 规则
-```
-tokensave:explorer:${sessionId}
-```
+## 浮窗 storageKey 规则（已移除）
+> 2026-10-09 Step 63：浮窗子系统（简报浮窗 + 已停用的探索者浮窗）整体删除，
+> `tokensave:explorer:*` / `tokensave:brief` localStorage key 不再写入；
+> 简报改为仅在对话（tokensave-brief 标记块）与黑板 brief 主题两处展示。
 
 ## 简报标记（用于 LLM Calls 视图搜索）
 ```
@@ -269,7 +322,13 @@ slots.register({
 - 黑板：board 路由按项目路径拉取，主题 tab + 点击展开 + 20s 自动刷新。
 - 项目仓库：localStorage `tokensave:projects.v1`，ProjectRecord =
   `{ id, name, path, layout: 'h-desk', createdAt }`（同路径去重）。
-- 探索者浮窗（shell.overlay）自项目中心上线后停用；简报浮窗保留。
+- 浮窗子系统（简报浮窗 + 探索者浮窗）已于 2026-10-09 Step 63 整体删除：简报只在对话与黑板展示，右下角浮窗/老板键 Alt+S 不复存在。
+- **探索者会话零混入（2026-10-11 BUG-2，三道闸）**：
+  ① `readProjectActivity`（activity.ts）跳过 `s.explorer`——探索者不进项目活动点、不进跑马灯；
+  ② `sessions.ts` 新增 `isExplorerSessionId(sessionId)`（标题 tokensave- 前缀判定）；
+  ③ HDesk 主对话卡：若当前绑定会话本身是探索者（用户从侧边栏点进），
+  `mainChatSessionId` 回退到 `latestProjectSession`（项目自己的非探索者会话，无则空），
+  探索者内容绝不渲染进「DSH 主对话」卡。历史会话选择器本就过滤 explorer（pickOwnSession）。
 
 ## 系统提示词段契约（src/prompt/system-prompt.ts）
 
@@ -283,12 +342,12 @@ export function registerSystemPrompt(ctx: Context): void
 // })
 ```
 
-## 跨插件依赖（2026-10-09 去依赖改造后）
-- dsh-call-session >= 0.1.6（**仅剩黑板依赖**：boardStore/board_post/board_list 读写；
-  session_create 建会话已于 2026-10-09 去除——`createExplorerSession`（src/session/create-explorer-session.ts）
-  直调官方原语 agents.create + agentPresets.resolve/mount + sessionTitle.rename，实测通过）
-- ~~dsh-float-window~~ **已移除**：v0.4.1 源码快照 vendor 进 `client/vendor/dsh-float-window/`（含 LICENSE 与
-  [vendor-patch] labels 可选+默认合并），构建时直接打包，npm 依赖已删；升级/换实现完全自控
+## 跨插件依赖（2026-10-09 去依赖改造后；Step 64 起 **零第三方硬依赖**）
+- ~~dsh-call-session~~ **已彻底移除**（Step 62 去建会话、Step 64 去黑板）：
+  黑板以同语义自建（src/blackboard/store.ts + tools.ts，同名工具自注册），详见「黑板契约」；
+  **可以安全卸载 dsh-call-session**。注意其「看板」tab（conversation.view id=canvas）会随卸载消失。
+- ~~dsh-float-window~~ **已移除**（Step 63 随浮窗子系统整体删除，vendor 目录一并清理；
+  更早的 Step 62 曾 vendor 过，消费方消失后已无存在必要）
 - dsh-llm-fallbacks（**配置级零代码耦合**：代码从不 import/调用，仅 profile 配置给探索者/执行者配模型回退链；
   卸载不影响编译与运行，仅失去自动故障切换）
 - dsh-hashline-edittool 或 dsh-smarter-edit（UI 编辑体验，无代码耦合）
@@ -306,6 +365,9 @@ tokensave/
 │   ├── board-web-route.ts        # /board + /fs 只读路由
 │   ├── prompt/system-prompt.ts
 │   ├── scenario/detector.ts
+│   ├── session/create-explorer-session.ts  # 探索者建会话（官方原语直建）
+│   ├── blackboard/store.ts     # 自建黑板存储（~/.dsh/tokensave/board.json）
+│   ├── blackboard/tools.ts     # board_post/board_list/board_clear 同名工具
 │   ├── tools/smart-delegator.ts
 │   ├── tools/blackboard-ops.ts
 │   ├── orchestration/parallel-explorer.ts
@@ -316,8 +378,7 @@ tokensave/
 │   └── src/
 │       ├── index.ts              # 槽位注册（Probe + 项目中心）
 │       ├── session-subscribe.ts
-│       ├── float/mount.tsx       # 简报浮窗（探索者浮窗已停用）
-│       ├── panel/                # 项目中心 + H 型工作台
+│       └── panel/                # 项目中心 + H 型工作台
 │       │   ├── ControlRoom.tsx   # 项目列表 + 添加项目
 │       │   ├── AddProjectDialog.tsx
 │       │   ├── HDesk.tsx         # H 型布局
@@ -326,8 +387,5 @@ tokensave/
 │       │   ├── MsgList.tsx
 │       │   ├── api.ts / store.ts / styles.ts
 │       │   └── ...
-│       └── components/
-│           ├── ExplorerStream.tsx
-│           └── BriefViewer.tsx
 └── tests/
 ```

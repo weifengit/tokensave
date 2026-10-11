@@ -6,6 +6,7 @@ import type { ExplorerConfig } from '../types.ts'
 import { EXPLORER_PRESETS } from '../types.ts'
 import { selectionToConfigs, splitModel } from '../explorer-catalog.ts'
 import { createExplorerSession } from '../session/create-explorer-session.ts'
+import { beginRun, recordRunSessions } from '../blackboard/runs.ts'
 
 // —— 探索者消息直投（官方 agents 服务）——
 // createUserMessage({ content, source: { kind: 'user' } })（平台 dsh-acp / 官方
@@ -79,7 +80,7 @@ function liveProviderIds(ctx: Context): Set<string> | null {
 export async function parallelExplore(
   ctx: Context, taskDescription: string,
   codeContext: string | null, explorerCount: number, agent?: Agent
-): Promise<Array<{ sessionId: string; label: string }>> {
+): Promise<Array<{ sessionId: string; label: string; model: string }>> { // model 供简报标注未发帖者
   // 探索者集合：用户若在「探索者设置」里存过选择，就**完全按选择跑**（自行控制）；
   // 从未配置时保持旧行为——内置预设按 explorer_count 截取。
   const saved = readExplorerSelection()
@@ -113,6 +114,10 @@ export async function parallelExplore(
 
   // 探索者工作区：优先当前打开的工作台项目，其次发起会话 cwd（官方 meta.cwd 直传）。
   const cwd = resolveExplorerCwd(agent)
+  // 轮次隔离（BUG-1/优化-6）：开新一轮 = 归档上一轮 tokensave 帖 + 重置登记；
+  // 建完探索者后登记本轮会话，/explorers 路由据此过滤 → 旧轮窗口 8s 内消失。
+  const run = beginRun(cwd)
+  if (run.archived > 0) console.log(`[dsh-tokensave] 轮次隔离：已归档上一轮 ${run.archived} 条黑板帖（${run.runId}）`)
   // 1. 并行创建探索者会话——官方原语直建（agents.create + 预设装配 + 标题事件），
   //    见 src/session/create-explorer-session.ts；不再依赖 dsh-call-session 的 session_create。
   const created = await Promise.all(
@@ -125,6 +130,8 @@ export async function parallelExplore(
     }))
   )
 
+  recordRunSessions(cwd, created.map((s, i) => ({ sessionId: s.sessionId, label: presets[i].label, model: presets[i].model })))
+
   // 2. 宿主直投合法消息（Step 11.1 绕过）：首条探索提示 followup 唤醒首轮；
   //    次条开始指令按状态 steer/followup（镜像原 session_call dispatchNativeMessage 语义）。
   //    失败直接抛出——原 Promise.allSettled 静默吞掉投递错误正是 Step 10 死会话未被发现的原因之一。
@@ -136,10 +143,11 @@ export async function parallelExplore(
     })
   )
 
-  // 3. 返回探索者会话列表（供浮窗挂载使用）
+  // 3. 返回探索者会话列表（供工作台窗口渲染）；带 model 供简报标注未发帖者
   return created.map((session, i) => ({
     sessionId: session.sessionId,
     label: presets[i].label,
+    model: presets[i].model,
   }))
 }
 
@@ -150,6 +158,8 @@ function buildExplorerPrompt(
     `你是${config.label}，专注于「${config.focus}」。`,
     `请独立分析以下需求，不要参考其他探索者的结论。`,
     `发现坑点写入黑板（topic: 'pitfall'），推荐方案写入黑板（topic: 'solution'）。`,
+    `每次写黑板必须携带 metadata：{ title: 一句话标题, source: '${config.label}', confidence: 'high'|'medium'|'low', digest: 80 字内摘要 }——缺了这些交叉验证无法归属信源。`,
+    `至少写 1 条 pitfall 和 1 条 solution；没有坑也要写明「未发现明显坑点」，沉默会被判为未参与。`,
     code ? `\n相关代码片段：\n${code}` : '',
     `\n任务需求：\n${task}`,
   ].join('\n')
@@ -160,6 +170,6 @@ function buildTaskMessage(
 ): string {
   return [
     `请开始你的探索。侧重点：${config.focus}`,
-    `完成后把结论写入黑板。`,
+    `完成后把结论写入黑板（每条都带 metadata：title/source='${config.label}'/confidence/digest）。`,
   ].join('\n')
 }

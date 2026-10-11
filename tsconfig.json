@@ -19,8 +19,6 @@
     "src/**/*.ts",
     "client/src/**/*.ts",
     "client/src/**/*.tsx",
-    "client/vendor/**/*.ts",
-    "client/vendor/**/*.tsx",
     "tests/**/*.ts"
   ]
 }

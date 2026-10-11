@@ -35,6 +35,8 @@ export interface SessionActivity {
   /** 紧凑序号，1 = ① */
   order: number
   state: ActivityState
+  /** 用户最后一次发言时间（Unix ms）：排序时已解析的投影值，调用方直接用作 lastPromptAt */
+  updatedAt: number
 }
 
 /** 宿主会话状态行（uiSession.sessionStatus 的值） */
@@ -63,6 +65,17 @@ export function statusSnapshot(ctx: any): SessionStatusMap {
  * 投影缺失（冷会话/未加载）时退回列表行的 updatedAt，保证顺序仍然可用。
  */
 export function lastPromptMs(ctx: any, sessionId: string, fallbackMs: number): number {
+  try {
+    const list = readService<any>(ctx, 'sessions')?.list
+    const snapshot = list && typeof list.getSnapshot === 'function' ? list.getSnapshot() : undefined
+    const at = snapshot?.projectionsBySession?.[sessionId]?.values?.sessionListMetadata?.lastPromptAt
+    // 投影只在出现过人发的 user/message 后才有值；null/缺失都退回列表行 updatedAt
+    if (typeof at === 'number' && at > 0) return at
+  } catch {
+    /* 投影缺失（冷会话/未加载）→ 退回调用方传入的 updatedAt，保证顺序仍然可用 */
+  }
+  return fallbackMs
+}
 /**
  * 读一个项目的活跃对话列表（已按约定排序并完成紧凑编号）。
  *
@@ -74,8 +87,12 @@ export function lastPromptMs(ctx: any, sessionId: string, fallbackMs: number): n
 export function readProjectActivity(ctx: any, projectPath: string): SessionActivity[] {
   if (!ctx || !projectPath) return []
   const statuses = statusSnapshot(ctx)
-  const rows: Array<SessionActivity & { at: number }> = []
+  // 内部行用 at 排序后再映射成 SessionActivity（updatedAt 在映射时取 at），此处不需要 updatedAt 字段
+  const rows: Array<Omit<SessionActivity, 'updatedAt'> & { at: number }> = []
   for (const s of readProjectSessions(ctx, projectPath)) {
+    // 探索者是 worker 会话（BUG-2）：不进项目活动点、不进跑马灯——
+    // 它们不是用户对话，混入会让「主对话窗口」出现探索者条目。
+    if (s.explorer) continue
     const st = statuses?.get(s.id)
     const pending = st?.pendingInteraction != null
     const running = st?.running === true
@@ -95,6 +112,7 @@ export function readProjectActivity(ctx: any, projectPath: string): SessionActiv
     title: r.title,
     order: i + 1,
     state: r.state,
+    updatedAt: r.at,
   }))
 }
 

@@ -2564,3 +2564,180 @@ localStorage 桩，覆盖默认态 / 写读回环 / 解锁保留快照 / 按项�
 「第三方工具只是官方原语的编排壳」——去依赖前先把它的实现逐层读完：session_create 拆开全是官方
 `agents.create` + preset + title 三件套，直接复刻比绕道 subagent 改造便宜一个数量级；且旧路径
 「往公共黑板发引导公告」这个副作用，反过来成了端到端验证新旧路径的天然判别器。
+
+## Step 63（2026-10-09）：浮窗子系统整体删除 —— 右下角「任务简报」按钮 + Alt+S 老板键不再存在
+
+**用户需求**：右下角有个按钮，点开是「任务简报」，老板键 Alt+S——问对应哪个插件，要删掉。
+
+**归属确认**：不是外部插件，是 **dsh-tokensave 自己的简报浮窗**（`client/src/float/mount.tsx`
+的 `mountBriefWindow`，storageKey `tokensave:brief`；Alt+S 是 vendored FloatWindow 的默认老板键）。
+触发链：`watchBrief` 订阅当前会话流 → 捕获 `tokensave-brief` 标记 → 挂浮窗。
+
+### 删除面（删前先做了孤立性验证：float/mount 与 components 的外部引用数 = 0）
+- `client/src/index.ts`：`watchBrief` + `BRIEF_START/END` + Probe 内简报监听 useEffect +
+  `mountBriefWindow/mountedExplorerCount/subscribeSession` 导入，全部移除（-47 行）；
+  头部注释同步改写。
+- `client/src/float/mount.tsx` 整文件删除（`mountExplorerWindows` 自项目中心上线后本就零调用）。
+- `client/src/components/`（BriefViewer.tsx + ExplorerStream.tsx）整目录删除——唯一消费方是 float。
+- `client/vendor/dsh-float-window/` 整目录删除（唯一消费方是 float/mount；上一轮刚 vendor 进来，
+  本轮随浮窗一起消失——vendor 的意义只存在于有消费方时）。
+- `client/src/panel/HDesk.tsx`：`reportExplorerCount` 导入 + 调用移除。
+- `tsconfig.json`：`client/vendor/**` include 移除；`scripts/build-client.mjs` 注释同步。
+- 样式残留检查：styles.ts 无 brief-viewer / boss-key-hint / data-shell 规则（浮窗样式全在组件内联）。
+
+### 简报去哪了（功能未丢）
+1. 对话里照常显示（`tokensave-brief` 标记块，工具返回值）；
+2. 黑板 `brief` 主题照常落帖（workflow 阶段 4 未动）。
+删的只是「再弹一个浮窗副本」这层重复展示。
+
+### 验证状态
+- `pnpm run check`：我改动的所有文件零错误（5 个错误全部位于用户并行编辑中的
+  `ControlRoomEntry.tsx`，系其 JSX 未闭合的进行中状态，与本次删除无关——该文件不 import 任何被删模块）。
+- 构建因同一文件（esbuild 报 ControlRoomEntry.tsx:607 Unterminated regular expression）暂未出新产物；
+  **等用户完成该文件编辑后重跑 `pnpm run build:client` + 刷新页面即生效**。
+- 零残留 grep：`mountBriefWindow|BriefViewer|ExplorerStream|float/mount|FloatWindow|__dshFloatWindows`
+  在 src/client/scripts 中 0 命中。
+
+### 教训
+删一个 UI 元素前先跑「孤立性验证」（消费方 grep = 0）再整链删除，比逐个删导出快且不会留半死代码；
+vendored 依赖同理——vendor 不是资产，是**活代码**，消费方消失就该跟着消失，否则就是新的维护负担。
+
+## Step 64（2026-10-09）：黑板自集成 —— 彻底移除 dsh-call-session 的最后一块
+
+**用户需求**：做一个黑板，彻底删掉 dsh-call-session（Step 62 已去建会话，黑板是最后的硬依赖）。
+
+### 调查（dsh-call-session@0.1.6 源码逐层核实）
+- board-store.mjs（1069 行）= 内存 Map + 防抖落盘 board.json + FIFO 容量 + 备份恢复；
+  语义要点：TTL 默认 3600s/上限 86400s、惰性过期（读时 active→expired）、
+  工作区隔离（authorWorkspace 不匹配即过滤，空 = global 全可见）、topic 精确或前缀匹配、
+  倒序 + limit（工具层上限 100）、titlesOnly 摘要映射（title+metadata 无正文）、
+  保留主题拦截（telemetry:/call:/sys: 前缀，ADR-0012）。
+- 工具注册（index.mjs）：board_post/board_list/board_clear 三件套的完整参数/返回 schema。
+
+### 实现（同语义、同工具名自建 → 消费方零改动）
+- **`src/blackboard/store.ts`**：`TokensaveBoardStore` 类——内存 Map + 每次变更原子落盘
+  （tmp+rename）、300 条 FIFO、损坏文件改名留档从空板起步；`post/list/clear` 全量对齐原语义；
+  落库 `~/.dsh/tokensave/board.json`（与 projects.json/explorers.json 同约定）。
+- **`src/blackboard/tools.ts`**：同名注册 board_post/board_list/board_clear（defineTool），
+  参数/返回结构对齐原版；exec.agent 解析 authorSessionId/authorWorkspace；逐个兜错注册
+  （若 call-session 未卸载，同名冲突只降级单工具不拖垮插件）。
+- **`src/tools/blackboard-ops.ts`**：postToBoard/getBriefFromBoard 改为直调自建存储
+  （原经 ctx.tools.execute 绕第三方），返回形状不变（{ posts } 供 workflow 轮询）。
+- **`src/board-web-route.ts`**：H 台 /board 路由 fetchBoardEntries 直读自建存储，
+  彻底摆脱 `ctx.get('boardStore')`。
+- **`src/index.ts`**：apply() 注册黑板三工具。
+- 类型坑：defineTool 的 object 节点要求显式 `additionalProperties`（metadata/posts.items 均补 true）。
+
+### 验证
+- esbuild 语法 + tsc：宿主端 src/ 零错误（client 侧错误均为用户并行编辑中的文件，与本次无关）。
+- **存储行为实测 15 项断言全过**（esbuild 打包 store.ts 到 /tmp 独立跑）：post 形状/TTL 默认、
+  titlesOnly 摘要 vs 全文、workspace 隔离 + global 条目处处可见 + crossWorkspace、
+  topic 前缀匹配、tag 过滤、惰性过期（active 查不到/all 变 expired）、保留主题拦截、
+  archive/purge 语义、落盘重载持久化（含归档态）、容量 FIFO 上限 300、损坏文件容错留档。
+- 探针测试脚本自身两处断言 bug（条目数算错、属性名写错）已定位为测试问题非存储问题，修正后全绿。
+
+### 卸载指引（用户执行）
+1. `dsh plugin --profile web remove dsh-call-session`（或手动从 profile package.json + bundles 移除）；
+2. 重启 DSH。重启后：tokensave 的同名黑板工具接管（启动日志见「黑板工具已注册 3/3」）；
+   顶部「看板」tab（conversation.view id=canvas）随插件消失——这是预期行为。
+3. 旧黑板数据（call-session 的 board.json 在其插件目录）不迁移：条目 TTL 1 小时量级、
+   300 条 FIFO，属 ephemeral 数据，新板从空起步即可。
+
+### 教训
+「同语义自建替代第三方」的关键是**先数清原语义的每一个角落**（TTL 边界/惰性过期/工作区空值口径/
+保留主题/limit 上限差异——工具层 100 vs 路由层 200），再同名注册让所有消费方零改动；
+比改每个调用点便宜且不会漏。行为断言测试要对着**真实语义**写，我自己前两版断言就写错了期望值。
+
+## Step 65（2026-10-11）：黑板工具不生效的根因——TS 参数属性炸掉宿主 strip-only 加载
+
+**现象**：黑板自建（Step 64）代码全绿（esbuild 语法/tsc/defineTool 真实执行/独立实例 boot 3/3 注册/
+HTTP 端到端 200 全过），但用户的主服务里 board_post 报 unknown tool，HMR 反复重载也无效。
+
+**根因**（决定性探针链）：
+1. `src/blackboard/store.ts` 的 `constructor(private readonly filePath: string)` —— TS **参数属性**
+   是不可擦除语法；dsh 宿主加载器 = Node 24 原生 **strip-only** TS，直接 SyntaxError：
+   "TypeScript parameter property is not supported in strip-only mode"（`node --input-type=module
+   -e "await import('.../src/index.ts')"` 一发命中）。
+2. esbuild（客户端构建/tsc/我的独立测试）都接受参数属性 → 全绿假象；唯独真实加载器拒绝。
+3. 导入失败 → 整插件不 apply → 黑板工具/路由/delegate 全无。旧服务里 HMR 每次重载都撞同一
+   SyntaxError → 静默回退旧 fiber（旧 fiber 里 board_post 本就没注册过）→ unknown tool 恒态。
+
+**误判复盘**：曾把「未授权请求 401」当作路由存活证据；后设对照组（不存在的插件路径也回 401）
+证伪——401 是全局未授权响应，不证明任何路由存在。教训：**探测信号必须配对照组**。
+
+**修复**：显式字段声明（`private readonly filePath: string` + constructor 赋值）；全 src 扫描
+非擦除语法（参数属性/enum/namespace）零残留；node strip 导入实测通过。
+
+**验证**（不重启主服务）：新起临时实例（端口 18991，--trusted-host + token 换 cookie）——
+boot 无 failed to import、`黑板工具已注册 3/3`、marker `tools_ok=3/3 errors=[]`、
+黑板/项目注册表路由 200 且种子条目映射正确；验毕杀实例清痕迹。
+随后用户重启主服务（marker 04:48 tools_ok=3/3 确认），黑板进入真实生产（snake 项目委派数据上板）。
+
+**新增诊断设施**：apply 每次执行覆写 `/tmp/tokensave-apply.marker`（时间戳 + tools_ok/3 + errors）——
+mtime 新鲜 = 重载确实发生；tools_ok=3 = 黑板三工具在注册表。今后排查「改动没生效」先看它。
+
+## Step 66（2026-10-11）：黑板标题两处体验修复（用户反馈）
+
+**用户反馈**：① 标题列出现 markdown `**` 记号（不知是否故意）；② 简报条目标题显示成
+`<!-- tokensave-brief:v1:start -->` 原始标记，要求改中文标题。
+
+**定位**：两处根因都在 extractTitle——(a) 它剥 `#`/`-`/`1.` 前缀但不剥强调记号；
+(b) 它取正文首行，而简报正文首行恰是 wrapBriefWithMarker 包的标记行。
+另有隐藏问题：store 与 /board 路由各有一份 extractTitle（同名同逻辑双份维护）。
+
+**修复**（CONTRACTS 标题提取规则已先行更新）：
+- `src/blackboard/store.ts`：新增 `stripMarkdownEmphasis`（`**`/`__`/`~~`/反引号/成对`*`）；
+  extractTitle 跳过 `<!--` 开头的行（标记行永不作标题）；metadata.title 也过同一剥离。
+- `src/board-web-route.ts`：删除本地重复 extractTitle，改从 store 导入——标题规则只有一份。
+- `src/orchestration/workflow.ts`：简报帖 metadata 增 `title: '任务简报'`（BlackboardEntry.metadata
+  类型同步加 `title?: string`）——简报标题确定性中文化，不再依赖正文首行。
+- 回归保障：不成对 `*`（如 "5 * 3 = 15"）不误剥；`#`/列表/序号/inline code/删除线用例全过。
+
+**验证**：extractTitle 13 用例全过（含用户板上真实形态：`**加粗**` 首行、标记行简报）；
+tsc 全绿；node strip 导入 OK；**HMR 热应用确认**（编辑期间 marker 被重写 05:43:39，
+tools_ok=3/3）——存量条目标题提取在读取时发生，H 台刷新即见效，无需再重启。
+
+## Step 67（2026-10-11）：多探索者 3 轮实测报告的 5 BUG + 1 优化全部修复
+
+用户在 /Users/sonoma/code/dsh 用 explorer_count=3 连跑 3 轮，产出测试报告（主链路
+全通、交叉验证质量递增；5 个 BUG + 耗时/污染优化项）。全部定位到根因并修复：
+
+### BUG-1 旧轮次探索者窗口残留 → 轮次登记（src/blackboard/runs.ts 新模块）
+根因：/explorers 路由只按「tokensave- 前缀 + 工作区」列会话，不识轮次。
+修复：每工作区一条当前轮登记（~/.dsh/tokensave/runs.json）；parallelExplore 开跑
+beginRun（归档上一轮 tokensave 帖）→ 建会话 → recordRunSessions；路由按登记过滤
+（响应带 runId），无登记不过滤。旧轮窗口 8s 轮询内自动消失。单测：归档 3/3、
+他项目帖保留、登记/重置语义全过。
+
+### BUG-2 探索者混入 DSH 主对话 → 三道闸
+① readProjectActivity 跳过 s.explorer（活动点/跑马灯不再出现探索者）；
+② sessions.ts 新增 isExplorerSessionId；③ HDesk 主对话卡 mainChatSessionId 回退
+latestProjectSession——用户从侧边栏点到探索者时，工作台主对话卡绝不渲染探索者内容。
+
+### BUG-3 发帖率不稳（1/3、1、2/3）→ 等全员 + 显式标注
+根因：waitForExplorerPosts「1 pitfall + 1 solution 即早退」——1 个探索者发完就进评审，
+其余还在跑；沉默者无任何记录。
+修复：改为等**全部**预期探索者发过帖（全员到齐即早退），上限放宽 240s→480s；
+未发帖者按 agent 即时状态三分标注（仍在运行/已结束未写/会话不可用），置顶写进简报
+（「⚠️ 本轮未发帖探索者…结论未覆盖」）+ metadata.silentExplorers。
+
+### BUG-4 metadata 规范落实不均（仅 MiMo 完整）→ 提示词 + 服务端双保险
+提示词强制 metadata（title/source/confidence/digest）且要求「没坑也要写明」；
+board_post 服务端 normalizePostMetadata 统一补默认值（title←正文首行、source←会话
+标题、confidence←medium、digest←首行截 80 字）——四模型遵守度不一也不影响交叉验证。
+
+### BUG-5 评审只见标题 → 评审读正文
+getBriefFromBoard 加 opts{workspace, full}；等待轮询仍用摘要模式（便宜），定稿时
+full 拉正文，digest 每主题最多 12 帖、每帖截 1500 字——评审 prompt 有界。
+
+### 优化-6 耗时增长 & 黑板污染 → 轮次隔离 + 输入有界
+旧帖混入是考古与膨胀的主因：beginRun 归档上轮帖 + 引擎帖带 workspace（按项目收敛）
++ 评审输入定界（12 帖 × 1500 字）→ prompt 不再随轮次/板上条数增长。
+耗时 75s→7min→21min 的观察中，评审考古与旧帖等待占比下降；探索者模型本身耗时
+（链路 fallback 到慢档）不在本次修复面，待后续用 runId 统计精确定位。
+
+**验证**：tsc 全绿；node strip-only 导入 OK；runs/store/tools 新逻辑 11 项单测全过
+（含他项目不误伤、full/摘要双模式、工作区收敛）；客户端产物重建（522KB）；
+HMR 热应用确认（marker 06:43:21 重写 tools_ok=3/3）。CONTRACTS 已同步
+（runs.ts 契约、parallelExplore 返回值 +model、getBriefFromBoard opts、
+board_post metadata 兜底、BUG-2 三道闸）。

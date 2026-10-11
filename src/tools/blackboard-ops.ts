@@ -1,21 +1,11 @@
 import type { Context } from '@deepseek-ai/cordis'
-import { brandString } from '@deepseek-ai/dsh-brand'
-import type { ToolCallId } from '@deepseek-ai/dsh-llm'
+import { getBoardStore } from '../blackboard/store.ts'
 
-// 0.2.0-rc.2 无 ctx.tools.call（文档 API 过时第 3 例）——统一走 ctx.tools.execute
-let callSeq = 0
-async function callTool(ctx: Context, name: string, args: Record<string, unknown>) {
-  const result = await ctx.tools.execute({
-    callId: brandString<ToolCallId>(`tokensave-board-${name}-${++callSeq}-${Date.now().toString(36)}`),
-    name,
-    arguments: args,
-    signal: new AbortController().signal,
-  })
-  if (result.isError) {
-    throw new Error(`tokensave: tool ${name} failed: ${JSON.stringify(result.error).slice(0, 300)}`)
-  }
-  return result.value as unknown
-}
+// 2026-10-09 去 dsh-call-session 化：黑板读写由自建存储直调（原经 ctx.tools.execute
+// 绕到第三方 board_post/board_list 工具）。语义与返回形状不变：
+//   - postToBoard → store.post（TTL 默认 3600s；保留主题抛错）
+//   - getBriefFromBoard → store.list({ topic, titlesOnly: true })，返回 { posts } 供 workflow 轮询
+// 探索者/任意 agent 侧仍可用同名工具（src/blackboard/tools.ts 注册），与本直调共用同一存储。
 
 export type BoardTopic = 'requirement' | 'pitfall' | 'solution' | 'brief'
 
@@ -27,25 +17,50 @@ export interface BlackboardEntry {
     confidence: 'high' | 'medium' | 'low'
     digest: string
     explorerLabel?: string
+    /** 2026-10-11：条目标题列（中文）；缺省时 extractTitle 从正文首行提取 */
+    title?: string
   }
   ttl?: number
+  /** 2026-10-11：产出工作区（引擎帖按轮隔离：带 workspace 的帖只在该项目板可见，且可按轮归档） */
+  workspace?: string
 }
 
-export async function postToBoard(ctx: Context, entry: BlackboardEntry) {
-  return await callTool(ctx, 'board_post', {
+export interface BriefQueryOptions {
+  /** 只看该工作区的帖（引擎帖带 workspace；探索者帖带 authorWorkspace；跨区帖仍可见） */
+  workspace?: string
+  /** true = 附带正文（评审引擎用；默认 false 摘要模式） */
+  full?: boolean
+}
+
+export async function postToBoard(_ctx: Context, entry: BlackboardEntry): Promise<any> {
+  // ttl 可选：undefined 不传（存储落默认 3600）
+  return getBoardStore().post({
     topic: entry.topic,
     content: entry.content,
     metadata: entry.metadata,
-    // ttl 可选：undefined 不下发（无损 JSON 约束），让工具落默认 3600
     ...(entry.ttl !== undefined ? { ttl: entry.ttl } : {}),
+    ...(entry.workspace !== undefined ? { authorWorkspace: entry.workspace } : {}),
   })
 }
 
-export async function getBriefFromBoard(ctx: Context, topic: BoardTopic) {
-  // 文档的 mode:'digest' 参数在 0.2.0-rc.2 不存在（过时第 6 例）——
-  // 语义等价物为 titles_only：true = 标题+metadata 摘要模式（不含正文，避免上下文膨胀）
-  return await callTool(ctx, 'board_list', {
+export async function getBriefFromBoard(
+  _ctx: Context, topic: BoardTopic, opts: BriefQueryOptions = {}
+): Promise<any> {
+  // 默认摘要模式（titlesOnly，不含正文）；full=true 供评审引擎读正文。
+  // workspace 传入时启用工作区收敛：全局帖（空 workspace）与本项目帖可见，
+  // 别的项目探索者帖被隔离——评审不再跨项目考古。
+  const res = getBoardStore().list({
     topic,
-    titles_only: true,
+    titlesOnly: opts.full === true ? false : true,
+    status: 'active',
+    limit: 100,
+    ...(opts.workspace ? { callerWorkspace: opts.workspace, crossWorkspace: false } : {}),
   })
+  return {
+    success: true,
+    count: res.posts.length,
+    scope: res.workspace || 'global',
+    titlesOnly: res.titlesOnly,
+    posts: res.posts,
+  }
 }

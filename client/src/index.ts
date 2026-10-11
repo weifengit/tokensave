@@ -4,8 +4,7 @@
 //
 // 槽位布局：
 //  1. conversation.session.header.actions —— Probe 探测组件：
-//     发现 tokensave-* 探索者会话计数（供简报窗展示）；订阅当前会话流，
-//     捕获含 tokensave-brief 标记的内容挂简报浮窗。
+//     上报当前会话 id（供侧边栏入口读取）+ 会话→工作台自动绑定扫描。
 //  2. conversation.view —— 「项目中心」tab（order 19）：项目列表本身
 //     （卡片/列表两种展示 + 活跃对话序号点）；点卡片/记录行/「进入工作台」/序号点
 //     都进入对应工作台。
@@ -15,15 +14,14 @@
 //
 // 设计偏离 doc（Step 11 遗留）：不做 ctx.on('tool/result') 监听——0.2.0-rc.2 中
 // tool/result 是会话事件而非 Cordis 事件（KB events.md 注明）。
-// 探索者浮窗（shell.overlay）自项目中心上线后停用：模型窗口归位到 H 台两竖；
+// 浮窗子系统（简报浮窗 + 已停用的探索者浮窗）已整体移除（Step 63）：简报只在对话与黑板展示。
 import type { Context } from '@deepseek-ai/cordis'
 import { useEffect } from 'react'
-import { getClientContext, setClientContext, subscribeSession, readService } from './session-subscribe'
+import { getClientContext, setClientContext, readService } from './session-subscribe'
 import {
   sweepProjectSessionBindings, bindSessionToItsProject, bindSessionEventually, wrapSessionCreate, wrapSessionStart, registerViewTargets, setCurrentSessionId,
   VIEW_ID, WORKBENCH_LABEL, PROJECT_CENTER_VIEW_ID, PROJECT_CENTER_LABEL,
 } from './panel/sessions'
-import { mountBriefWindow, mountedExplorerCount } from './float/mount'
 import { ControlRoom } from './panel/ControlRoom'
 import { ProjectCenter } from './panel/ProjectCenter'
 import { ControlRoomEntry } from './panel/ControlRoomEntry'
@@ -33,30 +31,9 @@ import { installScrollMemory } from './scroll-memory'
 
 export const inject = { slots: true }
 
-const BRIEF_START = '<!-- tokensave-brief:v1:start -->'
-const BRIEF_END = '<!-- tokensave-brief:v1:end -->'
-
-let lastBrief = ""
-function watchBrief(sessionId: string): () => void {
-  // 订阅推送全量列表：任一消息含简报标记即挂简报窗；同一简报只挂一次
-  return subscribeSession(sessionId, (list) => {
-    for (const msg of list) {
-      const i = msg.content.indexOf(BRIEF_START)
-      const j = msg.content.indexOf(BRIEF_END)
-      if (i < 0 || j < 0 || j < i) continue
-      const brief = msg.content.slice(i, j + BRIEF_END.length)
-      if (brief === lastBrief) return
-      lastBrief = brief
-      const ctx = getClientContext()
-      if (ctx) mountBriefWindow(ctx, brief, mountedExplorerCount())
-      return
-    }
-  })
-}
-
 // 会话作用域探测组件（KB slots.md 示例槽）：标准 props 提供 useSessions / sessionId
 function Probe(props: any): null {
-  // 探索者计数：由 H 台自身通过 telemetry 发现，这里仅保留简报监听
+  // （原简报浮窗监听已随浮窗子系统移除）
   const sid = props?.sessionId
   // 上报当前会话 id：侧边栏入口是 root 作用域、拿不到 sessionId，
   // 由这个始终挂载的 Probe 把它写到模块级变量供其读取。
@@ -95,23 +72,6 @@ function Probe(props: any): null {
     return () => window.clearInterval(timer)
   }, [sid])
 
-  // 简报监听：订阅当前会话流，捕获 tokensave-brief 标记后挂简报窗
-  useEffect(() => {
-    if (!sid) return
-    let un: (() => void) | undefined
-    try {
-      un = watchBrief(String(sid))
-    } catch (e) {
-      console.warn('[tokensave] watchBrief 失败', e)
-    }
-    return () => {
-      try {
-        un?.()
-      } catch {
-        /* noop */
-      }
-    }
-  }, [sid])
   return null
 }
 

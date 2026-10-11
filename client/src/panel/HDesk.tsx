@@ -40,14 +40,13 @@ import { SavingsColumn } from './SavingsColumn'
 import { MainChat } from './MainChat'
 import { SessionPicker } from './SessionPicker'
 import { ExplorerSettings } from './ExplorerSettings'
-import { useProjectSessions, openSession, startProjectSession, latestProjectSession, sessionBelongsToProject, stayInProjectAfterArchive } from './sessions'
+import { useProjectSessions, openSession, startProjectSession, latestProjectSession, sessionBelongsToProject, stayInProjectAfterArchive, isExplorerSessionId } from './sessions'
 import { getClientContext } from '../session-subscribe'
 import { rememberOpenedProject } from './store'
 import type { ProjectRecord } from './store'
 import type { CardState, WinState } from './desk-types'
 import { loadDeskPref, saveDeskPref, setDeskLocked } from './desk-layout'
 import type { DeskLayout } from './desk-layout'
-import { reportExplorerCount } from '../float/mount'
 import { takeFirstSeenClosures } from './desk-win-seed'
 
 import { PreviewPanel, absoluteUrl } from './PreviewPanel'
@@ -391,6 +390,12 @@ function restoreCards(
 
 export function HDesk({ project, sessionId, debug }: Props) {
   const [explorers, setExplorers] = useState<TelemetrySession[]>(() => EXPLORER_CACHE.get(project.path) ?? [])
+
+  // BUG-2：探索者严禁出现在「DSH 主对话」卡。用户从侧边栏点到探索者会话时，
+  // 宿主把工作台视图绑到了那条会话——主对话卡若直接渲染它就等于探索者混进主对话。
+  // 这里回退到项目自己的最新非探索者会话（无则空 → MainChat 已处理空态）。
+  const mainChatSessionId =
+    isExplorerSessionId(sessionId) ? (latestProjectSession(getClientContext(), project.path)?.id ?? '') : sessionId
   // —— 项目布局锁（按项目 id 固化布局）——
   // 首帧就按「锁定态快照」摆好窗口（惰性初始化），从别处跳回来时不会先闪一下默认布局。
   // 例外：「去调试」是一次**显式**的进入意图（要预览 + 主对话两窗并存），不锁——照旧走默认。
@@ -568,7 +573,8 @@ export function HDesk({ project, sessionId, debug }: Props) {
       const list = await fetchExplorers(project.path)
       EXPLORER_CACHE.set(project.path, list)
       setExplorers(list)
-      reportExplorerCount(list.length)
+      // mount.tsx 已被并行会话移除；reportExplorerCount 是个无副作用的模块级变量赋值，
+      // 去掉调用即可。
       setProbeError(null)
     } catch (e) {
       setProbeError(e instanceof Error ? e.message : '探索者探测失败')
@@ -1195,7 +1201,7 @@ export function HDesk({ project, sessionId, debug }: Props) {
               ref={chatCellRef}
             >
               {cardShell('chat', (
-                <MainChat sessionId={sessionId} actions={actionsFor('chat', 'DSH 主对话')} />
+                <MainChat sessionId={mainChatSessionId} actions={actionsFor('chat', 'DSH 主对话')} />
               ), 'ts-card-fill')}
             </div>
           )}
@@ -1240,7 +1246,7 @@ export function HDesk({ project, sessionId, debug }: Props) {
             )}
             {maximizedCard === 'chat' && (
               <div className="ts-card-overlay-chat" ref={overlayChatRef}>
-                <MainChat sessionId={sessionId} actions={actionsFor('chat', 'DSH 主对话')} />
+                <MainChat sessionId={mainChatSessionId} actions={actionsFor('chat', 'DSH 主对话')} />
               </div>
             )}
             {maximizedCard === 'talk' && (

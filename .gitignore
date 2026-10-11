@@ -118,3 +118,5 @@ docker-compose.override.yml
 # 临时验证工作区（浏览器 CDP / 布局沙箱，见 docs/PROGRESS.md Step 61）
 .ab2/
 .abv/
+.abhome/
+.ab-cdp/

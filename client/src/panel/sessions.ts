@@ -580,6 +580,21 @@ export function latestProjectSession(ctx: any, projectPath: string): ProjectSess
   return pickOwnSession(readProjectSessions(ctx, projectPath))
 }
 
+/**
+ * 该会话是否为 tokensave 探索者（标题 tokensave- 前缀）。
+ * BUG-2：探索者严禁出现在「DSH 主对话」卡——用户在侧边栏点到探索者时，
+ * 宿主会把工作台视图绑到这条会话，MainChat 若直接渲染它就等于探索者混进主对话。
+ * H 台用本函数把主对话卡回退到项目自己的会话。
+ */
+export function isExplorerSessionId(sessionId: string): boolean {
+  if (!sessionId) return false
+  const ctx: any = getClientContext()
+  const list = svc(ctx, 'sessions')?.list?.getSnapshot?.()
+  const row = list?.byId?.[sessionId]
+  const title = String(row?.displayTitle || row?.title || '')
+  return title.startsWith('tokensave-')
+}
+
 // —— 会话 → 工作台 自动绑定（#2）————————————
 //
 // 用户期望：不论从左侧边栏点会话/新建会话，还是从工作台顶部选择历史会话/新建会话，

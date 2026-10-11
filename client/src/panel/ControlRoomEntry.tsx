@@ -285,6 +285,8 @@ function ContinueSettingsBlock() {
               </button>
             </div>
 
+          </div>
+
           {/* 第三行：两个数值输入 */}
           <div className="ts-box-row">
           <label title="发送上限：连续自动继续几次后就停下来等你介入（用户自己发消息或手动点「继续」会重置这个计数）">发送上限</label>

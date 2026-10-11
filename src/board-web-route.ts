@@ -17,6 +17,8 @@ import {
   buildCatalog, defaultSelection, EXPLORER_GROUPS, KNOWN_MODELS, sanitizeSelection,
   type ExplorerSelection, type ModelEntry, type ProviderEntry,
 } from './explorer-catalog.ts'
+import { getBoardStore, extractTitle } from './blackboard/store.ts'
+import { currentRun } from './blackboard/runs.ts'
 
 export const BOARD_ROUTE_PATH = '/plugins/dsh-tokensave/board'
 export const FS_ROUTE_PATH = '/plugins/dsh-tokensave/fs'
@@ -331,41 +333,19 @@ interface BoardRouteEntry {
   workspace: string
 }
 
-function extractTitle(post: any): string {
-  if (typeof post?.metadata?.title === 'string' && post.metadata.title.trim()) {
-    return post.metadata.title.trim()
-  }
-  if (typeof post?.content === 'string' && post.content.trim()) {
-    const lines = post.content.split(/\r?\n/).map((l: string) => l.trim()).filter(Boolean)
-    if (lines.length > 0) {
-      let first = lines[0]
-      first = first.replace(/^#+\s*/, '').replace(/^[-*+]\s+/, '').replace(/^\d+\.\s+/, '').trim()
-      if (first) return first.slice(0, 60)
-    }
-  }
-  return '(无标题内容)'
-}
+// extractTitle 已统一到 src/blackboard/store.ts（剥 markdown 记号 + 跳过 <!-- 标记行），
+// 本路由直接导入使用——标题规则只有一份，工具应答与 H 台列表永远一致。
 
-function fetchBoardEntries(ctx: Context, workspace: string): BoardRouteEntry[] {
-  // boardStore 由 dsh-call-session 提供，本插件未声明 inject，故：
-  //   - 不能直接读 ctx.boardStore（代理会抛 without inject）；
-  //   - 必须走 ctx.get()（reflect 层，无需 inject），并兜住未就绪/未提供的异常。
-  let boardStore: any = null
-  try {
-    boardStore = typeof ctx?.get === 'function'
-      ? ctx.get('boardStore')
-      : (ctx as any)?.boardStore
-  } catch {
-    boardStore = null
-  }
-  if (!boardStore || typeof boardStore.list !== 'function') return []
-
-  const listRes = boardStore.list({
+function fetchBoardEntries(_ctx: Context, workspace: string): BoardRouteEntry[] {
+  // 2026-10-09 去 dsh-call-session 化：直读自建存储（原经 ctx.get('boardStore') 读第三方）。
+  // status:'all' + 工作区隔离由存储负责：带 authorWorkspace 且不匹配的条目被过滤，
+  // global 条目（authorWorkspace 空，tokensave 引擎自产简报/需求）全工作区可见。
+  const listRes = getBoardStore().list({
     callerWorkspace: workspace,
     crossWorkspace: false,
     status: 'all',
     titlesOnly: false,
-    limit: 200
+    limit: 200,
   })
   const rawPosts = Array.isArray(listRes) ? listRes : (listRes?.posts || [])
   const now = Date.now()
@@ -799,11 +779,18 @@ function handleExplorers(ctx: Context, req: any, res: any): void {
       const rawWs = url.searchParams.get('workspace')
       if (rawWs) wanted = normalizeWorkspace(rawWs)
     } catch { /* req.url 不可用时按全量 */ }
+    // 轮次过滤（BUG-1）：只返回当前轮登记的探索者——旧轮窗口在 H 台 8s 轮询内自动消失；
+    // 无登记（首次/记录缺失）→ 不过滤，保持旧行为。
+    const run = wanted ? currentRun(wanted) : null
+    const runIds = run && run.sessions.length > 0
+      ? new Set(run.sessions.map((s: { sessionId: string }) => s.sessionId))
+      : null
     const sessions: any[] = []
     for (const agent of live) {
       if (!agent) continue
       const id = String(agent?.id || agent?.session?.id || '')
       if (!id) continue
+      if (runIds && !runIds.has(id)) continue // 不属于本轮委派 → 不展示（BUG-1）
       // 标题解析（与 call-session resolveSessionTitle 同链）
       const title =
         (typeof agent?.session?.title === 'string' && agent.session.title) ||
@@ -822,7 +809,7 @@ function handleExplorers(ctx: Context, req: any, res: any): void {
         state: agent?.status === 'running' ? 'running' : 'idle'
       })
     }
-    writeJson(res, 200, { timestamp: Date.now(), workspace: wanted, sessions })
+    writeJson(res, 200, { timestamp: Date.now(), workspace: wanted, runId: run?.runId ?? null, sessions })
   } catch (error) {
     console.error('[dsh-tokensave] explorers route failed:', error)
     writeJson(res, 500, { error: 'explorers unavailable' })

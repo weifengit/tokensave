@@ -33,7 +33,7 @@
  */
 import { useEffect, useState } from 'react'
 import { getClientContext, readService } from '../session-subscribe'
-import { readProjectActivity, statusSnapshot, lastPromptMs } from './activity'
+import { readProjectActivity, statusSnapshot } from './activity'
 import { readProjectSessions } from './sessions'
 import { loadProjects } from './store'
 import type { ProjectRecord } from './store'
@@ -655,8 +655,7 @@ export function useActivityPulse(): PulseState {
             items.push({ key, sessionId: a.sessionId, projectId: project.id, project: project.name, title: a.title, kind: 'pending' })
           } else {
             running++
-            active.push({ sessionId: a.sessionId, projectId: project.id, project: project.name, title: a.title })
-            active.push({ sessionId: a.sessionId, projectId: project.id, project: project.name, title: a.title, lastPromptAt: lastPromptMs(ctx, a.sessionId, a.updatedAt) })
+            active.push({ sessionId: a.sessionId, projectId: project.id, project: project.name, title: a.title, lastPromptAt: a.updatedAt })
             tips.push(`${project.name ? `【${project.name}】` : ''}${a.title}`)
           }
         }
