@@ -274,5 +274,16 @@ check('高度由空间算出而不是写死 POP_H',
 check('面板 style 真的把 maxHeight 传下去了',
   /style=\{\{[^}]*maxHeight: pos\.maxHeight/.test(tsx))
 
+// —— 本轮反馈：侧边栏打开时，用户消息气泡右侧被裁 ——
+// 根因：.ts-msg-user 用 max-width:88% 但没写 box-sizing，浏览器默认 content-box，
+// 88% 只算内容，9px padding + 1px 边框再加 20px，长消息实际宽度超过容器，
+// 被 .ts-chat-msgs 的 overflow:hidden 裁掉右侧。
+// 本文件的惯例是每个盒子规则都显式写 box-sizing:border-box（见 .ts-bar/.ts-box 等），
+// 这两处漏了。修复后 88% 含 padding+border，气泡右缘正好落在内容区右缘。
+check('用户消息气泡显式 box-sizing:border-box（否则 max-width:88% 不含 padding，长消息右缘被裁）',
+  /\.ts-msg-user \{[^}]*box-sizing:border-box/.test(css))
+check('助手消息块同样显式 box-sizing:border-box（与气泡同盒模型，右缘对齐）',
+  /\.ts-msg-assistant \{[^}]*box-sizing:border-box/.test(css))
+
 console.log(fail === 0 ? '\nALL PASS' : `\n${fail} FAILED`)
 process.exitCode = fail === 0 ? 0 : 1

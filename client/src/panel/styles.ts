@@ -727,10 +727,10 @@ body.ts-hsplit-dragging .ts-card { transition:none !important; animation:none !i
 .ts-win-overlay { position:absolute; inset:0; z-index:40; flex:none; background:rgba(14,16,21,.97); color:#e6e8eb; border:1px solid rgba(127,127,127,.35); box-shadow:0 8px 32px rgba(0,0,0,.45); backdrop-filter:blur(8px) saturate(1.1); }
 .ts-win-overlay .ts-win-head { background:rgba(255,255,255,.07); }
 .ts-win-overlay .ts-win-head:hover { background:rgba(255,255,255,.13); }
-.ts-msg-user { align-self:flex-end; background:rgba(96,165,250,.22); border:1px solid rgba(96,165,250,.4); border-radius:8px 8px 2px 8px; padding:5px 9px; max-width:88%; white-space:pre-wrap; word-break:break-word; }
+.ts-msg-user { align-self:flex-end; box-sizing:border-box; background:rgba(96,165,250,.22); border:1px solid rgba(96,165,250,.4); border-radius:8px 8px 2px 8px; padding:5px 9px; max-width:88%; white-space:pre-wrap; word-break:break-word; }
 /* 回复区块：右边缘与用户气泡的右边缘对齐（用户气泡靠右、右边缘贴容器右端，
    因此回复块改为拉伸满宽，不再留右侧那一小块空白） */
-.ts-msg-assistant { align-self:stretch; background:rgba(127,127,127,.14); border-radius:8px 8px 8px 2px; padding:5px 9px; max-width:none; white-space:pre-wrap; word-break:break-word; }
+.ts-msg-assistant { align-self:stretch; box-sizing:border-box; background:rgba(127,127,127,.14); border-radius:8px 8px 8px 2px; padding:5px 9px; max-width:none; white-space:pre-wrap; word-break:break-word; }
 .ts-msg-tool, .ts-msg-system { align-self:stretch; opacity:.62; font-size:11px; border-left:2px solid rgba(127,127,127,.5); padding:2px 8px; }
 /* —— 每条消息的发出时间（用户气泡 / 助手回答 / 过程项 / 注入项）——
    块容器：气泡与时间的 column flex；user 块整体右对齐、assistant 块拉伸满宽。 */
