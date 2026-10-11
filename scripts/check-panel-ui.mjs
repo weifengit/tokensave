@@ -60,7 +60,7 @@ for (const sel of ['.ts-warn-body', '.ts-warn-title', '.ts-warn-tags', '.ts-warn
 check('宽度改由 panel-width 模块决定（不再写死常量夹紧）',
   tsx.includes("from './panel-width'") && tsx.includes('panelWidth(left, hoverItems)'))
 check('定位不再传 maxWidth，也不再传写死的 width',
-  !/setHoverPos\([\s\S]*?maxWidth/.test(tsx) && /left, width \}/.test(tsx))
+  !/setHoverPos\([\s\S]*?maxWidth/.test(tsx) && /left,\s*width/.test(tsx))
 check('清单变化时宽度会跟着重算', tsx.includes('wantW') && /setHoverPos\(\{ \.\.\.hoverPos, width: wantW \}\)/.test(tsx))
 
 // —— 反馈 3+6：长文本走 title 提示，面板里不出现解释段 ——
@@ -82,7 +82,8 @@ check('三个区域各有标题行', secHeads.length === 3, secHeads.join(' / ')
 check('标题分别是 提示音 / 自动继续 / 对话清单',
   JSON.stringify([...secHeads].sort()) === JSON.stringify(['提示音', '自动继续', '对话清单'].sort()),
   secHeads.join(' / '))
-check('每个区域都有 .ts-sec 包裹（分隔线靠它）', (tsx.match(/className="ts-sec"/g) || []).length === 3)
+check('每个区域都有 .ts-sec 包裹（分隔线靠它）',
+  (tsx.match(/className="ts-sec(?=[ "])/g) || []).length === 3)
 check('区域标题行样式存在', !!ruleOf('.ts-sec-head') && !!ruleOf('.ts-sec-title') && !!ruleOf('.ts-sec-note'))
 check('区域之间才画分隔线（最后一个不悬空）', css.includes('.ts-sec + .ts-sec'))
 check('各块不再自画 border-bottom（改由 .ts-sec 统一给）',
@@ -248,6 +249,30 @@ check('操作区有样式定义（继续 + 已读，5px 间隔与 ACTIONS_CONTIN
 const widthSrc = readFileSync(join(root, 'client/src/panel/panel-width.ts'), 'utf8')
 check('ROW_PAD_W 与清单行右内距对得上（8×2 + 1 = 17）',
   /const ROW_PAD_W = 17\b/.test(widthSrc), widthSrc.match(/const ROW_PAD_W = \d+/)?.[0] ?? '未找到')
+
+// —— 本轮反馈：对话消息较多时「对话清单显示不全」——
+// 根因：.ts-sec 是 flex:none，面板又 overflow:hidden —— 条目一多总高超过
+// max-height(60vh)，末尾几条直接被面板裁掉，清单内部根本没有可滚动的空间。
+// 修法：清单那一个区域允许压缩自己，溢出交给清单内部滚动；高度预算改由 JS
+// 按锚点这一侧真正剩下的空间给（不再写死 60vh）。
+check('.ts-warn-pop 的 max-height 不再写死 60vh（改 80vh + JS 按空间收紧）',
+  /\.ts-warn-pop \{[^}]*max-height:80vh/.test(css) && !/\.ts-warn-pop \{[^}]*max-height:60vh/.test(css))
+check('清单区域用 .ts-sec-list（可被压缩）',
+  !!ruleOf('.ts-sec-list') && /\.ts-sec-list \{[^}]*flex:1 1 auto/.test(css) &&
+  /\.ts-sec-list \{[^}]*min-height:0/.test(css))
+check('清单区各层都能收缩（否则内部无法滚动）',
+  /\.ts-list-body \{[^}]*flex:1 1 auto/.test(css) &&
+  /\.ts-list-body \{[^}]*min-height:0/.test(css) &&
+  /\.ts-box-list \{[^}]*flex:1 1 auto/.test(css) &&
+  /\.ts-warn-pop-list \{[^}]*flex:1 1 auto/.test(css))
+check('清单内部可滚动（overflow:auto 保留）', /\.ts-warn-pop-list \{[^}]*overflow:auto/.test(css))
+check('清单区域的类名已挂上（.ts-sec ts-sec-list）',
+  /className="ts-sec ts-sec-list"/.test(tsx))
+check('高度由空间算出而不是写死 POP_H',
+  /const POP_H_MIN = \d+/.test(tsx) && /maxHeight: Math\.max\(POP_H_MIN/.test(tsx) &&
+  !/window\.innerHeight - POP_H - 12/.test(tsx) && !/const POP_H = /.test(tsx))
+check('面板 style 真的把 maxHeight 传下去了',
+  /style=\{\{[^}]*maxHeight: pos\.maxHeight/.test(tsx))
 
 console.log(fail === 0 ? '\nALL PASS' : `\n${fail} FAILED`)
 process.exitCode = fail === 0 ? 0 : 1

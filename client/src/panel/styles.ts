@@ -175,7 +175,7 @@ body.ts-hdesk-nochat [data-conversation-region="composer"] {
 
 /* 清单浮层：portal 到 body + position:fixed（top/left 由 JSX 按按钮矩形给），
    所以 rail（56px 收起）与展开态都从按钮右缘飞出，不被侧边栏 overflow 裁剪 */
-.ts-warn-pop { position:fixed; z-index:60; max-width:calc(100vw - 24px); max-height:60vh; display:flex; flex-direction:column; border-radius:12px; border:1px solid rgba(127,127,127,.35); background:rgba(24,27,33,.97); color:#e6e8eb; box-shadow:0 14px 40px rgba(0,0,0,.5); backdrop-filter:blur(12px) saturate(1.2); overflow:hidden; }
+.ts-warn-pop { position:fixed; z-index:60; max-width:calc(100vw - 24px); max-height:80vh; display:flex; flex-direction:column; border-radius:12px; border:1px solid rgba(127,127,127,.35); background:rgba(24,27,33,.97); color:#e6e8eb; box-shadow:0 14px 40px rgba(0,0,0,.5); backdrop-filter:blur(12px) saturate(1.2); overflow:hidden; }
 /* 跑马灯悬浮面板：**宽度由 JS 固定给**（见 ControlRoomEntry 的 panelWidth）。
    这里只保证它是个全宽容器 —— 设置区 / 清单区都是 width:100%，
    整块面板只有一种宽度，不再出现“清单被长标题撐宽、设置区停在原宽”的割裂感。 */
@@ -183,6 +183,10 @@ body.ts-hdesk-nochat [data-conversation-region="composer"] {
 /* 一个区域 = 标题行 + 内容，区域之间用一条分隔线（不再是各块各自一条 border-bottom，
    那样最后一个区域会多出一条悬空的线） */
 .ts-sec { flex:none; width:100%; box-sizing:border-box; }
+/* 第三个区域（对话清单）是唯一「会长高」的一块：条目一多它得能压缩自己，
+   把超出部分交给清单内部滚动。若也写 flex:none，整块面板会被 max-height
+   一刀裁掉，末尾几条直接看不见（用户反馈：消息多时清单显示不全）。 */
+.ts-sec-list { flex:1 1 auto; min-height:0; display:flex; flex-direction:column; }
 .ts-sec + .ts-sec { border-top:1px solid rgba(127,127,127,.22); }
 /* 区域标题行：与「对话清单」原头部同款排版，但中性色（不再是某一区的专属样式） */
 .ts-sec-head { display:flex; align-items:center; gap:8px; padding:9px 22px 8px 12px; font-size:11px; font-weight:600; opacity:.62; letter-spacing:.04em; }
@@ -206,9 +210,9 @@ body.ts-hdesk-nochat [data-conversation-region="composer"] {
 .ts-box-row { display:flex; align-items:center; gap:6px; min-width:0; padding:6px 9px; }
 .ts-box-row > label { flex:none; font-size:10.5px; opacity:.62; letter-spacing:.02em; cursor:help; }
 /* 清单外框：装 .ts-warn-pop-list（它自己管滚动与行间距） */
-.ts-box-list { display:flex; flex-direction:column; min-height:0; overflow:hidden; padding:3px; }
+.ts-box-list { flex:1 1 auto; display:flex; flex-direction:column; min-height:0; overflow:hidden; padding:3px; }
 /* 清单区内容容器：与提示音 / 自动继续同款外距（0 12px 10px），保证三个外框左右对齐、内距一致 */
-.ts-list-body { flex:none; width:100%; box-sizing:border-box; padding:0 12px 10px; }
+.ts-list-body { flex:1 1 auto; min-height:0; width:100%; box-sizing:border-box; padding:0 12px 10px; }
 /* —— 提示音设置区（内嵌在悬浮面板顶部，与「对话清单」同面板同现）——
    宽度 100%（不再写死 272px）：与自动继续区、清单区严格同宽、同边距。 */
 .ts-sound-body { flex:none; width:100%; box-sizing:border-box; display:flex; flex-direction:column; gap:6px; padding:0 12px 10px; }
@@ -248,7 +252,7 @@ body.ts-hdesk-nochat [data-conversation-region="composer"] {
 .ts-mark-all-read-btn:hover { opacity:1; background:rgba(127,127,127,.26); }
 .ts-mark-all-read-btn:focus-visible { outline:2px solid rgba(96,165,250,.85); outline-offset:1px; }
 .ts-mark-all-read-btn:disabled { opacity:.4; cursor:not-allowed; pointer-events:none; }
-.ts-warn-pop-list { overflow:auto; overflow-x:hidden; padding:5px; display:flex; flex-direction:column; gap:2px; min-height:32px; }
+.ts-warn-pop-list { flex:1 1 auto; overflow:auto; overflow-x:hidden; padding:5px; display:flex; flex-direction:column; gap:2px; min-height:32px; }
 /* 一行 = 条目（点它跳转）+ 右侧操作区。align-items:center 让操作按钮与两行文本居中对齐，
    不再像以前那样贴顶显得歪。 */
 .ts-warn-row { display:flex; align-items:center; gap:6px; box-sizing:border-box; padding-right:1px; border-radius:9px; }

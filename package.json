@@ -27,7 +27,8 @@
     "test:ui": "node scripts/check-panel-ui.mjs",
     "test:width": "node scripts/check-panel-width.mjs",
     "test:hover": "node scripts/check-hover-corridor.mjs",
-    "test": "pnpm check && pnpm test:continue && pnpm test:width && pnpm test:hover && pnpm test:ui"
+    "test:sound": "node scripts/check-alert-kick.mjs",
+    "test": "pnpm check && pnpm test:continue && pnpm test:width && pnpm test:hover && pnpm test:sound && pnpm test:ui"
   },
   "dependencies": {
     "@deepseek-ai/dsh-brand": "0.2.0-rc.2",

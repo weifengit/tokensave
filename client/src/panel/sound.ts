@@ -15,6 +15,7 @@
  */
 import { ALARM_MP3, DINGDONG_MP3 } from './sounds-data'
 import { onPulseAlert } from './pulse'
+import { scheduleAlertKick } from './alert-kick'
 import { initAutoContinue } from './auto-continue'
 
 /** 音效 id：两段录音 + 两段合成 + 静音 */
@@ -325,13 +326,10 @@ export function initSoundBridge(): () => void {
   const offContinue = initAutoContinue()
   if (!bridgeOff) {
     bridgeOff = onPulseAlert((a) => {
-      // 角标先上屏、声音随后半拍（两帧 ≈ 16-32ms）：两者同步感知，不再“先听到后看到”
-      const kick = () => void playRole(a.kind === 'fail' ? 'fail' : 'done')
-      if (typeof window.requestAnimationFrame === 'function') {
-        window.requestAnimationFrame(() => window.requestAnimationFrame(kick))
-      } else {
-        window.setTimeout(kick, 32)
-      }
+      // 角标先上屏、声音随后半拍（两帧 ≈ 16-32ms）：两者同步感知，不再“先听到后看到”。
+      // 但 rAF 在**隐藏标签页 / 浏览器最小化**时被冻结（实测：隐藏页里挂的 rAF 5s 内一次没跑），
+      // 只走 rAF 会把提示音整个吞掉 —— 起音交给 scheduleAlertKick（rAF + 定时兜底）。
+      scheduleAlertKick(() => void playRole(a.kind === 'fail' ? 'fail' : 'done'))
     })
   }
   return () => {

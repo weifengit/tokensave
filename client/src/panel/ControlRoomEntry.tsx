@@ -75,8 +75,9 @@ const RAIL_MIN_WIDE = 30
  * 与 sessions.ts 的 NAV_SETTLE_MS 同量级（略短），避免两个窗口错位。
  */
 const NAV_LOCK_MS = 700
-/** 清单浮层高度预算（纵向 clamp 定位用）。 */
-const POP_H = 260
+/** 面板高度预算：低于下限就只剩标题（宁可溢一点），上限是不想让它占满整屏 */
+const POP_H_MIN = 200
+const POP_H_MAX = 720
 /**
  * 关闭倒计时的续期上限：指针在「走廊」（触发器与面板之间那道缝）里时
  * 允许续期几次。给慢速/斜向移动留余地，但不允许在缝里停一辈子不消失。
@@ -331,7 +332,7 @@ function ContinueSettingsBlock() {
  *   - 说明文字全部走 title 悬浮提示，面板内不出现解释段（极简）。
  */
 function HoverPanel({ pos, panelRef, items, onPick, onHover, onMarkRead, onMarkAllRead, onContinue }: {
-  pos: { top?: number; bottom?: number; left: number; width: number }
+  pos: { top?: number; bottom?: number; left: number; width: number; maxHeight?: number }
   /** 面板自己的 DOM 引用（父级的走廊命中测试要读它的真实矩形） */
   panelRef: React.RefObject<HTMLDivElement | null>
   items: PopItem[]
@@ -401,7 +402,7 @@ function HoverPanel({ pos, panelRef, items, onPick, onHover, onMarkRead, onMarkA
       className="ts-warn-pop ts-hover-pop"
       role="dialog"
       aria-label="对话清单"
-      style={{ top: pos.top, bottom: pos.bottom, left: pos.left, width: pos.width }}
+      style={{ top: pos.top, bottom: pos.bottom, left: pos.left, width: pos.width, maxHeight: pos.maxHeight }}
       onMouseEnter={() => onHover(true)}
       onMouseLeave={() => onHover(false)}
     >
@@ -526,7 +527,7 @@ function HoverPanel({ pos, panelRef, items, onPick, onHover, onMarkRead, onMarkA
       </div>
 
       {/* 区域三：对话清单（标题行 + 右侧「全部已读」，条目也用 card 包住） */}
-      <div className="ts-sec">
+      <div className="ts-sec ts-sec-list">
         <SectionHead title="对话清单" note={String(items.length)}>
           <button
             type="button"
@@ -738,7 +739,7 @@ export function ControlRoomEntry({ wide }: { wide?: boolean }) {
   ]
 
   // —— 跑马灯悬浮面板：圆点 hover → 弹出对话清单（取代原生 title，因为它点不了）——
-  const [hoverPos, setHoverPos] = useState<{ top?: number; bottom?: number; left: number; width: number } | null>(null)
+  const [hoverPos, setHoverPos] = useState<{ top?: number; bottom?: number; left: number; width: number; maxHeight?: number } | null>(null)
   const hoverTimer = useRef<number | null>(null)
   const clearHoverTimer = () => {
     if (hoverTimer.current) {
@@ -768,15 +769,26 @@ export function ControlRoomEntry({ wide }: { wide?: boolean }) {
     // 短标题的清单就窄窄一条，长标题到上限为止（靠省略号收尾），不再一律顶格宽。
     const left = Math.max(8, sidebarRightOf(btnRef.current as HTMLElement) + 8)
     const width = panelWidth(left, hoverItems)
-    const below = r.bottom + 6 + 140 <= window.innerHeight - 8
-    const above = r.top - 6 >= 140 + 8
-    setHoverPos(
-      below
-        ? { top: r.bottom + 6, left, width }
-        : above
-          ? { bottom: window.innerHeight - r.top + 6, left, width }
-          : { top: Math.max(8, Math.min(r.top, window.innerHeight - POP_H - 12)), left, width },
-    )
+    // 高度：最多占视口 80%，再按锚点这一侧**真正剩下的空间**收紧 ——
+    // 条目多时面板要能长高（超出部分在清单内部滚动），而不是被 max-height 一刀裁掉末尾几条。
+    const vh = window.innerHeight
+    const cap = Math.min(vh * 0.8, POP_H_MAX)
+    const belowSpace = vh - (r.bottom + 6) - 8
+    const aboveSpace = r.top - 6 - 8
+    if (belowSpace >= POP_H_MIN) {
+      setHoverPos({ top: r.bottom + 6, left, width, maxHeight: Math.max(POP_H_MIN, Math.min(cap, belowSpace)) })
+    } else if (aboveSpace >= POP_H_MIN) {
+      setHoverPos({
+        bottom: vh - r.top + 6,
+        left,
+        width,
+        maxHeight: Math.max(POP_H_MIN, Math.min(cap, aboveSpace)),
+      })
+    } else {
+      // 两侧都不够：自己算个高度，再把顶边夹回视口内（不再用写死的 POP_H 估）
+      const maxHeight = Math.max(POP_H_MIN, Math.min(cap, vh - 16))
+      setHoverPos({ top: Math.max(8, Math.min(r.top, vh - maxHeight - 12)), left, width, maxHeight })
+    }
   }
   /**
    * 关闭：指针离开后**不立刻收**，而是进一段「宽限倒计时」，到点再问一次“指针在哪”。
