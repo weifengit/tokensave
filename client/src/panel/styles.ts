@@ -727,16 +727,16 @@ body.ts-hsplit-dragging .ts-card { transition:none !important; animation:none !i
 .ts-win-overlay { position:absolute; inset:0; z-index:40; flex:none; background:rgba(14,16,21,.97); color:#e6e8eb; border:1px solid rgba(127,127,127,.35); box-shadow:0 8px 32px rgba(0,0,0,.45); backdrop-filter:blur(8px) saturate(1.1); }
 .ts-win-overlay .ts-win-head { background:rgba(255,255,255,.07); }
 .ts-win-overlay .ts-win-head:hover { background:rgba(255,255,255,.13); }
-.ts-msg-user { align-self:flex-end; box-sizing:border-box; background:rgba(96,165,250,.22); border:1px solid rgba(96,165,250,.4); border-radius:8px 8px 2px 8px; padding:5px 9px; max-width:72%; white-space:pre-wrap; word-break:break-word; }
-/* 回复区块与用户气泡共用同一条右边距（见下方 --ts-msg-inset）：
-   右边缘对齐，且都离容器右端留出这一段，不贴住边框/滚动条。 */
-.ts-msg-assistant { align-self:stretch; box-sizing:border-box; background:rgba(127,127,127,.14); border-radius:8px 8px 8px 2px; padding:5px 9px; max-width:none; white-space:pre-wrap; word-break:break-word; }
-.ts-msg-tool, .ts-msg-system { align-self:stretch; margin-right:var(--ts-msg-inset, 8px); opacity:.62; font-size:11px; border-left:2px solid rgba(127,127,127,.5); padding:2px 8px; }
+.ts-msg-user { align-self:flex-end; background:rgba(96,165,250,.22); border:1px solid rgba(96,165,250,.4); border-radius:8px 8px 2px 8px; padding:5px 9px; max-width:88%; white-space:pre-wrap; word-break:break-word; }
+/* 回复区块：右边缘与用户气泡的右边缘对齐（用户气泡靠右、右边缘贴容器右端，
+   因此回复块改为拉伸满宽，不再留右侧那一小块空白） */
+.ts-msg-assistant { align-self:stretch; background:rgba(127,127,127,.14); border-radius:8px 8px 8px 2px; padding:5px 9px; max-width:none; white-space:pre-wrap; word-break:break-word; }
+.ts-msg-tool, .ts-msg-system { align-self:stretch; opacity:.62; font-size:11px; border-left:2px solid rgba(127,127,127,.5); padding:2px 8px; }
 /* —— 每条消息的发出时间（用户气泡 / 助手回答 / 过程项 / 注入项）——
    块容器：气泡与时间的 column flex；user 块整体右对齐、assistant 块拉伸满宽。 */
 .ts-msg-block { display:flex; flex-direction:column; gap:3px; min-width:0; }
-.ts-msg-block-user { align-self:flex-end; align-items:flex-end; margin-right:var(--ts-msg-inset, 8px); }
-.ts-msg-block-assistant { align-self:stretch; margin-right:var(--ts-msg-inset, 8px); }
+.ts-msg-block-user { align-self:flex-end; align-items:flex-end; }
+.ts-msg-block-assistant { align-self:stretch; }
 .ts-msg-time { font-size:10.5px; opacity:.5; font-variant-numeric:tabular-nums; white-space:nowrap; color:inherit; line-height:1.4; }
 .ts-msg-block-user .ts-msg-time { text-align:right; }
 .ts-proc-time { margin-left:auto; font-size:10px; opacity:.5; font-variant-numeric:tabular-nums; white-space:nowrap; flex:none; }
@@ -750,7 +750,7 @@ body.ts-hsplit-dragging .ts-card { transition:none !important; animation:none !i
 .ts-turn { display:flex; flex-direction:column; gap:6px; }
 .ts-turn + .ts-turn { margin-top:10px; padding-top:9px; border-top:1px dashed rgba(127,127,127,.22); }
 /* 过程折叠条：一行，不抢眼 */
-.ts-proc { align-self:stretch; margin-right:var(--ts-msg-inset, 8px); }
+.ts-proc { align-self:stretch; }
 /* 窄列不换行：子项 nowrap + 省略号截断（文字换行发生在 flex 子项内部，不是 flex 层） */
 .ts-proc-head { display:flex; align-items:center; gap:7px; width:100%; text-align:left; font:inherit; font-size:11px; opacity:.66; padding:3px 8px; border:0; border-left:2px solid rgba(127,127,127,.45); background:rgba(127,127,127,.07); color:inherit; cursor:pointer; border-radius:0 6px 6px 0; flex-wrap:nowrap; overflow:hidden; white-space:nowrap; }
 .ts-proc-head > span { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -776,7 +776,7 @@ body.ts-hsplit-dragging .ts-card { transition:none !important; animation:none !i
 .ts-proc-think .ts-proc-role { color:rgba(192,132,252,.95); font-style:normal; opacity:.95; }
 /* 上下文注入（宿主自动带入的运行时快照/技能目录）：与「过程」同款单行折叠，
    用绿色左边条区分——它不是用户发的，也不是模型过程，点开才看正文 */
-.ts-inject { align-self:stretch; margin-right:var(--ts-msg-inset, 8px); }
+.ts-inject { align-self:stretch; }
 .ts-inject .ts-proc-head { border-left-color:rgba(52,211,153,.55); background:rgba(52,211,153,.08); }
 .ts-inject .ts-proc-head:hover { background:rgba(52,211,153,.16); }
 .ts-inject-item { border-left-color:rgba(52,211,153,.45); }
