@@ -52,9 +52,11 @@ check('布局快照（每区一份）+ 300ms 节流写盘',
   /SNAPSHOT_KEY = \(projectId: string\) => `tokensave:desk-dock\.v2:\$\{projectId\}`/.test(dock) &&
   /snap\[rr\] = apis\[rr\]\.toJSON\(\)/.test(dock) && /apis\[r\]\.fromJSON\(/.test(dock) &&
   /if \(saveTimer\) window\.clearTimeout\(saveTimer\)/.test(dock) && /\}, 300\)/.test(dock))
-check('布局锁 = 三个实例统一 disableDnd（可读回 dndCapabilities）',
-  /REGIONS\.forEach\(\(r\) => apiRef\.current\?\.\[r\]\?\.updateOptions\(\{ disableDnd: next \}\)\)/.test(dock) &&
-  /dnd: \(\) => apis\.center\.dndCapabilities/.test(dock))
+check('布局锁已删（功能 + 显示），面板/分隔条始终可拖',
+  /disableDnd: false,/.test(dock) && /dnd: \(\) => apis\.center\.dndCapabilities/.test(dock) &&
+  !/readLocked/.test(dock) && !/data-desk-lock/.test(dock) &&
+  // 遗留的锁键要清掉，不留孤儿
+  /'tokensave:desk-dock-lock\.v1:'/.test(dock))
 check('关闭面板可恢复（标题行 chips + ⋯ 菜单的「全部打开」）',
   /data-desk-reopen=\{id\}/.test(dock) && /closedRef/.test(dock) &&
   /＋ \{kindLabel\(id\)\}/.test(dock) && /data-desk-open-all=""/.test(dock))
@@ -197,11 +199,12 @@ check('开启根级落点容器（dndOverlayMounting；不设则浮层永不显�
   /dndOverlayMounting: 'absolute'/.test(dock) && /dndPanelOverlay: 'group'/.test(dock))
 check('顶部「项目中心」超链接已移除（恢复入口在项目中心 tab）',
   !/data-desk-back=""/.test(dock))
-check('设置浮层锚定在齿轮按钮下方且右缘对齐',
+check('设置浮层锚定在齿轮按钮下方，且**夹在工作台内部**（不会弹到侧边栏上）',
   /const placePop = \(anchor: HTMLElement \| null, width: number\) => \{/.test(dock) &&
-  /const left = r \? Math\.max\(8, Math\.min\(r\.right - width/.test(dock) &&
+  /const minLeft = \(dock \? dock\.left : 0\) \+ 8/.test(dock) &&
+  /const left = r/.test(dock) &&
   /const top = r \? r\.bottom \+ 6 : 48/.test(dock) &&
-  /style=\{popPos \?\? \{ right: 12, top: 48 \}\}/.test(dock))
+  /style=\{popPos \?\? \{ left: 12, top: 48 \}\}/.test(dock))
 check('⋯ 菜单：每窗口一行 + 三个区域按钮（当前区高亮，再点收起）+ 全部打开',
   /data-desk-pop-row=\{id\}/.test(dock) && /data-desk-move=\{id\}/.test(dock) &&
   /if \(cur === r\) closePanel\(id\)/.test(dock) && /data-desk-open-all=""/.test(dock))
@@ -221,13 +224,15 @@ check('字体调控：字号档位 + 字族写到 :root 变量（各条 CSS 用 
   /function applyFont\(font: FontId, family: FontFamilyId\): void \{/.test(dock) &&
   /root\.setProperty\('--ts-fs'/.test(dock) && /root\.setProperty\('--ts-font'/.test(dock) &&
   /font-family:var\(--ts-font, inherit\)/.test(dock))
-check('锁定状态**按项目分键**（A/B 各自管理，不再共用全局单键）',
-  /const LOCK_KEY = \(projectId: string\) => `tokensave:desk-dock-lock\.v1:\$\{projectId\}`/.test(dock) &&
-  /useState\(\(\) => readLocked\(project\.id\)\)/.test(dock) &&
-  /setItem\(LOCK_KEY\(project\.id\), next \? '1' : '0'\)/.test(dock) &&
-  /disableDnd: readLocked\(project\.id\)/.test(dock))
-check('状态栏承载：实时提示 · 锁 · 布局(保存) · 恢复 · 会话控件',
-  /data-desk-live=""/.test(dock) && /data-desk-lock=""/.test(dock) &&
+check('项目切换面板：列出全部项目 + 标注哪些项目有进行中的对话',
+  /const projectList = useMemo\(\(\) => \(projOpen \? loadProjects\(\) : \[\]\)/.test(dock) &&
+  /const projectActivity = useProjectsActivity\(projectList\)/.test(dock) &&
+  /data-busy=\{running \? '1' : undefined\}/.test(dock) &&
+  /ts-projsw-tag run">● 运行中/.test(dock) &&
+  /\{!running && !pending \? <span className="ts-projsw-tag idle">无进行中对话/.test(dock) &&
+  /if \(!current\) enterProjectWorkbench\(p\.id\)/.test(dock))
+check('状态栏承载：实时提示 · 布局(保存) · 恢复 · 会话控件',
+  /data-desk-live=""/.test(dock) &&
   /data-desk-layout=""/.test(dock) && /data-desk-layout-default=""/.test(dock) &&
   /<SessionPicker/.test(dock))
 
@@ -311,8 +316,8 @@ check('历史会话浮动面板在状态栏时**向上弹出**（下方没有空
   /visibility: pos \? undefined : 'hidden'/.test(sessSrc) &&
   // 样式表里写死了 top:calc(100%+6px)，内联必须显式压住它
   /top: pos\?\.top \?\? 'auto'/.test(sessSrc))
-check('历史会话 / 新建会话在**未锁定左侧**，且用线条图标（无 emoji）',
-  /<SessionPicker/.test(dock) && /data-desk-lock=""/.test(dock) &&
+check('历史会话 / 新建会话在状态栏右侧，且用线条图标（无 emoji）',
+  /<SessionPicker/.test(dock) &&
   /ICON_HISTORY/.test(readFileSync(join(root, 'client/src/panel/SessionPicker.tsx'), 'utf8')) &&
   !/🕘/.test(readFileSync(join(root, 'client/src/panel/SessionPicker.tsx'), 'utf8')))
 check('预览面板修复：referencePanel 必须属于**同一个实例**（跨实例引用会抛错）',

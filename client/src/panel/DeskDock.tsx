@@ -49,6 +49,7 @@ import { enterProjectWorkbench } from './sessions'
 import { ExplorerSettings } from './ExplorerSettings'
 import { SessionPicker } from './SessionPicker'
 import { loadProjects, rememberOpenedProject } from './store'
+import { useProjectsActivity } from './activity'
 import { getClientContext, subscribeSession } from '../session-subscribe'
 import { KINDS, paneId, parsePaneId, paneTitle, paneIcon, type Kind } from './desk-panes'
 import type { ProjectRecord } from './store'
@@ -57,9 +58,7 @@ const SNAPSHOT_KEY = (projectId: string) => `tokensave:desk-dock.v2:${projectId}
 const SAVED_KEY = (projectId: string) => `tokensave:desk-saved.v2:${projectId}`
 const REGIONS_KEY = 'tokensave:desk-regions.v1'
 const SKIN_KEY = 'tokensave:desk-skin.v1'
-/** 锁定状态**按项目分键**（用户反馈：A 项目锁了之后 B 项目也跟着锁 —— 那是旧全局单键的锅）。 */
-const LOCK_KEY = (projectId: string) => `tokensave:desk-dock-lock.v1:${projectId}`
-const LOCK_LEGACY_KEY = 'tokensave:desk-dock-lock.v1'
+/* 布局锁已按用户要求整个删除（功能 + 状态栏显示）；遗留键在 STALE 里清掉。 */
 /** 界面字体与字族（外观设置，全局一份，同皮肤）。 */
 const FONT_KEY = 'tokensave:desk-font.v1'
 const FONT_FAMILY_KEY = 'tokensave:desk-font-family.v1'
@@ -71,8 +70,18 @@ const COLLAPSE_W = 56
 const PULL_OUT_W = 12
 const SIDE_W_KEY = 'tokensave:desk-side-w.v1'
 /** 早期版本遗留的存储键：挂载时一次性清理，不留孤儿。 */
-const STALE_KEYS = ['tokensave:desk-open.v1', 'tokensave:desk-dock.v2', 'tokensave:desk-dock.v1']
-const STALE_PREFIX = ['tokensave:desk-dock.v1:', 'tokensave:desk-saved.v1:']
+const STALE_KEYS = [
+  'tokensave:desk-open.v1',
+  'tokensave:desk-dock.v2',
+  'tokensave:desk-dock.v1',
+  // 布局锁已删（功能 + 状态栏显示）：旧全局键与按项目分键都清掉
+  'tokensave:desk-dock-lock.v1',
+]
+const STALE_PREFIX = [
+  'tokensave:desk-dock.v1:',
+  'tokensave:desk-saved.v1:',
+  'tokensave:desk-dock-lock.v1:',
+]
 
 /** 三个区域（与 info_report 的 REGION_KEY 同构）。 */
 const REGIONS = ['left', 'center', 'right'] as const
@@ -162,13 +171,19 @@ const DOCK_CSS = `
 .ts-dock { position: absolute; inset: 0; display: grid; grid-template-rows: 42px minmax(0,1fr) 26px; grid-template-columns: minmax(0,var(--ts-side-l,220px)) minmax(0,1fr) minmax(0,var(--ts-side-r,260px)); grid-template-areas: "title title title" "left center right" "status status status"; color: #e6e8eb; font-size:var(--ts-fs, 12.5px); font-family:var(--ts-font, inherit); background: transparent; }
 .ts-dock[data-hide-left] { --ts-side-l: 0px; }
 .ts-dock[data-hide-right] { --ts-side-r: 0px; }
+/* 编辑区/面板区（center）也能收起：列宽塌陷到 0 + 区域内隐藏（面板不销毁，展开即回）。 */
+.ts-dock[data-hide-center] { grid-template-columns: minmax(0,var(--ts-side-l,220px)) 0px minmax(0,var(--ts-side-r,260px)); }
+.ts-dock[data-hide-center] .ts-region[data-region="center"] { display: none; }
 /* 一体化：标题行不画分割线（同 info_report，区域之间不靠线条分界）。 */
 .ts-titlebar { grid-area: title; display: flex; align-items: center; gap: 8px; padding: 0 8px; overflow: hidden; }
 .ts-title-left { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1; overflow: hidden; }
-/* 项目名左侧那个图标现在是**项目切换按钮**（点击弹项目清单）。 */
-.ts-title-switch { display: inline-flex; align-items: center; gap: 5px; flex: none; border: 1px solid transparent; border-radius: 7px; background: 0 0; color: #4f8ef7; cursor: pointer; padding: 2px 4px; }
-.ts-title-switch:hover { background: rgba(127,127,127,.16); border-color: rgba(127,127,127,.28); }
-.ts-title-switch .ts-title-caret { font-size:calc(var(--ts-fs, 12.5px) * 0.8); opacity: .65; }
+/* 项目名左侧：**项目切换按钮**。用户反馈「只画个图标看不出是按钮」→ 改成有底有框的
+   胶囊按钮（图标 + 小箭头），悬停/展开时高亮。 */
+.ts-title-switch { display: inline-flex; align-items: center; gap: 4px; flex: none; border: 1px solid rgba(127,127,127,.32); border-radius: 8px; background: rgba(127,127,127,.10); color: #e6e8eb; cursor: pointer; padding: 3px 6px 3px 7px; }
+.ts-title-switch:hover { border-color: #4f8ef7; background: rgba(79,142,247,.16); color: #4f8ef7; }
+.ts-title-switch[data-open] { border-color: #4f8ef7; background: rgba(79,142,247,.20); color: #4f8ef7; }
+.ts-title-switch .ts-title-caret { display: inline-flex; opacity: .7; }
+.ts-title-switch svg { display: block; }
 .ts-title-proj { font-weight: 600; white-space: nowrap; flex: none; }
 /* 「workbench」后缀与外框已按用户要求去掉：只留项目名本身。 */
 .ts-title-right { display: flex; align-items: center; gap: 4px; flex: none; }
@@ -244,6 +259,19 @@ body.ts-resizing { cursor: col-resize !important; user-select: none !important; 
 .ts-projsw-name { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ts-projsw-cur { flex: none; margin-left: auto; color: #4f8ef7; font-size: calc(var(--ts-fs, 12.5px) * 0.8); }
 .ts-projsw-meta { color: #6b7280; font-size: calc(var(--ts-fs, 12.5px) * 0.82); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 行首状态圆点：绿 = 有对话在跑，黄 = 有对话等你确认，灰 = 都闲着 */
+.ts-projsw-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: rgba(127,127,127,.55); }
+.ts-projsw-dot.is-run { background: #3fb950; box-shadow: 0 0 0 2px rgba(63,185,80,.20); }
+.ts-projsw-dot.is-wait { background: #f5c451; box-shadow: 0 0 0 2px rgba(245,196,81,.20); }
+/* 标签行：运行中 / 待确认 / 无进行中 + 更新时间 */
+.ts-projsw-tags { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: calc(var(--ts-fs, 12.5px) * 0.8); }
+.ts-projsw-tag { border-radius: 999px; padding: 1px 7px; border: 1px solid transparent; }
+.ts-projsw-tag.run { color: #7ee787; border-color: rgba(63,185,80,.45); background: rgba(63,185,80,.14); }
+.ts-projsw-tag.wait { color: #f5c451; border-color: rgba(245,196,81,.45); background: rgba(245,196,81,.14); }
+.ts-projsw-tag.idle { color: #6b7280; border-color: rgba(127,127,127,.28); }
+.ts-projsw-age { margin-left: auto; color: #6b7280; }
+/* 有对话在跑的项目：整行左边加一条绿竖线，扫一眼就能分辨（用户要求） */
+.ts-projsw-row[data-busy] { box-shadow: inset 2px 0 0 0 #3fb950; }
 .ts-set-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 4px 2px; }
 .ts-set-title { font-size:calc(var(--ts-fs, 12.5px) * 0.88); font-weight: 600; color: #9aa4b2; letter-spacing: .02em; }
 .ts-set-hint { font-size:calc(var(--ts-fs, 12.5px) * 0.84); color: #6b7280; }
@@ -309,8 +337,10 @@ body.ts-dock-dragging iframe { pointer-events: none !important; }
 .dv-intel { background: transparent; }
 .dv-intel .dv-dockview, .dv-intel .dv-groupview { background: transparent; border-radius: 0; }
 .dv-intel .dv-tabs-and-actions-container { background: transparent !important; height: 33px; font-size:var(--ts-fs, 12.5px); }
-.dv-intel .dv-tab { background: transparent !important; border-radius: 0 !important; }
-.dv-intel .dv-tab.dv-active-tab { background: rgba(255,255,255,.06) !important; color: #e6e8eb !important; }
+.dv-intel .dv-tab { background: transparent !important; border-radius: 0 !important; opacity: .5; transition: opacity .12s; }
+/* 激活的标签**不画底色**（用户反馈「标题行区域还有背景色」）：只把图标提亮。 */
+.dv-intel .dv-tab.dv-active-tab { background: transparent !important; color: #e6e8eb !important; opacity: 1; }
+.dv-intel .dv-tab:hover { opacity: .85; }
 .dv-intel .dv-separator, .dv-intel .dv-sash { border-color: transparent !important; }
 .dv-intel .dv-sash.dv-active-sash { background: #4f8ef7 !important; }
 .dv-intel .dv-floating { box-shadow: 0 18px 48px rgba(0,0,0,.5); border: 1px solid #242b36; }
@@ -361,22 +391,6 @@ function installDockCss(): void {
   document.head.appendChild(style)
 }
 
-/** 读本项目的锁定状态；首次读时把旧版那个全局单键迁过来（并清掉它，否则会继续影响别的项目）。 */
-function readLocked(projectId: string): boolean {
-  try {
-    const per = window.localStorage.getItem(LOCK_KEY(projectId))
-    if (per !== null) return per === '1'
-    const legacy = window.localStorage.getItem(LOCK_LEGACY_KEY)
-    if (legacy !== null) {
-      window.localStorage.setItem(LOCK_KEY(projectId), legacy)
-      window.localStorage.removeItem(LOCK_LEGACY_KEY)
-      return legacy === '1'
-    }
-    return false
-  } catch {
-    return false
-  }
-}
 
 function readHiddenRegions(): Region[] {
   try {
@@ -526,12 +540,16 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
   const paneOptsRef = useRef<(id: string, position?: any) => any>(() => null)
   const [, bump] = useState(0)
   const [data, setData] = useState<ProjectData>({ explorers: [] })
-  const [locked, setLocked] = useState(() => readLocked(project.id))
   const [font, setFont] = useState<FontId>(readFont)
   const [fontFamily, setFontFamily] = useState<FontFamilyId>(readFontFamily)
   const [liveIds, setLiveIds] = useState<string[]>([])
   const [reloadKey, setReloadKey] = useState(0)
   const [hiddenRegions, setHiddenRegions] = useState<Region[]>(readHiddenRegions)
+  /** 隐藏区集合的即时镜像：挂载 effect 里的回调（布局变化 / 激活面板变化）要读**最新**值。 */
+  const hiddenRef = useRef<Region[]>(hiddenRegions)
+  hiddenRef.current = hiddenRegions
+  /** 由挂载 effect 赋值的「输入条要不要藏」判定：hiddenRegions 变化（收起编辑区）时也要重跑。 */
+  const syncChatSeatRef = useRef<() => void>(() => {})
   const [layoutDirty, setLayoutDirty] = useState(false)
   const [skin, setSkin] = useState<string>(readSkin)
   /** 右上角「设置」面板（显示/隐藏窗口 + 皮肤 + 字体，三块合一）。 */
@@ -889,7 +907,8 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
       },
       defaultRenderer: 'always',
       noPanelsOverlay: 'emptyGroup',
-      disableDnd: readLocked(project.id),
+      // 布局锁功能已删：面板/分隔条始终可拖（保留这个选项位以免 dockview 默认值不同）
+      disableDnd: false,
       getTabContextMenuItems: ({ panel, group }: any) => [
         { label: '关闭', action: () => panel.api.close() },
         { label: '关闭其他', action: () => group.panels.slice().forEach((p: any) => p !== panel && p.api.close()) },
@@ -1115,14 +1134,16 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
 
     /**
      * 主对话卡「看不见」时把宿主输入条整条藏掉（同 ts-hdesk-nochat 口径）。
-     * 看不见有两种：面板被关，或它和别人同组但被别人挡在后面（例如把预览拖进主对话那一组）。
-     * 不藏的话，那条 position:fixed 的输入条会悬在别的窗口上面（实测：盖在预览上）。
+     * 看不见有三种：面板被关、被同组别的窗口挡在后面（例如把预览拖进主对话那一组）、
+     * 整个编辑区/面板区被收起。不藏的话，那条 position:fixed 的输入条会悬在别的窗口上。
      */
     const syncChatSeat = () => {
       const p = apis.center.getPanel(paneId(project.id, 'chat'))
-      const shown = !!p && p.api?.isVisible !== false
+      const centerHidden = hiddenRef.current.includes('center')
+      const shown = !!p && p.api?.isVisible !== false && !centerHidden
       document.body.classList.toggle('ts-desk-nochat', !shown)
     }
+    syncChatSeatRef.current = syncChatSeat
     const syncLive = () => {
       setLiveIds(REGIONS.flatMap((r) => apis[r].panels.map((p: any) => String(p.id))))
       syncChatSeat()
@@ -1336,6 +1357,11 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
       document.removeEventListener('keydown', onKey, true)
     }
   }, [settingsOpen, projOpen])
+
+  // —— 收起/展开区域后，主对话是否可见可能变了 → 重新判定宿主输入条要不要藏 ——
+  useEffect(() => {
+    syncChatSeatRef.current()
+  }, [hiddenRegions])
 
   // —— 字体：状态变化就写 :root 变量（插件所有视图跟着变），并持久化 ——
   useEffect(() => {
@@ -1557,13 +1583,28 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
     }
   }, [])
 
-  /** 把浮动面板定位到触发按钮下方、右边缘对齐（同 info_report 的 openWinMenu 思路）。 */
+  /**
+   * 把浮动面板定位到触发按钮下方（同 info_report 的 openWinMenu 思路）。
+   *
+   * **左右都夹在工作台内部**：左侧按钮（项目切换器）原来会算出负值 → 被夹到页面 x=8，
+   * 看着像「弹到宿主侧边栏上去了」（用户反馈）。现在下限用工作台自身的左/右边缘。
+   */
   const placePop = (anchor: HTMLElement | null, width: number) => {
     const r = anchor?.getBoundingClientRect()
-    const left = r ? Math.max(8, Math.min(r.right - width, window.innerWidth - width - 8)) : window.innerWidth - width - 12
+    const dock = dockRootRef.current?.getBoundingClientRect()
+    const minLeft = (dock ? dock.left : 0) + 8
+    const maxLeft = Math.min(window.innerWidth - width - 8, (dock ? dock.right : window.innerWidth) - width - 8)
+    const left = r
+      ? Math.max(minLeft, Math.min(r.right - width, Math.max(minLeft, maxLeft)))
+      : minLeft
     const top = r ? r.bottom + 6 : 48
     setPopPos({ left, top })
   }
+
+  /** 项目清单：只在面板打开时重读一次（用户可能刚在项目中心加/删项目）。 */
+  const projectList = useMemo(() => (projOpen ? loadProjects() : []), [projOpen])
+  /** 每个项目里「进行中 / 待确认」的对话（数据源与项目中心卡片上的 ①②③ 同源）。 */
+  const projectActivity = useProjectsActivity(projectList)
 
   const allPaneIds = useMemo(() => {
     const ids: string[] = []
@@ -1685,6 +1726,7 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
       data-desk-dock=""
       data-hide-left={hiddenRegions.includes('left') ? '' : undefined}
       data-hide-right={hiddenRegions.includes('right') ? '' : undefined}
+      data-hide-center={hiddenRegions.includes('center') ? '' : undefined}
       style={{
         ...(skin ? { background: skin } : {}),
         // 侧栏宽度可拖拽（同 info_report 的 --side-l / --side-r）。
@@ -1701,6 +1743,7 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
             ref={projBtnRef}
             className="ts-title-switch"
             data-desk-projswitch=""
+            data-open={projOpen ? '' : undefined}
             title="切换项目：列出「项目中心」里的全部项目，点一个即进它的工作台"
             onClick={() => {
               const next = !projOpen
@@ -1836,25 +1879,7 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
           ) : null}
           <span className="ts-sb-sep" aria-hidden="true" />
 
-          <button
-            className="ts-sb-btn"
-            data-desk-lock=""
-            title="锁定后不能拖动面板 / 分隔条（每个项目各自记忆）"
-            onClick={() => {
-              const next = !locked
-              setLocked(next)
-              REGIONS.forEach((r) => apiRef.current?.[r]?.updateOptions({ disableDnd: next }))
-              try {
-                window.localStorage.setItem(LOCK_KEY(project.id), next ? '1' : '0')
-              } catch {
-                /* 忽略 */
-              }
-            }}
-          >
-            <span dangerouslySetInnerHTML={{ __html: iconSvg(locked ? 'lock' : 'unlock', 13) }} />
-            {locked ? '已锁定' : '未锁定'}
-          </button>
-          <span className="ts-sb-sep" aria-hidden="true" />
+          {/* 「未锁定 / 已锁定」按用户要求整个删掉（功能与显示都不留）。 */}
           <span className="ts-sb-sep" aria-hidden="true" />
           {/* 布局：一个按钮同时承载「保存 / 恢复默认」（用户要求把两个合成一个） */}
           <button
@@ -2000,29 +2025,50 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
         >
           <div className="ts-set-head">
             <span className="ts-set-title">切换项目</span>
-            <span className="ts-set-hint">{loadProjects().length} 个</span>
+            <span className="ts-set-hint">{projectList.length} 个 · 点一行进它的工作台</span>
           </div>
           <div className="ts-projsw-list">
-            {loadProjects().map((p) => (
-              <button
-                key={p.id}
-                className="ts-projsw-row"
-                data-desk-projsw-item={p.id}
-                data-on={p.id === project.id ? '1' : undefined}
-                title={p.path}
-                onClick={() => {
-                  setProjOpen(false)
-                  if (p.id !== project.id) enterProjectWorkbench(p.id)
-                }}
-              >
-                <span className="ts-projsw-top">
-                  <span className="ts-projsw-name">{p.name}</span>
-                  {p.id === project.id ? <span className="ts-projsw-cur">当前</span> : null}
-                </span>
-                <span className="ts-projsw-meta">{p.path}</span>
-                <span className="ts-projsw-meta">更新于 {relAge(p.updatedAt)}</span>
-              </button>
-            ))}
+            {projectList.map((p) => {
+              const acts = projectActivity[p.id] || []
+              const running = acts.filter((a) => a.state === 'active').length
+              const pending = acts.filter((a) => a.state === 'pending').length
+              const current = p.id === project.id
+              return (
+                <button
+                  key={p.id}
+                  className="ts-projsw-row"
+                  data-desk-projsw-item={p.id}
+                  data-on={current ? '1' : undefined}
+                  data-busy={running ? '1' : undefined}
+                  title={
+                    `${p.name}\n${p.path}` +
+                    (acts.length
+                      ? `\n进行中对话（${acts.length}）：${acts.map((a) => `${a.order}. ${a.title}`).join('、')}`
+                      : '\n暂无进行中对话')
+                  }
+                  onClick={() => {
+                    setProjOpen(false)
+                    if (!current) enterProjectWorkbench(p.id)
+                  }}
+                >
+                  <span className="ts-projsw-top">
+                    <span
+                      className={`ts-projsw-dot${running ? ' is-run' : pending ? ' is-wait' : ''}`}
+                      aria-hidden="true"
+                    />
+                    <span className="ts-projsw-name">{p.name}</span>
+                    {current ? <span className="ts-projsw-cur">当前</span> : null}
+                  </span>
+                  <span className="ts-projsw-meta">{p.path}</span>
+                  <span className="ts-projsw-tags">
+                    {running ? <span className="ts-projsw-tag run">● 运行中 {running}</span> : null}
+                    {pending && !running ? <span className="ts-projsw-tag wait">待确认 {pending}</span> : null}
+                    {!running && !pending ? <span className="ts-projsw-tag idle">无进行中对话</span> : null}
+                    <span className="ts-projsw-age">更新于 {relAge(p.updatedAt)}</span>
+                  </span>
+                </button>
+              )
+            })}
           </div>
         </div>
       ) : null}

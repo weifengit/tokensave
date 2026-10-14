@@ -530,3 +530,29 @@ tokensave/
 - **侧栏拖拽性能口径**：拖动期间**禁止 setState**——只写 `--ts-side-l/-r` 与 `data-hide-*`，
   `pointermove` 用 rAF 合并，松手（含「同帧内按下即松手」）才 `applyRegions`/`applySideW`
   同步一次 React 状态。`PULL_OUT_W = 12`。
+
+**UI 约定（2026-10-14 Step 13-P）**
+
+- **标题行左侧**：项目名 `.ts-title-proj` 用 **1.52em / 700**（醒目，无框无底）；它左边是项目切换
+  按钮 `.ts-title-switch`（胶囊：图标 + 箭头，`data-open` = 面板开着），点击开
+  `data-desk-projsw-panel`；每行 `data-desk-projsw-item=<projectId>`，`data-busy` = 该项目有对话在跑。
+  面板数据：`useProjectsActivity(projectList)`（与项目中心卡片的活跃度同源）；
+  行内含状态圆点 + 运行中/待确认/无进行中标签 + 更新于。
+- **浮动面板定位**：`placePop(anchor, width)` 的左右都夹在**工作台矩形**内
+  （`dockRootRef` 的 left/right），不要写死页面边距 —— 否则左侧按钮的浮层会跑到宿主侧边栏上。
+- **区域三键**：`left`/`right` 收起走 `--ts-side-l/-r` + `data-hide-left/right`；
+  **`center` 收起走 `data-hide-center`**（列宽 0 + 区域内隐藏），并且收起期间要让
+  `syncChatSeat` 把宿主输入条藏掉（`body.ts-desk-nochat`）。
+- **布局锁已删除**：`disableDnd` 固定 false，状态栏不再有「未锁定/已锁定」；
+  旧的 `tokensave:desk-dock-lock.v1` 与 `…v1:<projectId>` 在 STALE 清理里删掉。
+- **项目中心底色**：只用极淡的中性冷光（`rgba(96,165,250,.10/.07)` 两层 + 同色减淡的漂移光晕球），
+  **不要**再加紫/青/粉那套彩色光晕 —— 用户要求跟工作台同一个调子。
+
+**UI 约定（2026-10-14 Step 13-Q）**
+
+- **所有面板标题行都不带底色**：`.ts-mainchat-head` / `.ts-board-head` / `.ts-talk-head` /
+  `.ts-save-head` / `.ts-preview-bar` 一律 `background: transparent` + 一条
+  `1px rgba(127,127,127,.16)` 下边线；dockview 激活标签也不画底色（靠图标亮度区分）。
+  新加面板请沿用这个口径。
+- **消息左右留白**：`.ts-chat-msgs { padding: 14px 18px }`（底部单独由
+  `padding-bottom: calc(var(--ts-composer-h, 72px) + 14px)` 给停靠的输入条让位）。

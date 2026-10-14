@@ -53,12 +53,13 @@ body.ts-hdesk-open [data-width-handle] { display:none !important; }
    因此把网格与光晕铺到共享容器上，并把输入条座位改透明。 */
 body.ts-center-open [data-conversation-scroll] {
   background-image:
-    radial-gradient(circle at 12% 8%, rgba(122,92,255,.28), transparent 44%),
-    radial-gradient(circle at 80% 94%, rgba(0,194,255,.24), transparent 48%),
-    radial-gradient(circle at 90% 10%, rgba(255,95,158,.20), transparent 46%),
+    /* 用户反馈：原来那层紫/粉/青彩光太跳，跟工作台不一个调子 → 改成极淡的中性冷光，
+       让「项目中心」看着还是同一个界面的一个页，而不是另一个产品。 */
+    radial-gradient(circle at 12% 6%, rgba(96,165,250,.10), transparent 46%),
+    radial-gradient(circle at 84% 96%, rgba(96,165,250,.07), transparent 50%),
     linear-gradient(rgba(127,127,127,.055) 1px, transparent 1px),
     linear-gradient(90deg, rgba(127,127,127,.055) 1px, transparent 1px);
-  background-size: auto, auto, auto, 30px 30px, 30px 30px;
+  background-size: auto, auto, 30px 30px, 30px 30px;
 }
 /* —— 项目中心（列表态）：**整条隐藏**宿主输入条 ——
    用户要求：项目中心页不该出现聊天输入框及其状态信息（模型名 · 费用 · 上下文占比 ·
@@ -103,7 +104,8 @@ body.ts-desk-nochat [data-conversation-region="composer"] {
 .ts-bar-sessions { flex:none; flex-wrap:nowrap; }
 .ts-title { font-size:calc(var(--ts-fs, 12.5px) * 1.28); font-weight:600; }
 /* 标题行左侧：只留项目名本身（用户要求去掉「workbench」后缀与那圈外框徽标） */
-.ts-title-proj { flex:none; display:inline-flex; align-items:center; gap:8px; max-width:min(420px,42vw); font-size:calc(var(--ts-fs, 12.5px) * 1.04); font-weight:600; letter-spacing:.01em; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+/* 标题行左侧：项目名本身（去掉了「workbench」后缀与那圈外框徽标，但**字号回到原来的醒目大小**） */
+.ts-title-proj { flex:none; display:inline-flex; align-items:center; gap:8px; max-width:min(420px,42vw); font-size:calc(var(--ts-fs, 12.5px) * 1.52); font-weight:700; letter-spacing:.01em; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .ts-title-proj-icon { flex:none; font-size:calc(var(--ts-fs, 12.5px) * 1.28); opacity:.9; }
 .ts-title-proj-name { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 /* 旧版「锁定/未锁定胶囊配色」随徽标一起删除（锁定状态现在只在状态栏显示）。 */
@@ -387,9 +389,10 @@ body.ts-desk-nochat [data-conversation-region="composer"] {
 .ts-center-bg { position:absolute; inset:0; overflow:hidden; pointer-events:none; z-index:0; }
 /* 网格已上提到共享容器（[data-conversation-scroll]），这里只留流动光晕，避免双重网格出现摩尔纹 */
 .ts-center-blob { position:absolute; width:52vmax; height:52vmax; border-radius:50%; filter:blur(70px); opacity:.30; mix-blend-mode:screen; }
-.ts-center-blob1 { background:radial-gradient(circle,#7a5cff,transparent 66%); top:-20%; left:-16%; animation:tsBlob1 17s ease-in-out infinite alternate; }
-.ts-center-blob2 { background:radial-gradient(circle,#00c2ff,transparent 66%); bottom:-24%; left:22%; animation:tsBlob2 13s ease-in-out infinite alternate; }
-.ts-center-blob3 { background:radial-gradient(circle,#ff5f9e,transparent 66%); top:-8%; right:-18%; animation:tsBlob3 19s ease-in-out infinite alternate; }
+/* 漂移光晕也改成极淡的中性蓝（原来紫/青/粉三色太跳，跟工作台不一个调子） */
+.ts-center-blob1 { background:radial-gradient(circle,rgba(96,165,250,.20),transparent 66%); top:-20%; left:-16%; animation:tsBlob1 17s ease-in-out infinite alternate; }
+.ts-center-blob2 { background:radial-gradient(circle,rgba(96,165,250,.14),transparent 66%); bottom:-24%; left:22%; animation:tsBlob2 13s ease-in-out infinite alternate; }
+.ts-center-blob3 { background:radial-gradient(circle,rgba(96,165,250,.10),transparent 66%); top:-8%; right:-18%; animation:tsBlob3 19s ease-in-out infinite alternate; }
 @keyframes tsBlob1 { from{transform:translate(0,0) scale(1)} to{transform:translate(12vw,9vh) scale(1.12)} }
 @keyframes tsBlob2 { from{transform:translate(0,0) scale(1)} to{transform:translate(-11vw,-8vh) scale(1.14)} }
 @keyframes tsBlob3 { from{transform:translate(0,0) scale(1)} to{transform:translate(-9vw,10vh) scale(1.1)} }
@@ -654,7 +657,9 @@ body.ts-vsplit-dragging .ts-card { transition:none !important; animation:none !i
    所以这里保持无框；仅在铺满浮层里补一层边框。 */
 .ts-mainchat { display:flex; flex-direction:column; min-height:0; flex:1; overflow:hidden; }
 .ts-card-overlay-inner .ts-mainchat { border:1px solid rgba(127,127,127,.3); border-radius:9px; background:rgba(127,127,127,.07); }
-.ts-mainchat-head { flex:none; display:flex; align-items:center; gap:8px; padding:6px 9px; background:rgba(127,127,127,.13); font-size:var(--ts-fs, 12.5px); font-weight:600; }
+/* 一体化：主对话标题行也**不要底色**（用户反馈「还是有背景色」），与黑板/协作两块一致：
+   只留一条很淡的下边线分标题与内容。 */
+.ts-mainchat-head { flex:none; display:flex; align-items:center; gap:8px; padding:6px 8px; border-bottom:1px solid rgba(127,127,127,.16); font-size:var(--ts-fs, 12.5px); font-weight:600; }
 /* 底部留出宿主输入条的位置（输入条 fixed 停靠在卡片底部） */
 /* #4 输入条 fixed 停在卡片底部，会盖住消息末尾几行：
    底部留白 = 输入条实测高度（--ts-composer-h，由 HDesk 停靠时写入）+ 余量。
@@ -817,7 +822,8 @@ body.ts-vsplit-dragging .ts-card { transition:none !important; animation:none !i
    两个写者来回拉扯 → 底部附近高频微抖，视觉上就是「重影」。
    宿主的对话 scrollport 在跟随尾部时也是这么关的
    （.EvIC1a_root[data-chat-following-tail] .EvIC1a_scroll{overflow-anchor:none}）。 */
-.ts-chat-msgs { flex:1; min-height:0; overflow:auto; overflow-anchor:none; padding:10px; display:flex; flex-direction:column; gap:7px; }
+/* 消息与面板边线的左右间距（用户反馈「和边框之间太挤」）：10px → 18px，上下也略放宽。 */
+.ts-chat-msgs { flex:1; min-height:0; overflow:auto; overflow-anchor:none; padding:14px 18px; display:flex; flex-direction:column; gap:7px; }
 
 /* —— 左栏：协作对话时间轴 —— */
 .ts-talk { display:flex; flex-direction:column; min-height:104px; overflow:hidden; }
@@ -896,7 +902,8 @@ body.ts-vsplit-dragging .ts-card { transition:none !important; animation:none !i
    根节点复用 .ts-cr：宿主那条「从 scrollBody 一路压成可收缩 flex」的链路
    用 :has(.ts-cr) 选中，带这个类才不会被宿主的「随内容长高」规则撑破。 */
 .ts-preview { gap:8px; }
-.ts-preview-bar { display:flex; align-items:center; gap:10px; padding:7px 10px; border:1px solid rgba(127,127,127,.3); border-radius:10px; background:rgba(127,127,127,.1); flex:none; }
+/* 预览条同样去掉底色与描边框（一体化），只留下边线 */
+.ts-preview-bar { display:flex; align-items:center; gap:10px; padding:6px 8px; border-bottom:1px solid rgba(127,127,127,.16); flex:none; }
 .ts-preview-title { font-weight:600; font-size:calc(var(--ts-fs, 12.5px) * 1.04); white-space:nowrap; }
 .ts-preview-url { flex:1 1 auto; min-width:0; font-size:calc(var(--ts-fs, 12.5px) * 0.88); opacity:.65; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .ts-preview-ops { display:flex; gap:6px; flex:none; }
