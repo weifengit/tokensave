@@ -14,11 +14,7 @@ const CSS = `
 /* 让工作台/项目中心自己控高：宿主的视图链路默认是「随内容长高」的。
    实测宿主的规则：
      .scrollBody { flex:1; min-height:0; overflow-y:auto }
-     root[data-phase=active] .viewArea { flex:1 0 auto; min-height:auto }  ← 元凶
-   即激活相下 viewArea 会跟着内容长高，外层 scrollBody 出现长滚动条——
-   我们卡片的 overflow:hidden 根本轮不到生效。这里把链路每一层都改成可收缩。 */
-body.ts-hdesk-open [data-conversation-scroll],
-body.ts-center-open [data-conversation-scroll] { overflow:hidden; }
+     root[data-phase=active] .viewArea { flex:1 0 auto; min-height:auto }
 /* scrollBody 的直接子元素：会话 slot 包裹层（保留输入条座位不动） */
 body.ts-hdesk-open [data-conversation-scroll] > :not([data-conversation-region="composer"]),
 body.ts-center-open [data-conversation-scroll] > :not([data-conversation-region="composer"]) {
@@ -44,9 +40,9 @@ body.ts-center-open [data-conversation-scroll] :has(.ts-cr) {
   flex:1 1 0; min-height:0; overflow:hidden; display:flex; flex-direction:column;
 }
 
-.ts-cr { display:flex; flex-direction:column; flex:1 1 0; min-height:0; overflow:hidden; padding:12px; box-sizing:border-box; gap:10px; color:inherit; font-size:13px; position:relative; }
+/* font-family 走 --ts-font（设置面板的「字族」项；未设时 inherit，跟宿主一致）。 */
+.ts-cr { display:flex; flex-direction:column; flex:1 1 0; min-height:0; overflow:hidden; padding:12px; box-sizing:border-box; gap:10px; color:inherit; font-size:calc(var(--ts-fs, 12.5px) * 1.04); font-family:var(--ts-font, inherit); position:relative; }
 .ts-cr a { color:inherit; }
-.ts-hdesk { width:100%; min-height:0; }
 /* 工作台打开时隐藏宿主那套全局宽度把手（值写在共享父元素上、一处拖动处处生效，
    且给把手预留 176px 永远铺不满）。工作台默认铺满。 */
 body.ts-hdesk-open [data-width-handle] { display:none !important; }
@@ -91,7 +87,10 @@ body.ts-hdesk-dock [data-conversation-region="composer"] {
    界面里不出现任何对话框（像「项目中心」页那样）。
    用 display:none 而非 unmount：恢复主对话卡（标题行「＋ DSH 主对话」chip / 一键切换）
    即原样回来，宿主状态不丢。类名由 HDesk 在主对话卡未停靠期间加到 body。 */
-body.ts-hdesk-nochat [data-conversation-region="composer"] {
+/* dockview 时代同理（类名由 DeskDock 在「主对话卡不可见」时加）：
+   面板被关、或它被同组的其它窗口（如预览）挡在后面时，都把输入条整条藏掉。 */
+body.ts-hdesk-nochat [data-conversation-region="composer"],
+body.ts-desk-nochat [data-conversation-region="composer"] {
   display: none !important;
 }
 
@@ -102,16 +101,12 @@ body.ts-hdesk-nochat [data-conversation-region="composer"] {
 .ts-bar-tools { display:flex; align-items:center; justify-content:flex-end; gap:8px; flex-wrap:nowrap; min-width:0; }
 /* 会话操作固定单行，不换行 */
 .ts-bar-sessions { flex:none; flex-wrap:nowrap; }
-.ts-title { font-size:16px; font-weight:600; }
-/* 标题行左侧：只留项目名，做显著标识（徽标形态） */
-.ts-title-proj { flex:none; display:inline-flex; align-items:center; gap:8px; max-width:min(420px,42vw); padding:3px 13px; border-radius:11px; font-size:19px; font-weight:700; letter-spacing:.01em; background:linear-gradient(135deg, rgba(96,165,250,.24), rgba(96,165,250,.07)); border:1px solid rgba(96,165,250,.5); box-shadow:inset 0 0 0 1px rgba(96,165,250,.12); }
-.ts-title-proj-icon { flex:none; font-size:16px; opacity:.9; }
+.ts-title { font-size:calc(var(--ts-fs, 12.5px) * 1.28); font-weight:600; }
+/* 标题行左侧：只留项目名本身（用户要求去掉「workbench」后缀与那圈外框徽标） */
+.ts-title-proj { flex:none; display:inline-flex; align-items:center; gap:8px; max-width:min(420px,42vw); font-size:calc(var(--ts-fs, 12.5px) * 1.04); font-weight:600; letter-spacing:.01em; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ts-title-proj-icon { flex:none; font-size:calc(var(--ts-fs, 12.5px) * 1.28); opacity:.9; }
 .ts-title-proj-name { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-/* 项目名胶囊的两种配色（用户要求）：**锁定** = 青绿；**未锁定** = 琥珀。
-   两套都只用半透明中性色 + 一个色相，深浅主题下都自适应；锁定色饱和度更高，
-   余光扫一眼标题行就能分辨当前是哪种状态。 */
-.ts-title-proj.ts-proj-locked { background:linear-gradient(135deg, rgba(45,212,191,.26), rgba(45,212,191,.08)); border-color:rgba(45,212,191,.62); box-shadow:inset 0 0 0 1px rgba(45,212,191,.14); }
-.ts-title-proj.ts-proj-unlocked { background:linear-gradient(135deg, rgba(251,191,36,.26), rgba(251,191,36,.08)); border-color:rgba(251,191,36,.62); box-shadow:inset 0 0 0 1px rgba(251,191,36,.14); }
+/* 旧版「锁定/未锁定胶囊配色」随徽标一起删除（锁定状态现在只在状态栏显示）。 */
 /* 布局锁按钮（紧贴项目名右侧）：与胶囊同色系，一瞥即知开关状态 */
 .ts-lock-btn { flex:none; white-space:nowrap; }
 .ts-lock-btn.ts-lock-on { background:rgba(45,212,191,.2); border-color:rgba(45,212,191,.55); }
@@ -120,8 +115,8 @@ body.ts-hdesk-nochat [data-conversation-region="composer"] {
 .ts-lock-btn.ts-lock-off:hover { background:rgba(251,191,36,.3); }
 /* 一键切换按钮：显示全部窗口 ↔ 仅显示预览（无预览时为 DSH 主对话） */
 .ts-btn-mode { flex:none; white-space:nowrap; }
-.ts-sub { opacity:.65; font-size:12px; }
-.ts-btn { cursor:pointer; border:1px solid rgba(127,127,127,.35); background:rgba(127,127,127,.12); color:inherit; border-radius:8px; padding:5px 12px; font-size:13px; line-height:1.4; transition:background .15s ease, border-color .15s ease, box-shadow .15s ease; }
+.ts-sub { opacity:.65; font-size:calc(var(--ts-fs, 12.5px) * 0.96); }
+.ts-btn { cursor:pointer; border:1px solid rgba(127,127,127,.35); background:rgba(127,127,127,.12); color:inherit; border-radius:8px; padding:5px 12px; font-size:calc(var(--ts-fs, 12.5px) * 1.04); line-height:1.4; transition:background .15s ease, border-color .15s ease, box-shadow .15s ease; }
 .ts-btn:hover { background:rgba(127,127,127,.22); }
 .ts-btn:disabled { opacity:.45; cursor:not-allowed; }
 .ts-btn-primary { background:rgba(96,165,250,.25); border-color:rgba(96,165,250,.6); }
@@ -140,18 +135,18 @@ body.ts-hdesk-nochat [data-conversation-region="composer"] {
 [class*="footerActions"]:has(.ts-side-entry) { flex-direction:column; align-items:stretch; gap:6px; }
 /* rail（收起）时宿主居中排列，纵向同样成立 */
 [class*="collapsed"] [class*="footerActions"]:has(.ts-side-entry) { align-items:center; }
-.ts-side-entry { display:flex; align-items:center; gap:8px; width:100%; padding:7px 10px; border:1px solid rgba(127,127,127,.32); border-radius:8px; background:rgba(127,127,127,.1); color:inherit; cursor:pointer; font:inherit; font-size:12.5px; text-align:left; transition:background .15s ease, border-color .15s ease; }
+.ts-side-entry { display:flex; align-items:center; gap:8px; width:100%; padding:7px 10px; border:1px solid rgba(127,127,127,.32); border-radius:8px; background:rgba(127,127,127,.1); color:inherit; cursor:pointer; font:inherit; font-size:var(--ts-fs, 12.5px); text-align:left; transition:background .15s ease, border-color .15s ease; }
 .ts-side-entry:hover { background:rgba(127,127,127,.2); border-color:rgba(127,127,127,.5); }
 .ts-side-entry:active { transform:translateY(1px); }
 /* rail（侧边栏收起）：与宿主的图标按钮**完全同款** —— 无边框、无底色、36×36、圆角 12、图标居中。
    （用户反馈：收起后这个按钮还带着外框，和「设置 / 搜索」等按钮风格不一致。）
    实测宿主 rail 图标按钮：border 0 / background transparent / 36×36 / radius 12px / padding 0。 */
 .ts-side-entry.rail { justify-content:center; padding:0; width:36px; height:36px; border:0; background:transparent; border-radius:12px; }
-.ts-side-entry.rail .ts-side-icon { font-size:16px; }
+.ts-side-entry.rail .ts-side-icon { font-size:calc(var(--ts-fs, 12.5px) * 1.28); }
 /* 悬停也只给底色（不再出现边框）；按压不做位移（图标按钮不位移） */
 .ts-side-entry.rail:hover { background:rgba(127,127,127,.18); border:0; }
 .ts-side-entry.rail:active { transform:none; background:rgba(127,127,127,.24); }
-.ts-side-icon { flex:none; font-size:14px; line-height:1; }
+.ts-side-icon { flex:none; font-size:calc(var(--ts-fs, 12.5px) * 1.12); line-height:1; }
 .ts-side-label { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 
 /* 右侧簇（角标 + 呼吸灯圆点）：wide 右对齐，rail 跟随居中。
@@ -162,7 +157,7 @@ body.ts-hdesk-nochat [data-conversation-region="composer"] {
 .ts-side-entry.rail .ts-side-right { margin-left:0; gap:3px; }
 
 /* —— 计数角标（同款两种色）：黄 = 需要处理的对话；蓝 = 未读的正常结束，点它弹各自清单 —— */
-.ts-side-badge { flex:none; display:inline-flex; align-items:center; justify-content:center; min-width:15px; height:15px; padding:0 4px; border-radius:999px; font-size:10px; font-weight:700; line-height:1; cursor:pointer; animation:ts-pulse-breathe 1.6s ease-in-out infinite; }
+.ts-side-badge { flex:none; display:inline-flex; align-items:center; justify-content:center; min-width:15px; height:15px; padding:0 4px; border-radius:999px; font-size:calc(var(--ts-fs, 12.5px) * 0.8); font-weight:700; line-height:1; cursor:pointer; animation:ts-pulse-breathe 1.6s ease-in-out infinite; }
 .ts-side-badge.is-warn { background:#f59e0b; color:#1b1305; box-shadow:0 0 6px rgba(245,158,11,.85); }
 .ts-side-badge.is-done { background:#38bdf8; color:#052a3d; box-shadow:0 0 6px rgba(56,189,248,.9); }
 .ts-side-badge:hover { filter:brightness(1.12); }
@@ -171,7 +166,7 @@ body.ts-hdesk-nochat [data-conversation-region="composer"] {
 .ts-side-badge:focus-visible { outline:2px solid rgba(96,165,250,.85); outline-offset:2px; }
 /* rail（36px）里角标与圆点同排：固定 15px 宽（border-box 口径），保证不横向溢出按钮；
    两枚角标同现时圆点让位（JSX 侧按角标数递减呼吸点） */
-.ts-side-entry.rail .ts-side-badge { box-sizing:border-box; width:15px; min-width:15px; height:14px; padding:0; font-size:9.5px; }
+.ts-side-entry.rail .ts-side-badge { box-sizing:border-box; width:15px; min-width:15px; height:14px; padding:0; font-size:calc(var(--ts-fs, 12.5px) * 0.76); }
 
 /* 清单浮层：portal 到 body + position:fixed（top/left 由 JSX 按按钮矩形给），
    所以 rail（56px 收起）与展开态都从按钮右缘飞出，不被侧边栏 overflow 裁剪 */
@@ -189,7 +184,7 @@ body.ts-hdesk-nochat [data-conversation-region="composer"] {
 .ts-sec-list { flex:1 1 auto; min-height:0; display:flex; flex-direction:column; }
 .ts-sec + .ts-sec { border-top:1px solid rgba(127,127,127,.22); }
 /* 区域标题行：与「对话清单」原头部同款排版，但中性色（不再是某一区的专属样式） */
-.ts-sec-head { display:flex; align-items:center; gap:8px; padding:9px 22px 8px 12px; font-size:11px; font-weight:600; opacity:.62; letter-spacing:.04em; }
+.ts-sec-head { display:flex; align-items:center; gap:8px; padding:9px 22px 8px 12px; font-size:calc(var(--ts-fs, 12.5px) * 0.88); font-weight:600; opacity:.62; letter-spacing:.04em; }
 .ts-sec-title { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 /* 标题右侧的浅色计数（如「对话清单 3」里的 3） */
 .ts-sec-note { flex:none; font-weight:500; opacity:.75; }
@@ -208,7 +203,7 @@ body.ts-hdesk-nochat [data-conversation-region="composer"] {
 .ts-box { box-sizing:border-box; width:100%; border:1px solid rgba(127,127,127,.2); background:rgba(127,127,127,.07); border-radius:9px; }
 /* 外框里的一行 */
 .ts-box-row { display:flex; align-items:center; gap:6px; min-width:0; padding:6px 9px; }
-.ts-box-row > label { flex:none; font-size:10.5px; opacity:.62; letter-spacing:.02em; cursor:help; }
+.ts-box-row > label { flex:none; font-size:calc(var(--ts-fs, 12.5px) * 0.84); opacity:.62; letter-spacing:.02em; cursor:help; }
 /* 清单外框：装 .ts-warn-pop-list（它自己管滚动与行间距） */
 .ts-box-list { flex:1 1 auto; display:flex; flex-direction:column; min-height:0; overflow:hidden; padding:3px; }
 /* 清单区内容容器：与提示音 / 自动继续同款外距（0 12px 10px），保证三个外框左右对齐、内距一致 */
@@ -217,7 +212,7 @@ body.ts-hdesk-nochat [data-conversation-region="composer"] {
    宽度 100%（不再写死 272px）：与自动继续区、清单区严格同宽、同边距。 */
 .ts-sound-body { flex:none; width:100%; box-sizing:border-box; display:flex; flex-direction:column; gap:6px; padding:0 12px 10px; }
 .ts-box-row .ts-select,
-.ts-box-row .ts-sound-min { height:22px; box-sizing:border-box; border:1px solid rgba(127,127,127,.35); border-radius:6px; background:rgba(127,127,127,.1); color:inherit; font-family:inherit; font-size:10.5px; line-height:1; padding:0 5px; }
+.ts-box-row .ts-sound-min { height:22px; box-sizing:border-box; border:1px solid rgba(127,127,127,.35); border-radius:6px; background:rgba(127,127,127,.1); color:inherit; font-family:inherit; font-size:calc(var(--ts-fs, 12.5px) * 0.84); line-height:1; padding:0 5px; }
 .ts-box-row .ts-select { flex:1; min-width:0; }
 .ts-box-row .ts-sound-min { flex:none; width:46px; text-align:center; -moz-appearance:textfield; appearance:textfield; }
 /* 数字输入框去掉原生上下箭头（它才是“跟别的控件不一样”的元凶） */
@@ -231,10 +226,10 @@ body.ts-hdesk-nochat [data-conversation-region="composer"] {
 .ts-cont-sw.on > i { transform:translateX(12px); background:#86efac; }
 .ts-cont-sw:focus-visible { outline:2px solid rgba(96,165,250,.85); outline-offset:1px; }
 .ts-sound-range { flex:1; min-width:0; height:14px; accent-color:#38bdf8; cursor:pointer; }
-.ts-sound-mini { flex:none; width:22px; height:22px; box-sizing:border-box; border:1px solid rgba(127,127,127,.4); background:rgba(127,127,127,.14); color:inherit; font-size:10px; line-height:1; padding:0; border-radius:6px; cursor:pointer; display:inline-flex; align-items:center; justify-content:center; }
+.ts-sound-mini { flex:none; width:22px; height:22px; box-sizing:border-box; border:1px solid rgba(127,127,127,.4); background:rgba(127,127,127,.14); color:inherit; font-size:calc(var(--ts-fs, 12.5px) * 0.8); line-height:1; padding:0; border-radius:6px; cursor:pointer; display:inline-flex; align-items:center; justify-content:center; }
 .ts-sound-mini:hover { background:rgba(127,127,127,.3); }
 .ts-sound-mini.is-playing { border-color:rgba(245,158,11,.65); background:rgba(245,158,11,.16); color:#fbbf24; }
-.ts-sound-unit { flex:none; font-size:10px; opacity:.55; }
+.ts-sound-unit { flex:none; font-size:calc(var(--ts-fs, 12.5px) * 0.8); opacity:.55; }
 /* —— 自动继续设置块（嵌在悬浮面板里，与声音设置同款紧凑排版）—— */
 .ts-cont-block { flex:none; width:100%; box-sizing:border-box; display:flex; flex-direction:column; gap:6px; padding:0 12px 10px; }
 .ts-cont-gap { flex:1 1 auto; min-width:8px; }
@@ -242,13 +237,13 @@ body.ts-hdesk-nochat [data-conversation-region="composer"] {
    用 space-between 而不是 flex:1 居中 —— 居中会让首项左缩、末项右缩，与上下两行对不齐。 */
 .ts-cont-sw-row { justify-content:space-between; }
 .ts-box-row > .ts-cont-sw-item { flex:0 0 auto; display:flex; align-items:center; gap:6px; min-width:0; }
-.ts-cont-sw-item > label { flex:none; font-size:10.5px; opacity:.62; letter-spacing:.02em; cursor:help; }
+.ts-cont-sw-item > label { flex:none; font-size:calc(var(--ts-fs, 12.5px) * 0.84); opacity:.62; letter-spacing:.02em; cursor:help; }
 .ts-cont-sw-item > .ts-cont-sw { flex:none; }
-.ts-cont-num { flex:none; width:46px; height:22px; box-sizing:border-box; border:1px solid rgba(127,127,127,.35); border-radius:6px; background:rgba(127,127,127,.1); color:inherit; font-family:inherit; font-size:10.5px; line-height:1; padding:0 5px; text-align:center; -moz-appearance:textfield; appearance:textfield; }
+.ts-cont-num { flex:none; width:46px; height:22px; box-sizing:border-box; border:1px solid rgba(127,127,127,.35); border-radius:6px; background:rgba(127,127,127,.1); color:inherit; font-family:inherit; font-size:calc(var(--ts-fs, 12.5px) * 0.84); line-height:1; padding:0 5px; text-align:center; -moz-appearance:textfield; appearance:textfield; }
 .ts-cont-num::-webkit-outer-spin-button, .ts-cont-num::-webkit-inner-spin-button { -webkit-appearance:none; appearance:none; margin:0; }
-.ts-cont-unit { flex:none; font-size:10px; opacity:.5; }
+.ts-cont-unit { flex:none; font-size:calc(var(--ts-fs, 12.5px) * 0.8); opacity:.5; }
 /* 头部「全部已读」：牌形按钮，与行内「已读」同一套视觉语言（不再是一个孤零零的黄胖按钮） */
-.ts-mark-all-read-btn { flex:none; display:inline-flex; align-items:center; gap:3px; border:1px solid rgba(127,127,127,.36); background:rgba(127,127,127,.12); color:inherit; font-size:10.5px; font-weight:500; line-height:1; padding:4px 9px; border-radius:999px; cursor:pointer; opacity:.82; transition:background .12s, opacity .12s; }
+.ts-mark-all-read-btn { flex:none; display:inline-flex; align-items:center; gap:3px; border:1px solid rgba(127,127,127,.36); background:rgba(127,127,127,.12); color:inherit; font-size:calc(var(--ts-fs, 12.5px) * 0.84); font-weight:500; line-height:1; padding:4px 9px; border-radius:999px; cursor:pointer; opacity:.82; transition:background .12s, opacity .12s; }
 .ts-mark-all-read-btn:hover { opacity:1; background:rgba(127,127,127,.26); }
 .ts-mark-all-read-btn:focus-visible { outline:2px solid rgba(96,165,250,.85); outline-offset:1px; }
 .ts-mark-all-read-btn:disabled { opacity:.4; cursor:not-allowed; pointer-events:none; }
@@ -261,31 +256,31 @@ body.ts-hdesk-nochat [data-conversation-region="composer"] {
 .ts-warn-row:not(.is-active) .ts-warn-item:hover { background:rgba(245,158,11,.14); }
 .ts-warn-row.is-active .ts-warn-item:hover { background:rgba(34,197,94,.12); }
 .ts-warn-item:focus-visible { outline:1px solid rgba(96,165,250,.8); }
-.ts-warn-icon { flex:none; font-size:11px; line-height:1.7; opacity:.9; }
+.ts-warn-icon { flex:none; font-size:calc(var(--ts-fs, 12.5px) * 0.88); line-height:1.7; opacity:.9; }
 /* min-width:0 是防撐宽的关键：这两层只要有一层没写，长标题就会把整个面板顶宽 */
 .ts-warn-body { min-width:0; flex:1; display:flex; flex-direction:column; gap:3px; }
-.ts-warn-title { min-width:0; font-size:12.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.ts-warn-title { min-width:0; font-size:var(--ts-fs, 12.5px); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 /* 第二行：项目胶囊 + 中断原因短标签（如「截断」「余额」）并排；负空间时才省略 */
 .ts-warn-tags { display:flex; align-items:center; gap:4px; min-width:0; max-width:100%; }
-.ts-warn-sub { flex:0 1 auto; min-width:0; box-sizing:border-box; font-size:10.5px; line-height:1.5; padding:0 7px; border-radius:999px; background:rgba(127,127,127,.15); border:1px solid rgba(127,127,127,.26); opacity:.9; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.ts-warn-sub { flex:0 1 auto; min-width:0; box-sizing:border-box; font-size:calc(var(--ts-fs, 12.5px) * 0.84); line-height:1.5; padding:0 7px; border-radius:999px; background:rgba(127,127,127,.15); border:1px solid rgba(127,127,127,.26); opacity:.9; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 /* 中断原因：与项目胶囊同形但用警告色，一眼区分「归属」与「毛病」 */
-.ts-warn-reason { flex:none; box-sizing:border-box; font-size:10px; line-height:1.5; padding:0 6px; border-radius:999px; background:rgba(245,158,11,.16); border:1px solid rgba(245,158,11,.42); color:#fbbf24; white-space:nowrap; }
+.ts-warn-reason { flex:none; box-sizing:border-box; font-size:calc(var(--ts-fs, 12.5px) * 0.8); line-height:1.5; padding:0 6px; border-radius:999px; background:rgba(245,158,11,.16); border:1px solid rgba(245,158,11,.42); color:#fbbf24; white-space:nowrap; }
 /* 计时器：距上次正常发言的耗时（仅活跃对话显示） */
-.ts-warn-timer { flex:none; font-size:10px; opacity:.55; font-variant-numeric:tabular-nums; white-space:nowrap; margin-left:0; }
+.ts-warn-timer { flex:none; font-size:calc(var(--ts-fs, 12.5px) * 0.8); opacity:.55; font-variant-numeric:tabular-nums; white-space:nowrap; margin-left:0; }
 /* 行内「已读」：轻牌按钮 + 对勾图标（以前那个裸「✓」太小、难看出是按钮） */
-.ts-warn-read { flex:none; display:inline-flex; align-items:center; gap:3px; border:1px solid rgba(127,127,127,.34); background:rgba(127,127,127,.12); color:inherit; font-size:10.5px; line-height:1; padding:4px 8px; border-radius:999px; cursor:pointer; opacity:.68; transition:background .12s, opacity .12s, border-color .12s; }
+.ts-warn-read { flex:none; display:inline-flex; align-items:center; gap:3px; border:1px solid rgba(127,127,127,.34); background:rgba(127,127,127,.12); color:inherit; font-size:calc(var(--ts-fs, 12.5px) * 0.84); line-height:1; padding:4px 8px; border-radius:999px; cursor:pointer; opacity:.68; transition:background .12s, opacity .12s, border-color .12s; }
 .ts-warn-read:hover { opacity:1; background:rgba(74,222,128,.18); border-color:rgba(74,222,128,.5); color:#86efac; }
 .ts-warn-read:focus-visible { outline:2px solid rgba(96,165,250,.85); outline-offset:1px; }
 /* 行内「继续」：不能自动时的唯一手动入口，做成主色调强调 */
-.ts-warn-continue-btn { flex:none; border:1px solid rgba(96,165,250,.6); background:rgba(96,165,250,.18); color:#93c5fd; font-size:10.5px; font-weight:600; line-height:1; padding:5px 9px; border-radius:999px; cursor:pointer; transition:background .12s; }
+.ts-warn-continue-btn { flex:none; border:1px solid rgba(96,165,250,.6); background:rgba(96,165,250,.18); color:#93c5fd; font-size:calc(var(--ts-fs, 12.5px) * 0.84); font-weight:600; line-height:1; padding:5px 9px; border-radius:999px; cursor:pointer; transition:background .12s; }
 .ts-warn-continue-btn:hover:not(:disabled) { background:rgba(96,165,250,.34); }
 .ts-warn-continue-btn:disabled { opacity:.6; cursor:default; }
 .ts-warn-continue-btn.is-error { border-color:rgba(248,113,113,.6); background:rgba(248,113,113,.18); color:#fca5a5; }
 .ts-warn-continue-btn:focus-visible { outline:2px solid rgba(96,165,250,.85); outline-offset:1px; }
 /* 已发送：不是按钮，只是告诉用户「机器已经接手了，不用管」 */
-.ts-warn-done { flex:none; display:inline-flex; align-items:center; gap:3px; font-size:10.5px; line-height:1; padding:4px 8px; border-radius:999px; border:1px solid rgba(74,222,128,.45); background:rgba(74,222,128,.14); color:#86efac; white-space:nowrap; }
+.ts-warn-done { flex:none; display:inline-flex; align-items:center; gap:3px; font-size:calc(var(--ts-fs, 12.5px) * 0.84); line-height:1; padding:4px 8px; border-radius:999px; border:1px solid rgba(74,222,128,.45); background:rgba(74,222,128,.14); color:#86efac; white-space:nowrap; }
 .ts-warn-done.is-busy { border-color:rgba(96,165,250,.45); background:rgba(96,165,250,.14); color:#93c5fd; }
-.ts-warn-empty { display:flex; align-items:center; justify-content:center; gap:6px; padding:18px 8px; font-size:11.5px; opacity:.45; }
+.ts-warn-empty { display:flex; align-items:center; justify-content:center; gap:6px; padding:18px 8px; font-size:calc(var(--ts-fs, 12.5px) * 0.92); opacity:.45; }
 @media (prefers-reduced-motion: reduce) { .ts-side-badge { animation:none; opacity:1; } }
 
 /* 呼吸灯：侧边栏「项目中心」入口的存活指示（3 个小圆点，wide 时右对齐）。
@@ -304,18 +299,18 @@ body.ts-hdesk-nochat [data-conversation-region="composer"] {
 .ts-btn-picked { background:rgba(74,222,128,.35); border-color:rgba(74,222,128,.85); font-weight:600; box-shadow:0 0 0 1px rgba(74,222,128,.35) inset; }
 .ts-btn-picked:hover { background:rgba(74,222,128,.5); }
 .ts-btn-danger { background:rgba(248,113,113,.18); border-color:rgba(248,113,113,.5); }
-.ts-icon-btn { cursor:pointer; border:none; background:transparent; color:inherit; opacity:.6; border-radius:6px; padding:2px 7px; font-size:14px; line-height:1.3; }
+.ts-icon-btn { cursor:pointer; border:none; background:transparent; color:inherit; opacity:.6; border-radius:6px; padding:2px 7px; font-size:calc(var(--ts-fs, 12.5px) * 1.12); line-height:1.3; }
 .ts-icon-btn:hover { opacity:1; background:rgba(127,127,127,.22); }
-.ts-input, .ts-select { border:1px solid rgba(127,127,127,.35); background:rgba(127,127,127,.08); color:inherit; border-radius:6px; padding:6px 9px; font-size:13px; box-sizing:border-box; }
+.ts-input, .ts-select { border:1px solid rgba(127,127,127,.35); background:rgba(127,127,127,.08); color:inherit; border-radius:6px; padding:6px 9px; font-size:calc(var(--ts-fs, 12.5px) * 1.04); box-sizing:border-box; }
 /* 弹窗里的表单控件一律撑满整行（否则 textarea 会退回 cols 默认宽度，
    比同行的 input 窄——用户反馈两者宽度不一致）。 */
 .ts-modal-body .ts-input, .ts-modal-body .ts-select, .ts-modal-body .ts-textarea { width:100%; }
 /* 多行文本框：允许纵向拖拽、继承字体、行高放松 */
-.ts-textarea { min-height:74px; resize:vertical; font:inherit; font-size:13px; line-height:1.55; }
+.ts-textarea { min-height:74px; resize:vertical; font:inherit; font-size:calc(var(--ts-fs, 12.5px) * 1.04); line-height:1.55; }
 .ts-input:focus, .ts-select:focus { outline:1px solid rgba(96,165,250,.7); }
-.ts-tag { font-size:11px; padding:2px 8px; border-radius:99px; background:rgba(96,165,250,.22); border:1px solid rgba(96,165,250,.45); }
+.ts-tag { font-size:calc(var(--ts-fs, 12.5px) * 0.88); padding:2px 8px; border-radius:99px; background:rgba(96,165,250,.22); border:1px solid rgba(96,165,250,.45); }
 .ts-tag-warn { background:rgba(251,191,36,.2); border-color:rgba(251,191,36,.5); }
-.ts-hint { opacity:.6; font-size:12px; text-align:center; padding:4px; }
+.ts-hint { opacity:.6; font-size:calc(var(--ts-fs, 12.5px) * 0.96); text-align:center; padding:4px; }
 .ts-hint-warn { opacity:1; color:#fbbf24; background:rgba(251,191,36,.12); border:1px solid rgba(251,191,36,.4); border-radius:8px; padding:6px 10px; }
 
 /* —— 一轮异常结束的提示（工作台里「中断」必须一眼可辨）——
@@ -325,31 +320,31 @@ body.ts-hdesk-nochat [data-conversation-region="composer"] {
 .ts-turn-notice { display:flex; flex-direction:column; gap:4px; align-self:stretch; border:1px solid rgba(251,191,36,.5); background:rgba(251,191,36,.12); border-radius:8px; padding:6px 9px; }
 .ts-turn-notice-fatal { border-color:rgba(248,113,113,.55); background:rgba(248,113,113,.13); }
 .ts-turn-notice-head { display:flex; align-items:center; gap:6px; min-width:0; }
-.ts-turn-notice-icon { flex:none; font-size:12.5px; }
-.ts-turn-notice-label { flex:none; font-weight:600; font-size:12.5px; color:#fbbf24; }
+.ts-turn-notice-icon { flex:none; font-size:var(--ts-fs, 12.5px); }
+.ts-turn-notice-label { flex:none; font-weight:600; font-size:var(--ts-fs, 12.5px); color:#fbbf24; }
 .ts-turn-notice-fatal .ts-turn-notice-label { color:#f87171; }
-.ts-turn-notice-code { flex:none; font-size:11px; padding:1px 6px; border-radius:99px; background:rgba(127,127,127,.22); border:1px solid rgba(127,127,127,.4); opacity:.9; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+.ts-turn-notice-code { flex:none; font-size:calc(var(--ts-fs, 12.5px) * 0.88); padding:1px 6px; border-radius:99px; background:rgba(127,127,127,.22); border:1px solid rgba(127,127,127,.4); opacity:.9; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
 /* 展开按钮推到最右，与标题条三段式一致 */
 .ts-turn-notice-head .ts-msg-toggle { margin-left:auto; }
-.ts-turn-notice-preview { font-size:12px; opacity:.85; word-break:break-word; }
-.ts-turn-notice-body { font-size:12.5px; }
+.ts-turn-notice-preview { font-size:calc(var(--ts-fs, 12.5px) * 0.96); opacity:.85; word-break:break-word; }
+.ts-turn-notice-body { font-size:var(--ts-fs, 12.5px); }
 
 /* —— 会话选择条（工作台顶部第二行） —— */
 .ts-bar-sessions { gap:8px; }
 .ts-sess { position:relative; display:inline-flex; align-items:center; gap:8px; }
 .ts-sess-btn { display:inline-flex; align-items:center; gap:8px; max-width:min(560px, 60vw); }
 .ts-sess-btn.active { border-color:rgba(96,165,250,.7); background:rgba(96,165,250,.18); }
-.ts-sess-cur { opacity:.7; font-size:12px; max-width:280px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.ts-sess-caret { opacity:.6; font-size:11px; }
+.ts-sess-cur { opacity:.7; font-size:calc(var(--ts-fs, 12.5px) * 0.96); max-width:280px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ts-sess-caret { opacity:.6; font-size:calc(var(--ts-fs, 12.5px) * 0.88); }
 /* 浮动面板宽度：**跟随内容**（主要是标题宽度）动态决定，而不是写死 520px；
    min/max 只兜底（太窄不好看、太宽超出视口）。 */
 .ts-sess-pop { position:absolute; top:calc(100% + 6px); right:0; left:auto; z-index:44; width:max-content; min-width:240px; max-width:min(560px, calc(100vw - 32px)); max-height:60vh; display:flex; flex-direction:column; border-radius:12px; border:1px solid rgba(127,127,127,.35); background:rgba(24,27,33,.97); color:#e6e8eb; box-shadow:0 14px 40px rgba(0,0,0,.5); backdrop-filter:blur(12px) saturate(1.2); overflow:hidden; }
 /* 表头：max-width 封顶 + 允许换行，否则它的长文案会把动态宽度撑开 */
-.ts-sess-pop-head { flex:none; max-width:320px; padding:9px 12px; font-size:11.5px; font-weight:600; opacity:.7; border-bottom:1px solid rgba(127,127,127,.25); letter-spacing:.03em; white-space:normal; }
+.ts-sess-pop-head { flex:none; max-width:320px; padding:9px 12px; font-size:calc(var(--ts-fs, 12.5px) * 0.92); font-weight:600; opacity:.7; border-bottom:1px solid rgba(127,127,127,.25); letter-spacing:.03em; white-space:normal; }
 .ts-sess-list { flex:1; min-height:0; overflow:auto; padding:5px; display:flex; flex-direction:column; gap:2px; }
 /* 行：点任意处选会话（整行可点）；内部从左到右紧凑排列，右侧不留空白 */
 .ts-sess-row { display:flex; flex-direction:column; }
-.ts-sess-item { display:flex; align-items:center; gap:6px; width:100%; padding:7px 9px; border-radius:8px; color:inherit; font:inherit; font-size:12.5px; cursor:pointer; box-sizing:border-box; }
+.ts-sess-item { display:flex; align-items:center; gap:6px; width:100%; padding:7px 9px; border-radius:8px; color:inherit; font:inherit; font-size:var(--ts-fs, 12.5px); cursor:pointer; box-sizing:border-box; }
 .ts-sess-item:hover { background:rgba(127,127,127,.18); }
 .ts-sess-item.active { background:rgba(96,165,250,.24); box-shadow:inset 0 0 0 1px rgba(96,165,250,.5); }
 .ts-sess-item:focus-visible { outline:2px solid rgba(96,165,250,.8); outline-offset:-2px; }
@@ -360,32 +355,32 @@ body.ts-hdesk-nochat [data-conversation-region="composer"] {
    下方所有行被逐行顶动——正是「鼠标上下移动时对话清单抖动」的根因。
    锁高后两种状态都居中容纳，行高恒为 7+24+7=38px，悬浮零回流。 */
 .ts-sess-slot { flex:none; margin-left:auto; display:inline-flex; align-items:center; justify-content:flex-end; min-width:64px; height:24px; }
-.ts-sess-time { font-size:10.5px; opacity:.5; font-variant-numeric:tabular-nums; white-space:nowrap; }
+.ts-sess-time { font-size:calc(var(--ts-fs, 12.5px) * 0.84); opacity:.5; font-variant-numeric:tabular-nums; white-space:nowrap; }
 /* 时间已右对齐、独立成列（不需要跟在标题后的分隔符） */
 .ts-sess-rowops { display:none; align-items:center; gap:2px; }
 .ts-sess-item:hover .ts-sess-rowops, .ts-sess-item-open .ts-sess-rowops { display:inline-flex; }
 .ts-sess-item:hover .ts-sess-time, .ts-sess-item-open .ts-sess-time { display:none; }
-.ts-sess-op { flex:none; border:0; background:transparent; color:inherit; cursor:pointer; font:inherit; font-size:13px; line-height:1; padding:5px 6px; border-radius:6px; opacity:.6; }
+.ts-sess-op { flex:none; border:0; background:transparent; color:inherit; cursor:pointer; font:inherit; font-size:calc(var(--ts-fs, 12.5px) * 1.04); line-height:1; padding:5px 6px; border-radius:6px; opacity:.6; }
 .ts-sess-op:hover, .ts-sess-op.active { opacity:1; background:rgba(127,127,127,.25); }
 .ts-sess-op:disabled { cursor:default; opacity:.3; }
 /* 行内重命名：就地渲染在行下方 */
 .ts-sess-rename { display:flex; align-items:center; gap:6px; margin:2px 6px 6px 24px; }
-.ts-sess-rename-input { flex:1; min-width:0; padding:4px 8px; font-size:12.5px; }
+.ts-sess-rename-input { flex:1; min-width:0; padding:4px 8px; font-size:var(--ts-fs, 12.5px); }
 /* 展开的菜单：就地渲染在行下方（在 pop 的滚动区内，不会被裁） */
 .ts-sess-menu { display:flex; flex-direction:column; gap:2px; margin:2px 6px 6px 24px; padding:4px; border:1px solid rgba(127,127,127,.3); border-radius:8px; background:rgba(30,34,42,.92); }
-.ts-sess-menu-item { text-align:left; border:0; background:transparent; color:inherit; font:inherit; font-size:12px; padding:6px 8px; border-radius:6px; cursor:pointer; }
+.ts-sess-menu-item { text-align:left; border:0; background:transparent; color:inherit; font:inherit; font-size:calc(var(--ts-fs, 12.5px) * 0.96); padding:6px 8px; border-radius:6px; cursor:pointer; }
 .ts-sess-menu-item:hover { background:rgba(127,127,127,.22); }
 .ts-sess-menu-item:disabled { cursor:default; opacity:.5; }
 /* 归档失败等短提示（自动消失） */
-.ts-sess-notice { flex:none; max-width:260px; font-size:11.5px; opacity:.8; color:#fca5a5; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ts-sess-notice { flex:none; max-width:260px; font-size:calc(var(--ts-fs, 12.5px) * 0.92); opacity:.8; color:#fca5a5; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 /* 标题：占满剩余空间（把右侧插槽顶到行尾），超长时省略号/跑马灯 */
 .ts-sess-item-title { flex:1 1 auto; min-width:0; max-width:340px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 /* 跑马灯：悬浮且内容超宽时左右来回滚动；位移量由 JS 实测写进 --ts-marquee-shift */
 .ts-marquee { display:inline-block; white-space:nowrap; }
 .ts-sess-item:hover .ts-marquee-move { animation: tsSessMarquee 5s ease-in-out infinite alternate; }
 @keyframes tsSessMarquee { from { transform:translateX(0); } to { transform:translateX(calc(-1 * var(--ts-marquee-shift, 0px))); } }
-.ts-sess-tag { flex:none; font-size:10px; padding:1px 6px; border-radius:99px; background:rgba(127,127,127,.25); }
-.ts-sess-empty { padding:14px 12px; font-size:12px; opacity:.65; line-height:1.6; }
+.ts-sess-tag { flex:none; font-size:calc(var(--ts-fs, 12.5px) * 0.8); padding:1px 6px; border-radius:99px; background:rgba(127,127,127,.25); }
+.ts-sess-empty { padding:14px 12px; font-size:calc(var(--ts-fs, 12.5px) * 0.96); opacity:.65; line-height:1.6; }
 
 /* —— 项目中心：流光玻璃背景 —— */
 .ts-center { padding:0; gap:0; overflow:hidden; }
@@ -401,8 +396,8 @@ body.ts-hdesk-nochat [data-conversation-region="composer"] {
 .ts-center-inner { position:relative; z-index:1; flex:1; min-height:0; display:flex; flex-direction:column; gap:16px; padding:22px; overflow:auto; }
 .ts-center-head { flex:none; display:flex; align-items:center; gap:16px; flex-wrap:wrap; }
 .ts-center-headtext { flex:1; min-width:0; display:flex; flex-direction:column; gap:4px; }
-.ts-center-title { font-size:20px; font-weight:700; line-height:28px; letter-spacing:.01em; }
-.ts-center-sub { font-size:12.5px; opacity:.62; line-height:1.6; }
+.ts-center-title { font-size:calc(var(--ts-fs, 12.5px) * 1.6); font-weight:700; line-height:28px; letter-spacing:.01em; }
+.ts-center-sub { font-size:var(--ts-fs, 12.5px); opacity:.62; line-height:1.6; }
 /* 头部不再放“添加项目”按钮（与网格末尾的新建卡重复，已删）*/
 
 /* —— 项目中心：卡片网格（玻璃卡 + 圆锥渐变描边） —— */
@@ -412,11 +407,11 @@ body.ts-hdesk-nochat [data-conversation-region="composer"] {
 .ts-center-card::after { content:""; position:absolute; inset:0; border-radius:inherit; padding:1px; background:conic-gradient(from 45deg,rgba(0,0,0,.28) 0deg,rgba(255,255,255,.5) 90deg,rgba(0,0,0,.28) 180deg,rgba(255,255,255,.5) 270deg,rgba(0,0,0,.28) 360deg); -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0); -webkit-mask-composite:xor; mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0); mask-composite:exclude; pointer-events:none; opacity:.45; }
 .ts-center-card:hover { transform:translateY(-2px); box-shadow:0 16px 34px rgba(0,0,0,.3),inset 0 1px 0 rgba(255,255,255,.14); }
 .ts-center-cardhead { display:flex; align-items:center; gap:11px; min-width:0; }
-.ts-center-icon { flex:none; font-size:22px; line-height:1; }
-.ts-center-name { flex:1; min-width:0; font-size:16px; font-weight:700; line-height:22px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ts-center-icon { flex:none; font-size:calc(var(--ts-fs, 12.5px) * 1.76); line-height:1; }
+.ts-center-name { flex:1; min-width:0; font-size:calc(var(--ts-fs, 12.5px) * 1.28); font-weight:700; line-height:22px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .ts-center-path { flex:none; display:flex; flex-direction:column; gap:1px; min-width:0; }
-.ts-center-basedir { font-size:12px; font-weight:600; opacity:.85; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.ts-center-fullpath { font-size:10.5px; opacity:.45; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-family:var(--dsh-font-mono, monospace); }
+.ts-center-basedir { font-size:calc(var(--ts-fs, 12.5px) * 0.96); font-weight:600; opacity:.85; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ts-center-fullpath { font-size:calc(var(--ts-fs, 12.5px) * 0.84); opacity:.45; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-family:var(--dsh-font-mono, monospace); }
 .ts-center-meta { flex:none; display:flex; gap:6px; flex-wrap:wrap; }
 .ts-center-actions { display:flex; gap:8px; margin-top:auto; padding-top:6px; }
 .ts-center-enter { flex:1; }
@@ -425,11 +420,11 @@ body.ts-hdesk-nochat [data-conversation-region="composer"] {
 .ts-center-card-click:focus-visible { outline:2px solid rgba(96,165,250,.8); outline-offset:2px; }
 .ts-center-card-click.disabled { cursor:not-allowed; opacity:.55; }
 /* 卡片右上角“进入 →”提示：只在悬停时明显，不抢标题 */
-.ts-center-enterhint { flex:none; font-size:11.5px; opacity:0; transform:translateX(-3px); transition:opacity .14s ease, transform .14s ease; color:#60a5fa; white-space:nowrap; }
+.ts-center-enterhint { flex:none; font-size:calc(var(--ts-fs, 12.5px) * 0.92); opacity:0; transform:translateX(-3px); transition:opacity .14s ease, transform .14s ease; color:#60a5fa; white-space:nowrap; }
 .ts-center-card-click:hover .ts-center-enterhint { opacity:1; transform:translateX(0); }
 /* 项目介绍：两行截断，保持卡片等高 */
-.ts-center-desc { flex:1 1 auto; min-height:0; font-size:12px; line-height:1.55; opacity:.72; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; word-break:break-word; }
-.ts-btn-sm { padding:3px 11px; font-size:12px; }
+.ts-center-desc { flex:1 1 auto; min-height:0; font-size:calc(var(--ts-fs, 12.5px) * 0.96); line-height:1.55; opacity:.72; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; word-break:break-word; }
+.ts-btn-sm { padding:3px 11px; font-size:calc(var(--ts-fs, 12.5px) * 0.96); }
 
 /* —— 工具条：展示方式 / 排序方式 ——
    用户反馈：原来“挤在左边一点点”很难看，希望“一行控制”。
@@ -437,16 +432,16 @@ body.ts-hdesk-nochat [data-conversation-region="composer"] {
    窄屏自动换行。 */
 .ts-center-toolbar { flex:none; display:flex; align-items:center; gap:14px; flex-wrap:wrap; padding:8px 12px; border:1px solid rgba(127,127,127,.26); border-radius:12px; background:linear-gradient(135deg,rgba(255,255,255,.07),rgba(255,255,255,.02)),rgba(127,127,127,.06); box-shadow:0 4px 14px rgba(0,0,0,.14); }
 .ts-seg { display:inline-flex; align-items:center; gap:2px; padding:3px; border:1px solid rgba(127,127,127,.3); border-radius:10px; background:rgba(0,0,0,.14); }
-.ts-seg-label { font-size:11.5px; opacity:.55; padding:0 8px 0 9px; white-space:nowrap; }
-.ts-seg-btn { border:none; background:transparent; color:inherit; font:inherit; font-size:12.5px; padding:5px 13px; border-radius:8px; cursor:pointer; opacity:.75; white-space:nowrap; transition:background .13s ease, opacity .13s ease, color .13s ease; }
+.ts-seg-label { font-size:calc(var(--ts-fs, 12.5px) * 0.92); opacity:.55; padding:0 8px 0 9px; white-space:nowrap; }
+.ts-seg-btn { border:none; background:transparent; color:inherit; font:inherit; font-size:var(--ts-fs, 12.5px); padding:5px 13px; border-radius:8px; cursor:pointer; opacity:.75; white-space:nowrap; transition:background .13s ease, opacity .13s ease, color .13s ease; }
 .ts-seg-btn:hover { background:rgba(127,127,127,.22); opacity:1; }
 .ts-seg-btn.active { background:linear-gradient(180deg,rgba(96,165,250,.38),rgba(96,165,250,.22)); opacity:1; font-weight:600; box-shadow:inset 0 0 0 1px rgba(96,165,250,.5), 0 2px 8px rgba(96,165,250,.18); }
-.ts-center-count { margin-left:auto; font-size:12px; opacity:.55; white-space:nowrap; padding-left:8px; }
+.ts-center-count { margin-left:auto; font-size:calc(var(--ts-fs, 12.5px) * 0.96); opacity:.55; white-space:nowrap; padding-left:8px; }
 
 /* —— 列表模式：表格（宽裕、不拥挤）—— */
 .ts-plist-wrap { flex:1; min-height:0; overflow:auto; border:1px solid rgba(127,127,127,.26); border-radius:14px; background:linear-gradient(180deg,rgba(255,255,255,.05),rgba(255,255,255,.01)),rgba(127,127,127,.05); box-shadow:0 6px 20px rgba(0,0,0,.16); }
-.ts-plist { width:100%; border-collapse:separate; border-spacing:0; font-size:13px; }
-.ts-plist th { position:sticky; top:0; z-index:1; text-align:left; font-weight:600; font-size:11.5px; letter-spacing:.04em; padding:12px 16px; background:rgba(20,23,29,.94); color:inherit; border-bottom:1px solid rgba(127,127,127,.32); backdrop-filter:blur(10px); white-space:nowrap; }
+.ts-plist { width:100%; border-collapse:separate; border-spacing:0; font-size:calc(var(--ts-fs, 12.5px) * 1.04); }
+.ts-plist th { position:sticky; top:0; z-index:1; text-align:left; font-weight:600; font-size:calc(var(--ts-fs, 12.5px) * 0.92); letter-spacing:.04em; padding:12px 16px; background:rgba(20,23,29,.94); color:inherit; border-bottom:1px solid rgba(127,127,127,.32); backdrop-filter:blur(10px); white-space:nowrap; }
 .ts-plist td { padding:12px 16px; border-bottom:1px solid rgba(127,127,127,.14); vertical-align:middle; text-align:left; }
 .ts-plist tbody tr { transition:background .12s ease; }
 .ts-plist tbody tr:hover { background:rgba(127,127,127,.11); }
@@ -456,7 +451,7 @@ body.ts-hdesk-nochat [data-conversation-region="composer"] {
 .ts-plist-ops { width:150px; white-space:nowrap; text-align:left; }
 .ts-plist-ops .ts-btn + .ts-btn { margin-left:8px; }
 .ts-plist-name { font-weight:600; display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.ts-plist-path { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:.55; font-family:var(--dsh-font-mono, monospace); font-size:11.5px; }
+.ts-plist-path { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:.55; font-family:var(--dsh-font-mono, monospace); font-size:calc(var(--ts-fs, 12.5px) * 0.92); }
 .ts-plist-desc { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:.75; }
 /* 列宽分配：名称/路径/介绍给足空间，时间与操作固定 */
 .ts-plist th:nth-child(2), .ts-plist td:nth-child(2) { min-width:150px; }
@@ -470,10 +465,10 @@ body.ts-hdesk-nochat [data-conversation-region="composer"] {
 /* 项目介绍行内编辑：平时看上去像可点的文本，悬停提示可改 */
 .ts-desc-editable { cursor:text; border-bottom:1px dashed rgba(127,127,127,.45); }
 .ts-desc-editable:hover { opacity:1; border-bottom-color:rgba(96,165,250,.75); }
-.ts-desc-input { width:100%; font-size:12.5px; padding:4px 6px; }
+.ts-desc-input { width:100%; font-size:var(--ts-fs, 12.5px); padding:4px 6px; }
 /* 活跃序号点：绿=活跃，黄=待用户确认；点一下直达那条对话的工作台 */
 .ts-dots { display:inline-flex; align-items:center; gap:2px; flex:none; }
-.ts-dot { border:0; background:0 0; cursor:pointer; font-size:14px; line-height:1; padding:0 1px; font-family:inherit; }
+.ts-dot { border:0; background:0 0; cursor:pointer; font-size:calc(var(--ts-fs, 12.5px) * 1.12); line-height:1; padding:0 1px; font-family:inherit; }
 .ts-dot:hover { transform:scale(1.15); }
 .ts-dot:focus-visible { outline:2px solid rgba(96,165,250,.8); outline-offset:1px; border-radius:4px; }
 .ts-dot-active { color:#4ade80; }
@@ -517,37 +512,37 @@ body.ts-vsplit-dragging .ts-preview-frame,
 body.ts-vsplit-dragging .ts-card { transition:none !important; animation:none !important; }
 /* 工作台未选项目 / 项目中心空态 */
 .ts-center-empty { display:flex; flex-direction:column; align-items:center; gap:12px; text-align:center; padding:28px 20px; max-width:560px; }
-.ts-center-empty-title { font-size:20px; font-weight:700; }
-.ts-center-empty-sub { opacity:.78; font-size:13px; line-height:1.65; }
+.ts-center-empty-title { font-size:calc(var(--ts-fs, 12.5px) * 1.6); font-weight:700; }
+.ts-center-empty-sub { opacity:.78; font-size:calc(var(--ts-fs, 12.5px) * 1.04); line-height:1.65; }
 
 /* —— 确认弹窗 —— */
 .ts-confirm { max-width:520px; }
 .ts-confirm-danger .ts-modal-head { color:#fca5a5; }
-.ts-confirm-msg { font-size:13px; line-height:1.7; }
+.ts-confirm-msg { font-size:calc(var(--ts-fs, 12.5px) * 1.04); line-height:1.7; }
 .ts-confirm-lead { margin-bottom:10px; }
 .ts-confirm-target { display:flex; flex-direction:column; gap:3px; padding:10px 12px; margin-bottom:10px; border-radius:10px; border:1px solid rgba(127,127,127,.3); background:rgba(0,0,0,.16); }
 .ts-confirm-name { font-weight:600; }
-.ts-confirm-path { font-size:11.5px; opacity:.6; word-break:break-all; font-family:var(--dsh-font-mono, monospace); }
-.ts-confirm-note { font-size:12px; opacity:.7; line-height:1.65; }
+.ts-confirm-path { font-size:calc(var(--ts-fs, 12.5px) * 0.92); opacity:.6; word-break:break-all; font-family:var(--dsh-font-mono, monospace); }
+.ts-confirm-note { font-size:calc(var(--ts-fs, 12.5px) * 0.96); opacity:.7; line-height:1.65; }
 .ts-btn-danger-solid { background:rgba(248,113,113,.9); border-color:rgba(248,113,113,1); color:#fff; font-weight:600; }
 .ts-btn-danger-solid:hover { background:rgba(248,113,113,1); box-shadow:0 0 14px rgba(248,113,113,.4); }
 /* 新建卡：虚线玻璃底 + 居中加号 */
 .ts-center-addcard { justify-content:center; align-items:center; gap:8px; cursor:pointer; color:inherit; font:inherit; background:radial-gradient(circle at 50% 42%,rgba(255,255,255,.08),rgba(255,255,255,0) 65%),rgba(127,127,127,.06); border:1.5px dashed rgba(127,127,127,.5); box-shadow:none; }
 .ts-center-addcard::after { display:none; }
 .ts-center-addcard:hover { border-color:rgba(96,165,250,.75); background:rgba(127,127,127,.12); }
-.ts-center-addplus { font-size:32px; line-height:1; opacity:.6; }
+.ts-center-addplus { font-size:calc(var(--ts-fs, 12.5px) * 2.56); line-height:1; opacity:.6; }
 .ts-center-addcard:hover .ts-center-addplus { opacity:1; color:#60a5fa; }
-.ts-center-addlabel { font-size:15px; font-weight:600; opacity:.75; }
-.ts-center-addhint { font-size:11.5px; opacity:.5; }
+.ts-center-addlabel { font-size:calc(var(--ts-fs, 12.5px) * 1.2); font-weight:600; opacity:.75; }
+.ts-center-addhint { font-size:calc(var(--ts-fs, 12.5px) * 0.92); opacity:.5; }
 .ts-center-emptywrap .ts-center-addcard { width:min(320px,80%); min-height:200px; display:flex; flex-direction:column; }
 
 /* —— 弹层 —— */
 .ts-modal-mask { position:fixed; inset:0; background:rgba(0,0,0,.45); display:flex; align-items:center; justify-content:center; z-index:45; }
 .ts-modal { background:rgba(30,32,38,.98); color:#e8eaed; border:1px solid rgba(127,127,127,.4); border-radius:12px; width:min(680px,92%); max-height:88%; display:flex; flex-direction:column; box-shadow:0 12px 40px rgba(0,0,0,.5); }
-.ts-modal-head { padding:14px 18px; font-size:15px; font-weight:600; border-bottom:1px solid rgba(127,127,127,.25); display:flex; justify-content:space-between; align-items:center; }
+.ts-modal-head { padding:14px 18px; font-size:calc(var(--ts-fs, 12.5px) * 1.2); font-weight:600; border-bottom:1px solid rgba(127,127,127,.25); display:flex; justify-content:space-between; align-items:center; }
 .ts-modal-body { padding:14px 18px; overflow:auto; display:flex; flex-direction:column; gap:14px; }
 .ts-modal-foot { padding:12px 18px; border-top:1px solid rgba(127,127,127,.25); display:flex; justify-content:flex-end; gap:10px; }
-.ts-field-label { font-size:13px; font-weight:600; margin-bottom:6px; display:block; }
+.ts-field-label { font-size:calc(var(--ts-fs, 12.5px) * 1.04); font-weight:600; margin-bottom:6px; display:block; }
 /* 「添加项目」弹窗：固定尺寸（切换目录 / 点「上级」时面板不缩放、位置不动），
    内容超出走内部滚动，内容少也撑住这么大。 */
 .ts-modal-addproj { width:min(680px,92%); height:min(680px,90vh); max-height:90vh; }
@@ -555,7 +550,7 @@ body.ts-vsplit-dragging .ts-card { transition:none !important; animation:none !i
 
 /* —— 目录浏览器 —— */
 .ts-fs { border:1px solid rgba(127,127,127,.3); border-radius:8px; overflow:hidden; }
-.ts-fs-crumb { display:flex; align-items:center; gap:6px; padding:7px 10px; background:rgba(127,127,127,.1); font-size:12px; flex-wrap:nowrap; font-family:var(--dsh-font-mono, monospace); }
+.ts-fs-crumb { display:flex; align-items:center; gap:6px; padding:7px 10px; background:rgba(127,127,127,.1); font-size:calc(var(--ts-fs, 12.5px) * 0.96); flex-wrap:nowrap; font-family:var(--dsh-font-mono, monospace); }
 /* 面包屑本体：单行不换行（换行会让目录栏高度随路径长短变化、连带面板跳动），过长横向滚动 */
 .ts-fs-crumbs { display:flex; align-items:center; gap:6px; flex:1 1 auto; min-width:0; overflow-x:auto; white-space:nowrap; }
 .ts-fs-rooticon { opacity:.6; cursor:pointer; }
@@ -568,53 +563,39 @@ body.ts-vsplit-dragging .ts-card { transition:none !important; animation:none !i
 .ts-fs-crumb span:hover { opacity:1; text-decoration:underline; }
 /* 固定高度：目录内容多少都一个高度（少内容也不塔），多出的在框内滚动 */
 .ts-fs-list { height:260px; overflow:auto; }
-.ts-fs-item { display:flex; align-items:center; gap:8px; padding:6px 12px; cursor:pointer; border:none; background:transparent; color:inherit; width:100%; text-align:left; font-size:13px; }
+.ts-fs-item { display:flex; align-items:center; gap:8px; padding:6px 12px; cursor:pointer; border:none; background:transparent; color:inherit; width:100%; text-align:left; font-size:calc(var(--ts-fs, 12.5px) * 1.04); }
 .ts-fs-item:hover { background:rgba(127,127,127,.15); }
 .ts-fs-item .ts-tag { margin-left:auto; }
 /* 「添加项目」里的新建 / 重命名文件夹行（目录浏览器下方） */
 .ts-newfolder { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-top:8px; }
-.ts-newfolder-input { max-width:240px; padding:4px 8px; font-size:12.5px; }
-.ts-newfolder-hint { font-size:11px; opacity:.55; max-width:280px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.ts-newfolder-err { font-size:11.5px; color:#fca5a5; }
+.ts-newfolder-input { max-width:240px; padding:4px 8px; font-size:var(--ts-fs, 12.5px); }
+.ts-newfolder-hint { font-size:calc(var(--ts-fs, 12.5px) * 0.88); opacity:.55; max-width:280px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ts-newfolder-err { font-size:calc(var(--ts-fs, 12.5px) * 0.92); color:#fca5a5; }
 /* —— H 型工作台：左 / 中 / 右三列（固定 1.5 : 7 : 1.5），无中横线 —— */
 /* 轨道一律用 minmax(0, …fr)：裸 fr 的自动最小值是 min-content，一旦卡片里有长不可断
    内容（工具输出、长代码、长标题），列就会被撑到内容宽度，整个网格超出容器；
    而 .ts-cr 是 overflow:hidden，右侧列连同部分中列就被**裁掉**（“右边少了 40%”）。
    列轨道由 HDesk 按「哪几列还有可见窗口」注入（缺失补位，见 DESK_COLUMNS）：
    下面这套是三列俱全时的默认值，同时兜住「JS 还没接管」的那一帧。 */
-.ts-desk { display:grid; grid-template-columns:minmax(0,1.5fr) minmax(0,7fr) minmax(0,1.5fr); grid-template-rows:minmax(0,1fr); gap:8px; flex:1; min-height:0; min-width:0; overflow:hidden; position:relative; }
 /* 网格项自身也要 min-width:0，否则仍会被内容顶宽（min-width:auto 的默认行为） */
-.ts-desk > * { min-width:0; }
 /* 三列（左 / 中 / 右）共用同一套列容器：竖向 flex，列内卡片的占位由它承担 */
-.ts-desk-col, .ts-desk-mid { display:flex; flex-direction:column; gap:8px; min-height:0; overflow:hidden; }
 /* 整列一个可见窗口都不剩（全被关掉/铺满浮层占走）→ 该列移出网格，份额按列模板
    并给邻列。用 display:none 而不是「不渲染」：列内组件的实例与订阅原样保留，
    恢复任一窗口即当场回来（不丢滚动位置/展开态）。 */
-.ts-desk-empty { display:none; }
 /* 中列：上（共享黑板）/ 分隔条 / 下（DSH 主对话）共用列高，两格靠 flex-grow 按比例
    分——所以「关掉或收起其中一格，另一格自动铺满整列」与「拖分隔条换高」是同一套
    机制（见 HDesk 的 onMidSplitDown），不需要各写一条补位分支。 */
-.ts-desk-board, .ts-desk-chat { flex:1 1 0; min-height:0; min-width:0; display:flex; flex-direction:column; }
 /* 中下格自带 border/padding：宿主原生输入条按这个内缩量停靠进卡片边框内部 */
-.ts-desk-chat { position:relative; border:1px solid rgba(127,127,127,.3); border-radius:9px; background:rgba(127,127,127,.07); padding:8px; box-sizing:border-box; }
 /* 中列某一格收起（最小化）时它只占标题条高度，剩下的空间全给另一格 */
-.ts-desk-cell-collapsed { flex:0 0 auto !important; }
 
 /* —— 中列「共享黑板 ↔ DSH 主对话」的上下分隔条 ——
    与预览条那条 .ts-vsplit 同源：默认隐形，悬停/拖动时显示握柄；
    命中区 10px 高，用负外边距吃掉自身占位（不压缩两格的高度，
    即两格之间的 16px 缝里 [上格底 → 分隔条盒 → 下格顶] 正好居中）。 */
-.ts-hsplit { position:relative; flex:none; height:10px; margin:-5px 0; cursor:ns-resize; z-index:6; }
 /* 握柄是**水平**的横条（72×2）：这条分隔条调的是上下高度，光标/提示都必须是横向语义；
    写成竖向 2×36 会让人以为是左右拖。与 .ts-vsplit-grip 的度量保持完全一致。 */
-.ts-hsplit-grip { position:absolute; left:50%; top:50%; width:72px; height:2px; border-radius:2px; transform:translate(-50%,-50%); background:var(--dsw-alias-scrollbar-bg-l1, rgba(127,127,127,.5)); opacity:0; transition:opacity .12s ease; pointer-events:none; }
-.ts-hsplit:hover .ts-hsplit-grip, .ts-hsplit:active .ts-hsplit-grip { opacity:1; }
 /* 拖动中指针会离开分隔条（甚至落在 iframe 上），握柄必须继续可见 */
-body.ts-hsplit-dragging .ts-hsplit-grip { opacity:1; transition:none; }
 /* 拖动中：禁选中 + 全程 ns-resize 光标；iframe 屏蔽指针事件（否则拖快了命中区丢事件） */
-body.ts-hsplit-dragging { cursor:ns-resize; user-select:none; -webkit-user-select:none; }
-body.ts-hsplit-dragging iframe, body.ts-hsplit-dragging .ts-preview-frame { pointer-events:none !important; }
-body.ts-hsplit-dragging .ts-card { transition:none !important; animation:none !important; }
 
 /* —— 卡片外壳（黑板 / 主对话 / 协作对话 / 协作收益 共用）——
    卡片的占位（高度/宽度）由外壳承担，内层组件一律 flex:1 填满外壳。 */
@@ -652,7 +633,7 @@ body.ts-hsplit-dragging .ts-card { transition:none !important; animation:none !i
 /* 标题条三段式：标题靠左、中间信息居中、三键靠右。
    .ts-head-mid 用 margin:auto 居中——两侧 auto 让它在剩余空间里居中。 */
 .ts-head-title { flex:none; white-space:nowrap; }
-.ts-head-mid { flex:0 1 auto; min-width:0; margin:0 auto; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:10.5px; font-weight:400; opacity:.62; text-align:center; }
+.ts-head-mid { flex:0 1 auto; min-width:0; margin:0 auto; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:calc(var(--ts-fs, 12.5px) * 0.84); font-weight:400; opacity:.62; text-align:center; }
 /* 黑板标题条里有 tabs：让 tabs 吃掉弹性空隙，三键就落最右 */
 /* 黑板标题条里有 tabs：tabs 吃掉弹性空隙，三键仍在最右（order:9） */
 .ts-board-head .ts-board-tabs { margin-left:auto; margin-right:auto; flex-wrap:nowrap; overflow-x:auto; min-width:0; }
@@ -660,31 +641,33 @@ body.ts-hsplit-dragging .ts-card { transition:none !important; animation:none !i
 /* 标题条一律不换行（#4）：计数移入正文 .ts-card-count */
 .ts-talk-head, .ts-save-head, .ts-board-head, .ts-mainchat-head { flex-wrap:nowrap; }
 .ts-talk-head > span:first-child, .ts-save-head > span:first-child, .ts-board-head > span:first-child, .ts-mainchat-head > span:first-child { flex:none; white-space:nowrap; }
-.ts-card-count { flex:none; font-size:10.5px; opacity:.55; padding:0 2px 4px; }
+.ts-card-count { flex:none; font-size:calc(var(--ts-fs, 12.5px) * 0.84); opacity:.55; padding:0 2px 4px; }
 /* 计数现在位于标题条中间（.ts-head-mid）：去掉旧正文态的底部内边距，避免标题条被撑高 */
 .ts-head-mid.ts-card-count { padding:0; opacity:.62; flex:0 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .ts-card-overlay { position:absolute; inset:0; z-index:40; background:rgba(12,14,18,.92); backdrop-filter:blur(8px) saturate(1.2); border-radius:10px; display:flex; flex-direction:column; padding:10px; box-sizing:border-box; }
 .ts-card-overlay-inner { flex:1; min-height:0; display:flex; flex-direction:column; }
 /* 已关闭列表（标题行内）：卡片与探索者窗口的恢复 chip 统一收口 */
-.ts-closed-bar { flex:0 1 auto; min-width:0; max-width:100%; display:flex; align-items:center; gap:6px; flex-wrap:nowrap; overflow-x:auto; overflow-y:hidden; scrollbar-width:none; padding:4px 8px; border:1px dashed rgba(127,127,127,.45); border-radius:9px; }
-.ts-closed-bar::-webkit-scrollbar { display:none; }
-.ts-closed-label { flex:none; white-space:nowrap; font-size:11.5px; opacity:.6; }
+.ts-closed-label { flex:none; white-space:nowrap; font-size:calc(var(--ts-fs, 12.5px) * 0.92); opacity:.6; }
 
 /* —— 主对话卡（中下） —— */
 /* 中下卡片的外框由 .ts-desk-chat 提供（含 border/padding，供输入条内缩定位），
    所以这里保持无框；仅在铺满浮层里补一层边框。 */
 .ts-mainchat { display:flex; flex-direction:column; min-height:0; flex:1; overflow:hidden; }
 .ts-card-overlay-inner .ts-mainchat { border:1px solid rgba(127,127,127,.3); border-radius:9px; background:rgba(127,127,127,.07); }
-.ts-mainchat-head { flex:none; display:flex; align-items:center; gap:8px; padding:6px 9px; background:rgba(127,127,127,.13); font-size:12.5px; font-weight:600; }
+.ts-mainchat-head { flex:none; display:flex; align-items:center; gap:8px; padding:6px 9px; background:rgba(127,127,127,.13); font-size:var(--ts-fs, 12.5px); font-weight:600; }
 /* 底部留出宿主输入条的位置（输入条 fixed 停靠在卡片底部） */
 /* #4 输入条 fixed 停在卡片底部，会盖住消息末尾几行：
    底部留白 = 输入条实测高度（--ts-composer-h，由 HDesk 停靠时写入）+ 余量。
    以前写死 72px，输入条多行/换行时就不够，末尾几行被遮住。 */
 .ts-mainchat .ts-chat-msgs { padding-bottom:calc(var(--ts-composer-h, 72px) + 14px); }
-/* 主对话内容跟随宿主横向拖拽的宽度（--ts-chat-content-w 由 HDesk 停靠逻辑写入）：
-   与停靠的输入条同宽并居中；变量未写入时铺满卡片。
-   修复「拖拽只改输入框、对话内容纹丝不动」的不一致。 */
-.ts-mainchat .ts-chat-msgs { width:100%; max-width:var(--ts-chat-content-w, none); margin-inline:auto; }
+/* 主对话消息宽度：**跟自己的面板宽度自适应**，不再吃宿主那套全局宽度。
+   历史：原先跟 --ts-chat-content-w（由输入条停靠逻辑写，取自宿主的
+   --dsh-chat-user-width，带 680px 下限）并居中——面板变窄时它仍按 680px 算，
+   内容右侧就被截掉（用户反馈）。
+   现在只受本面板约束：宽度铺满，用 border-box 把 padding 算进宽度内。
+   没有 border-box 时会溢出：width 铺满 + 左右 padding 10px 就比面板宽 20px
+   （实测 clientWidth 632 > 面板 612，右侧内容被裁）。 */
+.ts-mainchat .ts-chat-msgs { box-sizing:border-box; width:100%; max-width:100%; margin-inline:0; }
 /* 消息统计：三段式 [标题][统计][三键]。用 grid 的 1fr/auto/1fr 让中间那段
    在**整条标题条**里真正居中（之前用 flex + margin:auto，是在“标题与三键之间”的
    剩余空间里居中，三键比标题宽时就会偏左——用户反馈的“不居中”就是这个）。 */
@@ -695,15 +678,15 @@ body.ts-hsplit-dragging .ts-card { transition:none !important; animation:none !i
 .ts-mainchat-head > .ts-card-actions { justify-self:end; margin-left:0; order:0; }
 /* 中间段 = 计数 + 视图开关（同格内两件）。窄卡片下允许横向滚动而不是把三键挤出去：
    网格给它的上限就是 auto 列，overflow-x:auto 让 chip 可滑，不参与换行。 */
-.ts-mainchat-mid { font-size:10.5px; font-weight:400; opacity:.6; display:inline-flex; align-items:center; gap:7px; max-width:100%; overflow-x:auto; overflow-y:hidden; text-overflow:clip; white-space:nowrap; scrollbar-width:none; }
+.ts-mainchat-mid { font-size:calc(var(--ts-fs, 12.5px) * 0.84); font-weight:400; opacity:.6; display:inline-flex; align-items:center; gap:7px; max-width:100%; overflow-x:auto; overflow-y:hidden; text-overflow:clip; white-space:nowrap; scrollbar-width:none; }
 .ts-mainchat-mid::-webkit-scrollbar { height:0; }
 .ts-msgstat { display:inline-flex; align-items:baseline; gap:3px; font-variant-numeric:tabular-nums; flex:none; }
-.ts-msgstat-k { font-size:9.5px; font-weight:400; opacity:.78; letter-spacing:.02em; }
+.ts-msgstat-k { font-size:calc(var(--ts-fs, 12.5px) * 0.76); font-weight:400; opacity:.78; letter-spacing:.02em; }
 /* —— 视图开关（全部 / 我的 / 回复）——
    与统计同一格：统计是「有多少」，开关是「看哪一档」。分段控件形态（共一个底槽、
    当前档亮起），比三个独立按钮更能读出「互斥三选一」。 */
 .ts-view-tabs { flex:none; display:inline-flex; align-items:center; gap:1px; padding:1px; border-radius:7px; background:rgba(127,127,127,.16); border:1px solid rgba(127,127,127,.22); }
-.ts-view-tab { cursor:pointer; border:0; background:transparent; color:inherit; font:inherit; font-size:10.5px; line-height:1.5; padding:1px 7px; border-radius:5px; opacity:.6; white-space:nowrap; transition:background .15s ease, opacity .15s ease, color .15s ease; }
+.ts-view-tab { cursor:pointer; border:0; background:transparent; color:inherit; font:inherit; font-size:calc(var(--ts-fs, 12.5px) * 0.84); line-height:1.5; padding:1px 7px; border-radius:5px; opacity:.6; white-space:nowrap; transition:background .15s ease, opacity .15s ease, color .15s ease; }
 .ts-view-tab:hover { opacity:.9; background:rgba(127,127,127,.2); }
 .ts-view-tab.is-on { opacity:1; font-weight:600; background:rgba(96,165,250,.28); box-shadow:0 0 0 1px rgba(96,165,250,.45) inset; }
 .ts-view-tab.is-on:hover { background:rgba(96,165,250,.38); }
@@ -717,10 +700,10 @@ body.ts-hsplit-dragging .ts-card { transition:none !important; animation:none !i
 .ts-win-head:hover { background:rgba(127,127,127,.22); }
 /* 按钮组永不压缩：否则窄列里按钮会被压到换行、标题条变高溢出 */
 .ts-win-head > span:last-child { flex:none; display:inline-flex; align-items:center; gap:1px; }
-.ts-win-name { font-size:12.5px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; flex:0 1 auto; min-width:0; }
+.ts-win-name { font-size:var(--ts-fs, 12.5px); font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; flex:0 1 auto; min-width:0; }
 .ts-win-dot { width:8px; height:8px; border-radius:50%; background:#52c41a; flex:none; }
 .ts-win-dot.idle { background:rgba(127,127,127,.7); }
-.ts-win-body { flex:1; min-height:0; overflow:auto; padding:8px; display:flex; flex-direction:column; gap:6px; font-size:12px; line-height:1.55; }
+.ts-win-body { flex:1; min-height:0; overflow:auto; padding:8px; display:flex; flex-direction:column; gap:6px; font-size:calc(var(--ts-fs, 12.5px) * 0.96); line-height:1.55; }
 .ts-win.collapsed { flex:none; }
 .ts-win.collapsed .ts-win-body { display:none; }
 /* 最大化：补不透明底（原仅 shadow，父级 .ts-win 底色 9% 透度，全屏后看不清） */
@@ -731,20 +714,20 @@ body.ts-hsplit-dragging .ts-card { transition:none !important; animation:none !i
 /* 回复区块：右边缘与用户气泡的右边缘对齐（用户气泡靠右、右边缘贴容器右端，
    因此回复块改为拉伸满宽，不再留右侧那一小块空白） */
 .ts-msg-assistant { align-self:stretch; background:rgba(127,127,127,.14); border-radius:8px 8px 8px 2px; padding:5px 9px; max-width:none; white-space:pre-wrap; word-break:break-word; }
-.ts-msg-tool, .ts-msg-system { align-self:stretch; opacity:.62; font-size:11px; border-left:2px solid rgba(127,127,127,.5); padding:2px 8px; }
+.ts-msg-tool, .ts-msg-system { align-self:stretch; opacity:.62; font-size:calc(var(--ts-fs, 12.5px) * 0.88); border-left:2px solid rgba(127,127,127,.5); padding:2px 8px; }
 /* —— 每条消息的发出时间（用户气泡 / 助手回答 / 过程项 / 注入项）——
    块容器：气泡与时间的 column flex；user 块整体右对齐、assistant 块拉伸满宽。 */
 .ts-msg-block { display:flex; flex-direction:column; gap:3px; min-width:0; }
 .ts-msg-block-user { align-self:flex-end; align-items:flex-end; }
 .ts-msg-block-assistant { align-self:stretch; }
-.ts-msg-time { font-size:10.5px; opacity:.5; font-variant-numeric:tabular-nums; white-space:nowrap; color:inherit; line-height:1.4; }
+.ts-msg-time { font-size:calc(var(--ts-fs, 12.5px) * 0.84); opacity:.5; font-variant-numeric:tabular-nums; white-space:nowrap; color:inherit; line-height:1.4; }
 .ts-msg-block-user .ts-msg-time { text-align:right; }
-.ts-proc-time { margin-left:auto; font-size:10px; opacity:.5; font-variant-numeric:tabular-nums; white-space:nowrap; flex:none; }
+.ts-proc-time { margin-left:auto; font-size:calc(var(--ts-fs, 12.5px) * 0.8); opacity:.5; font-variant-numeric:tabular-nums; white-space:nowrap; flex:none; }
 .ts-msg-tool .ts-msg-role, .ts-msg-system .ts-msg-role { display:flex; align-items:center; gap:4px; }
-.ts-msg-toggle { padding:0 4px; font-size:11px; opacity:.7; }
+.ts-msg-toggle { padding:0 4px; font-size:calc(var(--ts-fs, 12.5px) * 0.88); opacity:.7; }
 .ts-msg-preview { opacity:.85; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .ts-msg-full { white-space:pre-wrap; word-break:break-word; max-height:220px; overflow:auto; margin-top:2px; }
-.ts-msg-role { font-size:10px; opacity:.6; margin-bottom:2px; }
+.ts-msg-role { font-size:calc(var(--ts-fs, 12.5px) * 0.8); opacity:.6; margin-bottom:2px; }
 
 /* —— #5 按「轮」呈现（对齐宿主「对话」）：过程默认折叠，最终回答展开 —— */
 .ts-turn { display:flex; flex-direction:column; gap:6px; }
@@ -752,7 +735,7 @@ body.ts-hsplit-dragging .ts-card { transition:none !important; animation:none !i
 /* 过程折叠条：一行，不抢眼 */
 .ts-proc { align-self:stretch; }
 /* 窄列不换行：子项 nowrap + 省略号截断（文字换行发生在 flex 子项内部，不是 flex 层） */
-.ts-proc-head { display:flex; align-items:center; gap:7px; width:100%; text-align:left; font:inherit; font-size:11px; opacity:.66; padding:3px 8px; border:0; border-left:2px solid rgba(127,127,127,.45); background:rgba(127,127,127,.07); color:inherit; cursor:pointer; border-radius:0 6px 6px 0; flex-wrap:nowrap; overflow:hidden; white-space:nowrap; }
+.ts-proc-head { display:flex; align-items:center; gap:7px; width:100%; text-align:left; font:inherit; font-size:calc(var(--ts-fs, 12.5px) * 0.88); opacity:.66; padding:3px 8px; border:0; border-left:2px solid rgba(127,127,127,.45); background:rgba(127,127,127,.07); color:inherit; cursor:pointer; border-radius:0 6px 6px 0; flex-wrap:nowrap; overflow:hidden; white-space:nowrap; }
 .ts-proc-head > span { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 /* 「过程 N 步」优先保留，先缩「思考/工具」两段（用户：不想看到换行，允许省略） */
 .ts-proc-head .ts-proc-lead { flex:none; }
@@ -761,15 +744,15 @@ body.ts-hsplit-dragging .ts-card { transition:none !important; animation:none !i
 .ts-proc-head:hover { opacity:.9; background:rgba(127,127,127,.14); }
 .ts-dim { opacity:.6; }
 .ts-proc-body { display:flex; flex-direction:column; gap:5px; margin-top:5px; padding-left:8px; }
-.ts-proc-item { border-left:2px solid rgba(127,127,127,.3); padding:2px 8px; font-size:11px; opacity:.75; }
+.ts-proc-item { border-left:2px solid rgba(127,127,127,.3); padding:2px 8px; font-size:calc(var(--ts-fs, 12.5px) * 0.88); opacity:.75; }
 .ts-proc-item-head { display:flex; align-items:center; gap:6px; }
-.ts-proc-role { flex:none; font-size:10px; opacity:.7; }
+.ts-proc-role { flex:none; font-size:calc(var(--ts-fs, 12.5px) * 0.8); opacity:.7; }
 .ts-proc-item .ts-msg-preview { flex:1; min-width:0; }
 .ts-proc-item .ts-msg-full { max-height:180px; overflow:auto; }
 /* 最终回答：按正常对话正文展开（Markdown 渲染，根节点是 .ts-rich） */
 .ts-msg-assistant .ts-rich, .ts-msg-assistant .ts-rich-plain { white-space:normal; }
 /* 过程展开后的富文本：字号更小、紧凑，但同样完整渲染（不出现原始标记） */
-.ts-msg-full .ts-rich { font-size:11.5px; gap:4px; }
+.ts-msg-full .ts-rich { font-size:calc(var(--ts-fs, 12.5px) * 0.92); gap:4px; }
 .ts-msg-full .ts-rich-code { max-height:200px; }
 /* 思考（reasoning）：与工具同款收纳，但用紫色左边条 + 斜体区分，弱化不抢眼 */
 .ts-proc-think { border-left-color:rgba(192,132,252,.65) !important; font-style:italic; }
@@ -789,7 +772,7 @@ body.ts-hsplit-dragging .ts-card { transition:none !important; animation:none !i
 /* 注：此处**不能用** backdrop-filter。
    它是个 sticky 元素且位于滚动容器**内部**：滚动时浏览器每帧都要为它重新
    模糊身后的内容，在 WebKit 上会留下未及时清除的旧帧——同样表现为「重影」。 */
-.ts-jump-latest { position:sticky; bottom:6px; align-self:center; margin-top:-28px; z-index:2; padding:4px 12px; border-radius:99px; border:1px solid rgba(96,165,250,.6); background:rgba(24,27,33,.98); color:#e6e8eb; font:inherit; font-size:11.5px; cursor:pointer; box-shadow:0 4px 14px rgba(0,0,0,.4); visibility:hidden; }
+.ts-jump-latest { position:sticky; bottom:6px; align-self:center; margin-top:-28px; z-index:2; padding:4px 12px; border-radius:99px; border:1px solid rgba(96,165,250,.6); background:rgba(24,27,33,.98); color:#e6e8eb; font:inherit; font-size:calc(var(--ts-fs, 12.5px) * 0.92); cursor:pointer; box-shadow:0 4px 14px rgba(0,0,0,.4); visibility:hidden; }
 .ts-jump-latest[data-visible] { visibility:visible; }
 .ts-jump-latest:hover { background:rgba(96,165,250,.35); }
 /* 任务列表 */
@@ -805,22 +788,22 @@ body.ts-hsplit-dragging .ts-card { transition:none !important; animation:none !i
 /* 行内删除线 */
 .ts-rich del { opacity:.65; }
 .ts-win-hidden-bar { display:flex; gap:6px; flex-wrap:wrap; }
-.ts-chip { flex:none; white-space:nowrap; font-size:11px; padding:3px 9px; border-radius:99px; border:1px dashed rgba(127,127,127,.5); background:transparent; color:inherit; cursor:pointer; }
-.ts-chip:hover { background:rgba(127,127,127,.18); }
 
 /* —— 黑板 —— */
-.ts-board { display:flex; flex-direction:column; min-height:0; flex:1; border:1px solid rgba(127,127,127,.3); border-radius:9px; background:rgba(127,127,127,.07); overflow:hidden; }
-.ts-board-head { flex:none; display:flex; align-items:center; gap:8px; padding:7px 10px; background:rgba(127,127,127,.13); font-size:13px; font-weight:600; }
+/* 三块面板卡一律**透明无边框**（用户要求一体化：不要背景填充与明显分界），
+   只保留一条很淡的表头下边线区分标题与内容。 */
+.ts-board { display:flex; flex-direction:column; min-height:0; flex:1; overflow:hidden; }
+.ts-board-head { flex:none; display:flex; align-items:center; gap:8px; padding:6px 8px; border-bottom:1px solid rgba(127,127,127,.16); font-size:calc(var(--ts-fs, 12.5px) * 1.04); font-weight:600; }
 .ts-board-tabs { display:flex; gap:5px; margin-left:auto; flex-wrap:wrap; }
-.ts-board-tab { font-size:11px; padding:2px 9px; border-radius:99px; border:1px solid rgba(127,127,127,.4); background:transparent; color:inherit; cursor:pointer; }
+.ts-board-tab { font-size:calc(var(--ts-fs, 12.5px) * 0.88); padding:2px 9px; border-radius:99px; border:1px solid rgba(127,127,127,.4); background:transparent; color:inherit; cursor:pointer; }
 .ts-board-tab.active { background:rgba(96,165,250,.3); border-color:rgba(96,165,250,.65); }
 .ts-board-list { flex:1; min-height:0; overflow:auto; padding:8px; display:flex; flex-direction:column; gap:7px; }
 .ts-entry { border:1px solid rgba(127,127,127,.28); border-radius:7px; padding:7px 9px; cursor:pointer; background:rgba(255,255,255,.03); }
 .ts-entry:hover { border-color:rgba(96,165,250,.55); }
 .ts-entry-head { display:flex; gap:8px; align-items:center; }
-.ts-entry-title { font-size:12.5px; font-weight:600; flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.ts-entry-time { font-size:10.5px; opacity:.55; flex:none; }
-.ts-entry-body { font-size:12px; opacity:.85; margin-top:6px; white-space:pre-wrap; word-break:break-word; max-height:180px; overflow:auto; }
+.ts-entry-title { font-size:var(--ts-fs, 12.5px); font-weight:600; flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ts-entry-time { font-size:calc(var(--ts-fs, 12.5px) * 0.84); opacity:.55; flex:none; }
+.ts-entry-body { font-size:calc(var(--ts-fs, 12.5px) * 0.96); opacity:.85; margin-top:6px; white-space:pre-wrap; word-break:break-word; max-height:180px; overflow:auto; }
 .ts-entry.dim { opacity:.55; }
 .ts-topic-req { background:rgba(96,165,250,.25); border-color:rgba(96,165,250,.5); }
 .ts-topic-pit { background:rgba(248,113,113,.22); border-color:rgba(248,113,113,.5); }
@@ -837,41 +820,41 @@ body.ts-hsplit-dragging .ts-card { transition:none !important; animation:none !i
 .ts-chat-msgs { flex:1; min-height:0; overflow:auto; overflow-anchor:none; padding:10px; display:flex; flex-direction:column; gap:7px; }
 
 /* —— 左栏：协作对话时间轴 —— */
-.ts-talk { border:1px solid rgba(127,127,127,.3); border-radius:9px; background:rgba(127,127,127,.07); display:flex; flex-direction:column; min-height:104px; overflow:hidden; }
-.ts-talk-head { display:flex; align-items:center; gap:8px; padding:6px 9px; background:rgba(127,127,127,.13); font-size:12.5px; font-weight:600; flex:none; }
-.ts-talk-sub { margin-left:auto; font-size:10.5px; font-weight:400; opacity:.6; }
+.ts-talk { display:flex; flex-direction:column; min-height:104px; overflow:hidden; }
+.ts-talk-head { display:flex; align-items:center; gap:8px; padding:6px 8px; border-bottom:1px solid rgba(127,127,127,.16); font-size:var(--ts-fs, 12.5px); font-weight:600; flex:none; }
+.ts-talk-sub { margin-left:auto; font-size:calc(var(--ts-fs, 12.5px) * 0.84); font-weight:400; opacity:.6; }
 .ts-talk-list { flex:1; min-height:0; overflow:auto; padding:7px; display:flex; flex-direction:column; gap:6px; }
-.ts-talk-line { display:flex; gap:6px; align-items:flex-start; font-size:11.5px; line-height:1.5; }
-.ts-talk-glyph { flex:none; font-size:12px; line-height:1.4; }
+.ts-talk-line { display:flex; gap:6px; align-items:flex-start; font-size:calc(var(--ts-fs, 12.5px) * 0.92); line-height:1.5; }
+.ts-talk-glyph { flex:none; font-size:calc(var(--ts-fs, 12.5px) * 0.96); line-height:1.4; }
 .ts-talk-body { min-width:0; flex:1; border-radius:7px; padding:4px 8px; background:rgba(127,127,127,.12); }
 .ts-talk-line.main .ts-talk-body { background:rgba(96,165,250,.16); }
 .ts-talk-line.tone-warn .ts-talk-body { background:rgba(248,113,113,.16); }
 .ts-talk-line.tone-done .ts-talk-body { background:rgba(74,222,128,.16); }
 .ts-talk-meta { display:flex; gap:6px; align-items:baseline; margin-bottom:1px; }
-.ts-talk-who { font-weight:600; font-size:11px; }
-.ts-talk-time { font-size:10px; opacity:.5; margin-left:auto; font-family:var(--dsh-font-mono, monospace); }
+.ts-talk-who { font-weight:600; font-size:calc(var(--ts-fs, 12.5px) * 0.88); }
+.ts-talk-time { font-size:calc(var(--ts-fs, 12.5px) * 0.8); opacity:.5; margin-left:auto; font-family:var(--dsh-font-mono, monospace); }
 .ts-talk-text { word-break:break-word; white-space:pre-wrap; }
 
 /* —— 右栏：协作收益报告（优势/劣势两卡铺满整卡，底部不留白） —— */
-.ts-save { border:1px solid rgba(127,127,127,.3); border-radius:9px; background:rgba(127,127,127,.07); display:flex; flex-direction:column; min-height:104px; overflow:hidden; }
-.ts-save-head { display:flex; align-items:center; gap:8px; padding:6px 9px; background:rgba(127,127,127,.13); font-size:12.5px; font-weight:600; flex:none; }
-.ts-save-sub { margin-left:auto; font-size:10.5px; font-weight:400; opacity:.6; }
+.ts-save { display:flex; flex-direction:column; min-height:104px; overflow:hidden; }
+.ts-save-head { display:flex; align-items:center; gap:8px; padding:6px 8px; border-bottom:1px solid rgba(127,127,127,.16); font-size:var(--ts-fs, 12.5px); font-weight:600; flex:none; }
+.ts-save-sub { margin-left:auto; font-size:calc(var(--ts-fs, 12.5px) * 0.84); font-weight:400; opacity:.6; }
 .ts-save-body { flex:1; min-height:0; overflow:auto; padding:7px; display:flex; flex-direction:column; gap:7px; }
 .ts-save-block { border:1px solid rgba(127,127,127,.26); border-radius:8px; padding:7px 9px; display:flex; flex-direction:column; gap:6px; flex:0 0 auto; }
 .ts-save-block.good { background:rgba(74,222,128,.08); border-color:rgba(74,222,128,.38); }
 .ts-save-block.bad { background:rgba(251,191,36,.08); border-color:rgba(251,191,36,.38); }
-.ts-save-title { display:flex; align-items:center; gap:6px; font-size:11.5px; font-weight:600; flex:none; }
-.ts-badge { font-size:10px; padding:1px 7px; border-radius:99px; border:1px solid transparent; font-weight:600; }
+.ts-save-title { display:flex; align-items:center; gap:6px; font-size:calc(var(--ts-fs, 12.5px) * 0.92); font-weight:600; flex:none; }
+.ts-badge { font-size:calc(var(--ts-fs, 12.5px) * 0.8); padding:1px 7px; border-radius:99px; border:1px solid transparent; font-weight:600; }
 .ts-badge.good { background:rgba(74,222,128,.25); border-color:rgba(74,222,128,.6); }
 .ts-badge.bad { background:rgba(251,191,36,.22); border-color:rgba(251,191,36,.6); }
 .ts-save-rows { display:flex; flex-direction:column; gap:5px; flex:0 0 auto; }
-.ts-kv { display:flex; gap:8px; align-items:flex-start; font-size:11px; }
+.ts-kv { display:flex; gap:8px; align-items:flex-start; font-size:calc(var(--ts-fs, 12.5px) * 0.88); }
 .ts-kv-k { flex:none; width:82px; opacity:.65; }
 .ts-kv-v { flex:1; min-width:0; display:flex; flex-direction:column; gap:1px; word-break:break-word; }
 .ts-line { display:block; }
 .ts-good { color:#4ade80; }
 .ts-bad { color:#fbbf24; }
-.ts-dim { opacity:.55; font-size:10px; margin-left:3px; }
+.ts-dim { opacity:.55; font-size:calc(var(--ts-fs, 12.5px) * 0.8); margin-left:3px; }
 .ts-bar-track { flex:none; height:5px; border-radius:99px; background:rgba(127,127,127,.22); overflow:hidden; }
 .ts-bar-fill { height:100%; border-radius:99px; transition:width .3s ease; }
 .ts-bar-fill.good { background:linear-gradient(90deg, rgba(74,222,128,.7), #4ade80); }
@@ -880,18 +863,18 @@ body.ts-hsplit-dragging .ts-card { transition:none !important; animation:none !i
 /* —— 黑板正文富文本（JSON / Markdown / 纯文本） —— */
 .ts-rich { display:flex; flex-direction:column; gap:6px; }
 .ts-rich-plain { margin:0; white-space:pre-wrap; word-break:break-word; font:inherit; }
-.ts-rich-code { margin:0; padding:8px 10px; border-radius:7px; background:rgba(0,0,0,.22); border:1px solid rgba(127,127,127,.28); overflow:auto; font-family:var(--dsh-font-mono, monospace); font-size:11.5px; line-height:1.5; white-space:pre; }
+.ts-rich-code { margin:0; padding:8px 10px; border-radius:7px; background:rgba(0,0,0,.22); border:1px solid rgba(127,127,127,.28); overflow:auto; font-family:var(--dsh-font-mono, monospace); font-size:calc(var(--ts-fs, 12.5px) * 0.92); line-height:1.5; white-space:pre; }
 .ts-rich-h { margin:2px 0 0; font-weight:600; line-height:1.35; }
-.ts-rich-h1 { font-size:15px; }
-.ts-rich-h2 { font-size:14px; }
-.ts-rich-h3 { font-size:13px; }
-.ts-rich-h4, .ts-rich-h5, .ts-rich-h6 { font-size:12.5px; opacity:.9; }
+.ts-rich-h1 { font-size:calc(var(--ts-fs, 12.5px) * 1.2); }
+.ts-rich-h2 { font-size:calc(var(--ts-fs, 12.5px) * 1.12); }
+.ts-rich-h3 { font-size:calc(var(--ts-fs, 12.5px) * 1.04); }
+.ts-rich-h4, .ts-rich-h5, .ts-rich-h6 { font-size:var(--ts-fs, 12.5px); opacity:.9; }
 .ts-rich-p { margin:0; line-height:1.6; }
 .ts-rich-ul, .ts-rich-ol { margin:0; padding-left:20px; display:flex; flex-direction:column; gap:3px; line-height:1.55; }
 .ts-rich-quote { margin:0; padding:4px 10px; border-left:3px solid rgba(127,127,127,.55); opacity:.85; display:flex; flex-direction:column; gap:3px; }
 .ts-rich-quote p { margin:0; }
 .ts-rich-hr { margin:4px 0; border:none; border-top:1px solid rgba(127,127,127,.35); }
-.ts-rich-inline-code { padding:1px 5px; border-radius:4px; background:rgba(127,127,127,.22); font-family:var(--dsh-font-mono, monospace); font-size:11px; }
+.ts-rich-inline-code { padding:1px 5px; border-radius:4px; background:rgba(127,127,127,.22); font-family:var(--dsh-font-mono, monospace); font-size:calc(var(--ts-fs, 12.5px) * 0.88); }
 .ts-rich a { color:#60a5fa; text-decoration:underline; }
 /* —— GenUI 围栏槽位（交 @changfenhuang/dsh-genui 渲染）——
    标签仅用于插件的**结构识别**（叶子元素文本恰为 dsh-ui + 同级 <pre>），
@@ -900,7 +883,7 @@ body.ts-hsplit-dragging .ts-card { transition:none !important; animation:none !i
 /* 接管后紧随的插件容器：与消息体保持同一列宽，不溢出 */
 .genui-dom-fence { max-width:100%; min-width:0; }
 .ts-rich-table-wrap { overflow:auto; }
-.ts-rich-table { border-collapse:collapse; font-size:11.5px; width:100%; }
+.ts-rich-table { border-collapse:collapse; font-size:calc(var(--ts-fs, 12.5px) * 0.92); width:100%; }
 .ts-rich-table th, .ts-rich-table td { border:1px solid rgba(127,127,127,.3); padding:3px 7px; text-align:left; vertical-align:top; }
 .ts-rich-table th { background:rgba(127,127,127,.16); font-weight:600; }
 .ts-json-key { color:#7dd3fc; }
@@ -914,8 +897,8 @@ body.ts-hsplit-dragging .ts-card { transition:none !important; animation:none !i
    用 :has(.ts-cr) 选中，带这个类才不会被宿主的「随内容长高」规则撑破。 */
 .ts-preview { gap:8px; }
 .ts-preview-bar { display:flex; align-items:center; gap:10px; padding:7px 10px; border:1px solid rgba(127,127,127,.3); border-radius:10px; background:rgba(127,127,127,.1); flex:none; }
-.ts-preview-title { font-weight:600; font-size:13px; white-space:nowrap; }
-.ts-preview-url { flex:1 1 auto; min-width:0; font-size:11px; opacity:.65; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ts-preview-title { font-weight:600; font-size:calc(var(--ts-fs, 12.5px) * 1.04); white-space:nowrap; }
+.ts-preview-url { flex:1 1 auto; min-width:0; font-size:calc(var(--ts-fs, 12.5px) * 0.88); opacity:.65; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .ts-preview-ops { display:flex; gap:6px; flex:none; }
 /* 预览 iframe：不加自己的边框与底色（原先的 1px 边框 + 白底在部分项目上会显出白边，
    与其它窗口不一致）；留白由外层卡片/标题条负责 */
@@ -927,7 +910,7 @@ body.ts-hsplit-dragging .ts-card { transition:none !important; animation:none !i
 .ts-center-meta { flex-wrap:nowrap; }
 .ts-center-meta .ts-tag, .ts-dev-chip { white-space:nowrap; flex:none; }
 /* 启动情况小标：已启动=绿，未启动=灰（放在「进入工作台」之前） */
-.ts-dev-chip { font-size:11px; padding:2px 8px; border-radius:99px; border:1px solid rgba(127,127,127,.45); background:rgba(127,127,127,.12); opacity:.72; }
+.ts-dev-chip { font-size:calc(var(--ts-fs, 12.5px) * 0.88); padding:2px 8px; border-radius:99px; border:1px solid rgba(127,127,127,.45); background:rgba(127,127,127,.12); opacity:.72; }
 .ts-dev-chip.on { border-color:rgba(74,222,128,.55); background:rgba(74,222,128,.18); color:#86efac; opacity:1; }
 
 /* 已启动那枚小标的「超链接」形态：平时就是原样的绿标，悬停/键盘聚焦才变成可点的
@@ -946,20 +929,20 @@ body.ts-hsplit-dragging .ts-card { transition:none !important; animation:none !i
 .ts-expset-btn.active { border-color:rgba(96,165,250,.7); background:rgba(96,165,250,.18); }
 /* 面板：portal 挂 body（避开 .ts-cr 的 overflow:hidden），宽度跟随内容但有限，列表内部滚动 */
 .ts-expset-pop { z-index:46; width:max-content; min-width:300px; max-width:min(420px, calc(100vw - 32px)); max-height:64vh; overflow:auto; display:flex; flex-direction:column; gap:8px; padding:10px 12px; border-radius:12px; border:1px solid rgba(127,127,127,.35); background:rgba(24,27,33,.97); color:#e6e8eb; box-shadow:0 14px 40px rgba(0,0,0,.5); backdrop-filter:blur(12px) saturate(1.2); }
-.ts-expset-head { display:flex; align-items:baseline; gap:8px; font-size:12.5px; font-weight:600; }
-.ts-expset-head-tip { margin-left:auto; font-size:10.5px; font-weight:400; opacity:.6; }
-.ts-expset-err { font-size:11.5px; color:#fca5a5; }
-.ts-expset-empty { font-size:11.5px; opacity:.55; padding:2px 0; }
-.ts-expset-busy { font-size:11px; opacity:.6; }
+.ts-expset-head { display:flex; align-items:baseline; gap:8px; font-size:var(--ts-fs, 12.5px); font-weight:600; }
+.ts-expset-head-tip { margin-left:auto; font-size:calc(var(--ts-fs, 12.5px) * 0.84); font-weight:400; opacity:.6; }
+.ts-expset-err { font-size:calc(var(--ts-fs, 12.5px) * 0.92); color:#fca5a5; }
+.ts-expset-empty { font-size:calc(var(--ts-fs, 12.5px) * 0.92); opacity:.55; padding:2px 0; }
+.ts-expset-busy { font-size:calc(var(--ts-fs, 12.5px) * 0.88); opacity:.6; }
 .ts-expset-group { display:flex; flex-direction:column; gap:5px; padding:7px 8px; border:1px solid rgba(127,127,127,.24); border-radius:9px; background:rgba(127,127,127,.07); }
 .ts-expset-group-head { display:flex; align-items:center; gap:8px; }
-.ts-expset-group-name { font-size:12px; font-weight:600; }
-.ts-expset-group-count { font-size:10.5px; opacity:.55; font-variant-numeric:tabular-nums; }
+.ts-expset-group-name { font-size:calc(var(--ts-fs, 12.5px) * 0.96); font-weight:600; }
+.ts-expset-group-count { font-size:calc(var(--ts-fs, 12.5px) * 0.84); opacity:.55; font-variant-numeric:tabular-nums; }
 .ts-expset-group-head .ts-switch { margin-left:auto; }
 .ts-expset-row { display:flex; align-items:center; gap:8px; padding:2px 0 2px 2px; }
 .ts-expset-row-off { opacity:.5; }
-.ts-expset-name { flex:1; min-width:0; font-size:11.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; display:inline-flex; align-items:center; gap:6px; }
-.ts-expset-tag { flex:none; font-size:9.5px; padding:0 5px; border-radius:99px; border:1px solid rgba(127,127,127,.5); opacity:.8; }
+.ts-expset-name { flex:1; min-width:0; font-size:calc(var(--ts-fs, 12.5px) * 0.92); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; display:inline-flex; align-items:center; gap:6px; }
+.ts-expset-tag { flex:none; font-size:calc(var(--ts-fs, 12.5px) * 0.76); padding:0 5px; border-radius:99px; border:1px solid rgba(127,127,127,.5); opacity:.8; }
 /* 开关（role=switch）：轨道 + 圆钮；开=绿 */
 .ts-switch { flex:none; width:34px; height:18px; padding:0; border-radius:99px; border:1px solid rgba(127,127,127,.5); background:rgba(127,127,127,.25); cursor:pointer; position:relative; transition:background .15s ease, border-color .15s ease; }
 .ts-switch:disabled { opacity:.4; cursor:not-allowed; }

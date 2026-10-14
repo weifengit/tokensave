@@ -3,7 +3,6 @@
  * 项目 = { id, 名称, 文件夹路径, 项目介绍, 创建时间, 上次更新时间 }
  */
 import { fetchProjects, publishProjects } from './api'
-import { forgetDeskPref } from './desk-layout'
 export type LayoutMode = 'h-desk'
 
 export interface ProjectRecord {
@@ -252,9 +251,21 @@ export function updateProjectDescription(id: string, description: string): boole
  */
 export function removeProject(id: string): void {
   saveProjects(loadProjects().filter((p) => p.id !== id), [id])
-  // 项目没了，它的布局锁与快照也一并清掉，不留孤儿条目（同 id 的项目不会复活，
-  // 但 localStorage 会随「移除→重新添加」不断积压）。
-  forgetDeskPref(id)
+  // 项目没了，把它从「已打开项目集合」里摘掉（Step 13：布局快照已交给 dockview，
+  // 整块存在 tokensave:desk-dock.v2；项目不在集合里，reconcile 会移除它的面板，
+  // 下一次写盘就不再有它的条目，不留孤儿）。
+  try {
+    const raw = window.localStorage.getItem('tokensave:desk-open.v1')
+    const list = raw ? JSON.parse(raw) : null
+    if (Array.isArray(list)) {
+      window.localStorage.setItem(
+        'tokensave:desk-open.v1',
+        JSON.stringify(list.filter((x: unknown) => x !== id)),
+      )
+    }
+  } catch {
+    /* 隐私模式：忽略 */
+  }
 }
 
 // —— 展示偏好（卡片 / 列表模式、排序方式）——————

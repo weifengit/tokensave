@@ -68,10 +68,10 @@ export function Blackboard({ workspace, actions }: { workspace: string; actions?
 
   return (
     <div className="ts-board">
-      {/* #3 标题条：标题 + 中间信息（全部/需求/坑/方案/简报/刷新/条数）居中，
+      {/* #3 标题条：标题 + 中间信息（全部/需求/坑/方案/简报/条数）居中，
           三键（—/⛶/✕）固定右上角。actions 容器用 order 排到最后。 */}
       <div className="ts-board-head">
-        <span className="ts-head-title">📋 共享黑板</span>
+        <span className="ts-head-title">共享黑板</span>
         <div className="ts-board-tabs">
           <button
             className={`ts-board-tab${activeTopic === 'all' ? ' active' : ''}`}
@@ -84,7 +84,6 @@ export function Blackboard({ workspace, actions }: { workspace: string; actions?
               onClick={() => setActiveTopic(t.id)}
             >{t.name} {counts[t.id] || 0}</button>
           ))}
-          <button className="ts-board-tab" onClick={() => load()} title="刷新">🔄</button>
         </div>
         {actions}
       </div>

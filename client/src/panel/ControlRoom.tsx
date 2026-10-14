@@ -17,7 +17,8 @@ import {
   onRequestWorkbench, requestWorkbench, switchToView, setControlRoomScreen, peekWorkbenchIntent,
   PROJECT_CENTER_VIEW_ID, PROJECT_CENTER_LABEL,
 } from './sessions'
-import { HDesk } from './HDesk'
+import { DeskDock } from './DeskDock'
+
 
 interface Props {
   sessionId?: string
@@ -100,30 +101,15 @@ export function ControlRoom({ sessionId }: Props) {
   }), [sessionId])
 
   const opened = openedId ? projects.find((p) => p.id === openedId) : undefined
-  /**
-   * 本次进入是否为「去调试」（项目卡片上那枚启动标的超链接）。
-   *
-   * 读的是**按项目留存**的意图（peekWorkbenchIntent），而不是一次性消费：点「去调试」
-   * 后 HDesk 的绑定 effect 会打开本项目自己的会话，那一步会把 ControlRoom 整个重建，
-   * 一次性读走就会丢（实测：卡片点了但主对话没出来）。
-   *
-   * 清除交给下一次进入工作台：enterProjectWorkbench 每次都会重设这份留存（普通进入
-   * 不带 intent → 当场清空），所以它只影响本次进入，不会粘到之后每次进来。
-   */
-  const debugEntry = peekWorkbenchIntent(opened?.id) === 'debug'
 
-  // —— H 型工作台 ——（仅在会话确实属于该项目时展示，HDesk 内部会校验并切换会话）
-  if (opened && sessionId) {
+  // —— 工作台（单项目 + dockview 布局）——
+  //   入口仍在「项目中心」：在那边选项目 → 进入本 tab；这里按项目重挂（载入该项目布局快照）。
+  if (sessionId && opened) {
     return (
-      <HDesk
-        // 换项目必须重挂：布局锁的状态（本次要恢复哪份快照）是在首次渲染的惰性初始化里
-        // 定下的，复用同一个实例会把 A 项目的布局回写进 B 项目。会话切换本来就会让本组件
-        // 重建，这里补的是「同一控制室实例内换项目」那条路径。
+      <DeskDock
         key={opened.id}
         project={opened}
         sessionId={sessionId}
-        debug={debugEntry}
-        // 「← 项目中心」= 切到项目列表 tab（保留工作台记忆，可随时切回来）
         onBack={() => switchToView(PROJECT_CENTER_VIEW_ID, PROJECT_CENTER_LABEL)}
       />
     )

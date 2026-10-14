@@ -2787,3 +2787,869 @@ false；窄视口（<1024 = SIDEBAR_AUTO_COLLAPSE）默认收起、宽视口默�
 **注意**：本修复在客户端产物里，需刷新页面（或 HMR 推送）后生效；宿主侧
 布局 store 无 persist 的根因仍待上游修复（届时本补丁自动变为 no-op：
 判态已是收起 → skip）。
+
+## Step 69（2026-10-12）：点击输入条任意空白即聚焦可编辑面
+
+用户反馈：「当我鼠标已经点了对话框区域（假设输入框分最顶部的第一行、第二行、
+第三行）的中下行时，是不会出现光标的……只要鼠标点击了输入框任意位置（除了那些
+发送、更换模型、权限控制等按钮开关），都能实现进入可编辑状态。」
+
+### 根因（读宿主 ui-conversation 源码确认）
+
+可见输入框盒子 = `[data-input-scroll]`（.scroll，max-height+overflow）> `.grow`
+> `[data-composer-input]`（contenteditable）+ 覆盖其上的占位符层。contenteditable
+只有内容那么高（min-height:36px），而盒子被 composer-resize 自动加高/手动固定撑到
+几百 px —— **中下行是 .grow/.scroll 的空白背景，普通 div 点了不聚焦**；占位符层
+CSS 明确 `pointer-events:none`，点击穿透到背景同样不聚焦；点不可聚焦区域还会把
+已聚焦的编辑面 blur 掉。发送/换模型/权限按钮在 scroll 之外或本身是 button，天然
+不受影响（也正应排除）。
+
+### 修法（新增 client/src/composer-focus.ts）
+
+document **捕获阶段**单 click 委托（不 stopPropagation / 不 preventDefault，
+不碰宿主 React 树）：`decideComposerFocus()` 纯决策按序判 ——
+① 不在滚动口 → skip `outside-scroll`；② 命中 `INTERACTIVE_SEL`
+（button/a/select/input + role=button|menuitem|option|switch|tab|combobox|listbox）
+→ skip `interactive-control`；③ 目标在编辑面内 → skip `native-focus`（浏览器原生）；
+④ 拖选中（选区非折叠且锚点在口内）→ skip `selecting`；⑤ 编辑面不可编辑
+（workspaceTrigger 空态/disabled）→ skip `editor-not-editable`；
+⑥ 其余 = 点盒子空白 → `focus`。动作 `focusComposerAt()`：`focus({preventScroll:true})`
+（失败回落普通 focus）+ `caretRangeFromPoint`/`caretPositionFromPoint` 落光标到点击点，
+落点不在编辑面内则收拢到文末。每次现查 DOM，会话/Tab 重挂载、HDesk 停靠、
+resize 改高度天然适配；诊断 `window.__tsComposerFocus.last` 记录最近一次 reason。
+
+### 验证
+
+- `pnpm check`（tsc）全绿；全量测试链 **10 项 ALL PASS**（新增
+  `test:composer-focus` → `scripts/check-composer-focus.mjs`：决策表 7 项、
+  选择器/宿主源锚定 4 项、focus 动作 2 项、挂载点 3 项、幂等 1 项）。
+- 运行时冒烟（真实 `dist/client.js` eval）：apply 挂载 capture click 监听 1 个、
+  二次 apply 幂等仍 1（另一监听属既有 scroll-memory）✓；模拟点盒子空白 →
+  `focus({preventScroll:true})` + last=click-to-focus ✓；点按钮 → focus 0 次 +
+  last=interactive-control ✓。
+- `pnpm build:client` 重建 `dist/client.js`（532,953B）+ `node --check` 通过。
+
+## Step 13-A（2026-10-12）：dockview 接管布局 —— Step A spike 通过
+
+按 `docs/prompts/step-13-dockview.md` 的 Step A 落地并**在真机 GUI（127.0.0.1:3080）
+用 agent-browser 实测**。结论：**四个验证点全通过，方案可以继续**。
+
+### 做了什么
+
+- vendor 引入：`client/src/vendor/dockview-core.min.js`（UMD，v8.5.1，549KB）+
+  `dockview.css`（160KB），取自 info_report 的同一份。
+- `client/src/vendor/dockview.ts`：**按文本取源 + `new Function(src)()` 全局执行**
+  —— UMD 在 CJS 信封里会被认成 CJS 分支（API 进 bundle exports，拿不到），必须在
+  全局作用域跑才会挂到 `globalThis['dockview-core']`。CSS 注入一次性 `<style>`（幂等）。
+  构建侧：`scripts/build-client.mjs` 加 `loader:{'.css':'text'}` + vendor `*.min.js`
+  文本插件；`types/vendor.d.ts` 补声明。
+- `client/src/panel/dock-spike.tsx`：一次性验证容器（vanilla DOM 建面板，避开本仓未装的
+  react-dom/client），挂在 `shell.overlay`，**只在 `?dockview-spike=1` 或
+  localStorage `tokensave:dock-spike.v1=1` 时渲染**，平时完全不进 DOM。
+  含两个「假项目」各带 预览(ticker iframe) + 主对话(自带输入框)，加项目中心列表，
+  工具栏有 锁布局/浮动/隐藏/显示，诊断挂 `window.__tsDockSpike`。
+- `scripts/check-dockview-spike.mjs`（26 项，已入 `test` 链 → 全量 11 项 ALL PASS）。
+
+### 实测结果（真机）
+
+| 验证点 | 结果 |
+| --- | --- |
+| ① 产物可加载 | ✓ bundle 1,265,721 B（533,933 → +731KB，含 vendor ~709KB）；UMD 全局分支拿到 API |
+| ② 样式无冲突 + 透明 | ✓ `.dv-groupview` 计算背景 `rgba(0,0,0,0)`；5 个 tab **0 个关闭键**（图标标签）；spike 外壳 0.28 透明，底层页面可见 |
+| ③ 锁布局 / 隐藏面板 | ✓ `updateOptions({disableDnd:true})` 后 `api.dndCapabilities` 由 `{html5:true,pointer:true}` 变 `{false,false}`，可读回；`panel.api.setVisible()` 可用 |
+| ④ 两项目输入互不影响 | ✓ A/B 草稿各自独立（`{A:'A草稿', B:'B草稿'}`） |
+| **⑤ 媒体/长任务不重载** | ✓ ticker iframe 经历「真实鼠标拖拽改分隔条 + 浮动 + 隐藏/显示 + toJSON/fromJSON 往返」，计数 **1079→5215→7577→9390 一路只增不减** |
+
+其他 API 事实（本版 8.5.1）：有 `addFloatingGroup` / `addPopoutGroup` / `createTabGroup` /
+`moveTabGroup` / `dndCapabilities` / `toJSON`/`fromJSON`；无 `api.options` 与
+`api.floatingGroups`（读回锁状态要用 `dndCapabilities`）；组 API 有 `setVisible`/`isVisible`/
+`maximize`/`isMaximized`/`moveTo`/`location`。
+
+### 结论 / 遗留
+
+- 方案成立：`disableDnd` 可承接现有「布局锁」，`setVisible` + `defaultRenderer:'always'`
+  可承接「切项目不重挂」，`toJSON/fromJSON(reuseExistingPanels)` 可承接按项目持久化。
+- 遗留 1：**点分隔条会 blur 输入框**（原生行为，info_report/VSCode 同样如此）；
+  草稿存在面板之外的状态里，所以拖动/切分组不丢内容（已验）。Step C 若要「拖拽中不丢焦点」，
+  只能在拖拽期间临时把焦点还给原输入框，属可选优化。
+- 遗留 2：`addFloatingGroup` 调用后该面板进新组，但本版无 `floatingGroups` 读数，
+  Step B 要浮动的行为细节需在 Step B 里边做边确认。
+- spike 保留在仓内（默认关闭），Step B 起可直接用它做回归对照；Step D 收口时删除。
+
+## Step 13-B（2026-10-12）：工作台交给 dockview 接管（面板化替换，默认生效）
+
+Step A 通过后按 `docs/prompts/step-13-dockview.md` 的 Step B 落地。**工作台现在默认由
+dockview 渲染**（flag 一键回退），六类真组件全部面板化，真机验证通过。
+
+### 做了什么
+
+- `client/src/panel/DeskDock.tsx`（新，约 430 行）：dockview 宿主。
+  - 面板：`preview/board/chat/talk/save` 常驻 + `exp:<sessionId>` 每个探索者一个；
+    内容全部是**真组件**（Blackboard/TalkColumn/SavingsColumn/MainChat/PreviewPanel/
+    ExplorerWindow），用 `createPortal` 挂进 dockview 容器 —— 单棵 React 树，无额外 root，
+    因此面板移动不丢 React 状态。
+  - 数据管线照抄 HDesk 口径：探索者按 workspace 8s 轮询、项目预览 10s 探测、
+    主对话会话 = 探索者会话时回退本项目最新会话。
+  - 布局快照 = dockview `toJSON/fromJSON`，按 **projectId** 分键（`tokensave:desk-dock.v1:<id>`），
+    300ms 节流写盘 —— 替代 `desk-layout.ts` 的自研持久化。
+  - 布局锁 = `updateOptions({ disableDnd })`（Step A 证明可用 `dndCapabilities` 读回）。
+  - 关闭的面板以「已关闭：＋」chips 恢复（dockview 无此概念，照 info_report 补）；
+    「重置布局」清快照回默认。
+  - 输入条停靠**复用** HDesk 的 `useDockNativeComposer`（本次只把它 `export`，未复制实现；
+    Step B2 再搬成独立文件）。
+- `ControlRoom.tsx`：新增引擎开关 `readDeskEngine()` —— 默认 `dockview`，
+  `localStorage['tokensave:desk-engine.v1']='grid'` 可**一键回退**旧 HDesk（应急用）。
+- `types/react-dom.d.ts`：createPortal 补带 key 的重载声明。
+- `scripts/check-desk-dock.mjs`（18 项，已入 test 链 → 全量 **12 项 ALL PASS**）。
+
+### 真机验证（127.0.0.1:3080，agent-browser）
+
+| 检查 | 结果 |
+| --- | --- |
+| 工作台已切换引擎 | ✓ `.ts-desk`（旧网格）不在，`[data-desk-dock]` 在 |
+| 面板齐备 | ✓ `[chat, preview, board, talk, save]`，5 tabs / 5 groups |
+| **输入条仍正确停靠** | ✓ 宿主导入条 `position:fixed`，且矩形**完全落在聊天面板内** |
+| 布局锁 | ✓ `dndCapabilities` true→false→true（可读回） |
+| 关闭→恢复 | ✓ 关「协作收益」→ 出现 chip「＋ 协作收益」→ 点击后面板回位 |
+| 刷新持久化 | ✓ 快照 1163B 落盘（键按 projectId），刷新后 5 面板完整恢复、无关闭项 |
+| 应急回退 | ✓ flag=grid → `.ts-hdesk` 回归、dockview 元素为 0；清 flag 后恢复 dockview |
+
+### 遗留（Step B2 / C 待办）
+
+- **B2 未做**：HDesk 的网格机（三列轨道/midSplit/分隔条/恢复 chips）、`desk-layout.ts`
+  自研持久化、`styles.ts` 里 H 台 CSS 仍保留 —— 因为回退开关还指着它。等真机用一阵
+  确认 dockview 路线无回退需求后再删（那时 `test:desk` 一并重写）。
+- **关闭面板会销毁 DOM**（媒体随之停）：与「切项目保活」不同 —— 后者靠 dockview 的
+  隐藏/tab（`defaultRenderer:'always'`），Step A 已证明 DOM 不摘；要连「关闭也能保活」
+  就得加 info_report 那种 park 容器，属可选优化。
+- 跨实例拖拽（`wireCrossDockDnd`）**不需要**：本方案只有一个 dockview 实例。
+- 空分组清理由 `noPanelsOverlay:'emptyGroup'` 承接。
+
+## Step 13-C（2026-10-12）：多项目并存 —— 一个 dock 里同时活着 A/B
+
+按 `docs/prompts/step-13-dockview.md` 的 Step C 落地，**真机验证通过**。
+
+### 做了什么
+
+- `DeskDock.tsx` 重写为**多项目宿主**（不再是「一个项目一个实例」）：
+  - 面板 id 命名空间 `<projectId>:<kind>`（kind ∈ preview|board|chat|talk|save|exp:<sid>），
+    A/B 面板天然不撞名；`center` 是项目中心面板，可开关项目。
+  - **dockview 实例只建一次**（依赖刻意收窄为 `[]`），项目开关只增删面板、不重建实例；
+    「打开的项目集合」存 `tokensave:desk-open.v1`，刷新原样恢复。
+  - 布局整块快照存 `tokensave:desk-dock.v2`（含所有项目），300ms 节流；关闭面板用 chips 恢复。
+  - 数据**按项目分桶**轮询（`data[projectId]`，探索者 8s / 预览 10s），互不共用。
+- `ProjectComposer.tsx`（新）：**每个项目窗口自带输入框**，发送走已有的
+  `sendToSession(sessionId, text)` → 天然对应本项目会话。多项目模式**不再停靠宿主那一座
+  composer**（全页只有一座，必串台），也**不导航宿主会话**（不调 openSession/replaceMain）。
+- `chat-view.ts`：镜头改成**按会话分键**（`useChatView(scope)`，键 `tokensave:chat-view.v1:<sessionId>`），
+  不带 scope 时退化为旧全局单值（向后兼容）；`MainChat` 传 `sessionId`。
+- `ControlRoom.tsx`：默认渲染多项目 `DeskDock`（不再按项目 `key` 重挂）；flag=grid 仍回退旧 HDesk
+  （旧引擎保留「单项目 + 重挂」老语义）。
+
+### 真机验证（3080 + agent-browser）
+
+| Step C 验收项 | 结果 |
+| --- | --- |
+| A/B 同时活着 | ✓ 打开 tokensave + info_report → **10 个面板**（各 4-5 个）、2 个聊天格 |
+| 输入框正确对应 | ✓ 两个输入框 `data-composer-target` 是**各自不同的会话 id**（session-2e4f… / session-35bf…） |
+| 来回切 10 次不重挂 | ✓ 预置标记的 iframe 经过 10 次 `focusProject` 切换后**标记仍在**、面板数不变（DOM 未重建） |
+| 刷新恢复 | ✓ 重载后两个项目、2 个聊天格、2 个输入框、10 面板全部原样回来 |
+| 项目中心降级为面板 | ✓ `center` 面板列出 10 个登记项目，逐个「打开/关闭」，已开显示「● 已打开」 |
+| 不导航宿主会话 | ✓ DeskDock 源码零 `openSession`/`replaceMain`/`primeViewPreference`；只读 `latestProjectSession` |
+| 镜头不串台 | ✓ 切 A 的镜头只写 `tokensave:chat-view.v1:session-2e4f…`，B 的状态不变 |
+
+测试链 **12 项 ALL PASS**（`check-desk-dock.mjs` 扩到 26 项，含 Step C 的 8 项）；`pnpm check` 全绿；
+产物 1,292,791 B。
+
+### 遗留
+
+- HDesk 网格机、`desk-layout.ts`、H 台 CSS 仍保留（回退开关要用）——**B2 待做**：确认不再需要
+  回退后删除，并重写 `test:desk`。
+- 路由机器（`replaceMain` 接管）未停用：它只影响「从侧边栏点会话时的宿主导航」，多项目模式下
+  不参与项目切换，暂无冲突；B2 可一并处置。
+- 关闭面板仍会销毁 DOM（媒体随之停）；「背景项目保活」靠的是同 dock 内隐藏/tab（已验）。
+
+## Step 13-D（2026-10-12）：收口 —— 删旧网格机、重写测试、真机回归
+
+Step 13（dockview 接管工作台）的收口。**B2 删除已执行**，测试与契约同步。
+
+### 做了什么
+
+- **删除旧网格机**：`HDesk.tsx`（1283 行）、`desk-layout.ts`、`desk-win-seed.ts`、
+  `desk-types.ts` 全部移除；`ControlRoom` 不再有引擎开关 / 旧分支，直接渲染 `DeskDock`。
+  `store.removeProject` 的 `forgetDeskPref` 改为从 `tokensave:desk-open.v1` 摘除该项目。
+  顺带清掉 styles.ts 里随之作废的 H 台 CSS（`.ts-desk*`/`.ts-closed-bar`/`.ts-chip`/
+  `.ts-hsplit` 等 20 行；brace 平衡仍为 0）。
+- **抽出纯模块** `client/src/panel/desk-panes.ts`：面板 id 命名/解析、标题/图标映射、
+  `desiredPaneIds()`（「应当存在哪些面板」的推导）。DeskDock 改为复用它——面板增删逻辑
+  因此**可单测**（不需要 DOM/dockview）。
+- **修掉两处真问题**：① 探索者窗口的三键接到 dockview（最小化→隐藏面板 / 最大化→组最大化 /
+  关闭→关面板可 chips 恢复），此前是空函数（点了没反应）；② 合并 8s/10s 两条定时器为一条
+  轮询（原先重复请求探索者+预览探测）。
+- **测试重写**：`check-desk-ux.mjs` 旧网格断言全部作废 → 改为「面板纯逻辑单测 + 桌面外壳断言」；
+  `check-desk-dock.mjs` 同步到新模块布局（面板 id 来自 desk-panes、旧网格必须不存在、
+  全仓不再有宿主输入条停靠）。
+
+### 真机回归（127.0.0.1:3080 + agent-browser）
+
+| 项 | 结果 |
+| --- | --- |
+| 旧网格已消失 | ✓ `.ts-desk` 不在；`.ts-desk`/`desk-layout` 文件不在仓内 |
+| **拖拽** | ✓ 鼠标真拖分隔条，面板数不变、无异常 |
+| **最大化 / 还原** | ✓ `hasMaximizedGroup()` true → `exitMaximized()` false |
+| **双项目切换** | ✓ 两项目 10 面板；切 10 次后预置标记的 iframe **仍在**、面板/iframe 数不变（DOM 未重建） |
+| **刷新恢复** | ✓ 重载后 2 项目、10 面板、2 聊天格、2 输入框（info_report / tokensave）原样回来 |
+| 产物 | ✓ 1,215,695 B（删 HDesk 后较 Step C 的 1,292,791 **减少 77KB**）；`node --check` 通过 |
+
+`pnpm check` 全绿；全量测试链 **12 项 ALL PASS**。
+
+### 遗留（可选，不影响使用）
+
+- styles.ts 仍有少量 H 台时代的选择器（`.ts-preview*`/`.ts-vsplit`/`.ts-bar` 等）——
+  它们**仍被 PreviewPanel/MsgList/TalkColumn 等在用**，不是死代码，故保留。
+- 关闭单个面板会销毁其 DOM（媒体随之停）；「背景项目保活」靠同 dock 内隐藏/tab（已验）。
+- spike（`dock-spike.tsx` + `?dockview-spike=1`）保留作对照，可随时删。
+
+## Step 13-E（2026-10-12）：撤回多项目并屏 —— 还原「项目中心 + 工作台（单项目 + dockview）」
+
+用户反馈：「新的交互逻辑比较混乱，想还原为【项目中心 + 工作台 + dockview】的模式，
+也就是最初那种状态，只是把工作台中窗口的布局（顶部项目预览 + 下面 H 型布局）换成 dockview。」
+
+### 做了什么
+
+- **`DeskDock.tsx` 回到单项目形态**（`DeskDockProps = { project, sessionId, onBack }`）：
+  - 一次只呈现一个项目；面板 id 仍带项目前缀（`<projectId>:<kind>`），但只含本项目。
+  - 项目中心**不再**是 dock 内部面板（`center` 从 desired 集合里删掉）——它回到独立 tab。
+  - 布局快照回到**按项目分键**：`tokensave:desk-dock.v1:<projectId>`，300ms 节流。
+  - 数据单桶轮询（探索者 + 预览探测同拍 8s，取消原先 8s/10s 两条定时器）。
+  - 恢复 chips / 布局锁 / 重置布局 / 探索者三键接 dockview，全部保留。
+  - 挂载时一次性清理并屏时代遗留键 `tokensave:desk-open.v1` 与 `tokensave:desk-dock.v2`。
+- **`ControlRoom.tsx` 还原入口语义**：`if (sessionId && opened)` → `<DeskDock key={opened.id} …/>`；
+  没选项目时仍是「引导去项目中心」。项目中心 → 工作台链路不变（`enterProjectWorkbench`）。
+- 测试同步：`check-desk-dock.mjs` / `check-desk-ux.mjs` 的并屏断言改写为单项目语义
+  （项目中心独立 tab、实例按 project.id 重挂、快照按项目分键、数据单桶）。
+
+### 真机验证（3080 + agent-browser）
+
+| 项 | 结果 |
+| --- | --- |
+| tab 结构 | ✓ `对话 / 轨迹 / 项目中心 / 工作台` 四个 tab 并存（项目中心回到独立 tab） |
+| 面板集合 | ✓ `[<pid>:chat, :preview, :board, :talk, :save]` 共 5 个；1 个本项目输入框 |
+| 遗留键清理 | ✓ `desk-open.v1` / `desk-dock.v2` 均为 null；只剩 `desk-dock.v1:<pid>` |
+| 拖拽 | ✓ 鼠标真拖分隔条，面板数不变、iframe 标记保留（未重建） |
+| 关闭 → 恢复 | ✓ 关「协作收益」→ chip 出现 → 点击恢复回 5 面板 |
+| 刷新恢复 | ✓ 重载后 5 面板、无关闭项、本项目输入框在 |
+| 布局锁 | ✓ `dndCapabilities` 可读回 |
+
+`pnpm check` 全绿；全量测试链 **12 项 ALL PASS**；产物 **1,210,968 B**（较并屏版再减约 5KB）。
+
+### 说明
+
+- 「顺序保留、避免串台」的那批基础设施没有回退、继续保留：每项目自带输入框
+  （`ProjectComposer` → `sendToSession`）、面板纯逻辑模块（`desk-panes.ts`）、
+  镜头按会话分键（`chat-view.ts`）。它们让单项目模式同样干净，也为将来需要并屏时留好口子。
+
+## Step 13-F（2026-10-12）：只保留 DSH 原生输入条，并绑进「DSH 主对话」面板
+
+用户反馈：「我看到两个聊天输入框（DSH 原生 + 我那个简陋的）。请不要简陋版，
+只留 DSH 原生那个，但原生那个要和 DSH 主对话**绑在同一个窗口里**，而不是一直显示在页面中下位置。」
+
+### 做了什么
+
+- **删除自建输入框** `ProjectComposer.tsx`（连同 DeskDock 里的 `.ts-pc-*` 样式与
+  DeskDock 内的引用）——「简陋版」彻底移除。
+- **恢复原生输入条停靠**：从 git 取回旧实现（原在 HDesk.tsx 内，随 HDesk 删除而失去），
+  迁到新模块 `client/src/panel/composer-dock.ts`：
+  - `COMPOSER_SEAT = '[data-conversation-region="composer"]'`；
+  - `useDockNativeComposer(ref, enabled, aboveOverlay, deps)`：把原生输入条 `position:fixed`
+    停靠到给定容器矩形内（向下锚定、内容向上生长），**卸载即还原原始行内样式**；
+  - `hostContentWidthPx()`：读宿主横向拖拽宽度，让主对话内容与输入条同步变窄并居中；
+  - 跟随机制：容器 `ResizeObserver` + window resize/scroll(capture) + 300ms 轮询兜底 +
+    祖先链 style MutationObserver（宿主拖拽只改 CSS 变量、不改尺寸）。
+- **DeskDock 接线**：聊天面板容器挂 `chatCellRef`，`useDockNativeComposer(chatCellRef,
+  liveIds.includes(chatPaneId), false, [liveIds, reloadKey])` —— 面板存在才停靠，关闭即交还宿主。
+- 底部留白沿用既有 CSS（`--ts-composer-h` 由停靠逻辑写入 → `.ts-chat-msgs` padding-bottom），
+  末尾几行不被输入条遮住。
+
+### 真机验证（3080 + agent-browser）
+
+| 项 | 结果 |
+| --- | --- |
+| 输入条数量 | ✓ `[data-conversation-region="composer"]` **1 个**；自建输入框节点 **0 个** |
+| 绑进面板 | ✓ 原生输入条 `position:fixed`，矩形**完全落在**「DSH 主对话」面板内 |
+| 拖拽跟随 | ✓ 真鼠标拖分隔条：面板高 198→252，输入条 bottom 294→400，仍在面板内 |
+| 卸载还原 | ✓ 切到「对话」tab：行内样式清空、回到宿主的 `sticky` 原位、CSS 变量也清除 |
+| 切回重停靠 | ✓ 回「工作台」自动恢复 `fixed` + 面板内 + `--ts-composer-h` 写回 |
+
+`pnpm check` 全绿；全量测试链 **12 项 ALL PASS**；产物 1,211,609 B。
+
+### 说明
+
+- `composer-focus.ts`（点击输入条任意空白即聚焦）**保留**——它服务的正是这个原生输入条；
+  之前一度误删其测试脚本 `check-composer-focus.mjs`，已重建并回到测试链。
+- 停靠仍是 DOM 级 hack（源自旧实现），但它现在只服务**一个**目标容器，比并屏时代的
+  多处停靠更简单可控。
+
+## Step 13-G（2026-10-12）：DSH 主对话消息宽度跟**自己的面板**自适应
+
+用户反馈：「主对话消息要按自己这个窗口的宽度比例调节显示。现在只能在原生『对话』tab
+里鼠标变双向箭头时缩放；面板很小时，主对话内容右侧会被截断。」
+
+### 根因（实测确认，不是猜）
+
+`.ts-chat-msgs` 是 `box-sizing:content-box` + `width:100%` + 左右 `padding:10px`，
+而本项目**没有全局 `*{box-sizing:border-box}` 重置** → 实际占位比面板宽 **20px**
+（实测 `clientWidth 632` vs 面板 `612`），右侧被裁；再叠加它原本还吃
+`--ts-chat-content-w`（取自宿主 `--dsh-chat-user-width`，**带 680px 下限**），
+面板变窄时那个值不会跟着变小，于是「窄面板下右侧截断」被放大。
+
+### 修法
+
+- `styles.ts`：`.ts-mainchat .ts-chat-msgs` 改为
+  `box-sizing:border-box; width:100%; max-width:100%; margin-inline:0` ——
+  **只受本面板约束**，不再引用 `--ts-chat-content-w`。
+- `composer-dock.ts`：输入条宽度同口径改为「只受面板约束」
+  （原来借宿主宽度的 680px 下限，同样会宽出面板、右侧被截）；
+  随之删掉已无引用的 `hostContentWidthPx()` helper。
+- 底部留白（`--ts-composer-h`）与停靠跟随逻辑不变。
+
+### 真机验证（3080 + agent-browser）
+
+| 项 | 结果 |
+| --- | --- |
+| 修复后贴合 | ✓ `box-sizing:border-box`；消息区 `612` == 面板 `612`，`scrollWidth <= clientWidth` |
+| **窄面板（模拟 180px）** | ✓ 消息区 `180` == 面板 `180`，**无溢出**；输入条同宽且仍在面板内 |
+| 消息气泡 | ✓ 逐个量 `getBoundingClientRect().right`，**无右侧溢出** |
+| 宽面板 | ✓ 恢复后同样贴合（612），输入条在位 |
+
+`pnpm check` 全绿；全量测试链 **12 项 ALL PASS**；产物 1,211,640 B。
+
+## Step 13-H（2026-10-12）：参考 info_report —— 拖拽落点指示 / 区域开关+皮肤 / 布局存取
+
+用户三项要求（均以 info_report 的实现为参照）。
+
+### 1. 拖拽落点指示（「拖动不顺畅、看不清落点」）
+
+**根因**：dockview 官方默认落点是半透明灰底 `rgba(83,89,93,.5)` +
+`--dv-drag-over-border-color: transparent` —— 落点几乎看不出来；
+info_report 靠 `--dv-drag-over-*` 覆盖来解决。
+
+**改法**：DeskDock 主题里覆盖两个变量（蓝底 `rgba(79,142,247,.22)` + 蓝描边
+`#4f8ef7`），并给 `.dv-drop-target-anchor` 补描边/圆角/内投影；另加
+`.dv-tab{cursor:grab}` / `.dv-sash:hover{background:rgba(79,142,247,.5)}` ——
+拖动抓手本身可见（「不顺畅」很多时候是**抓不到**分隔条）。
+
+### 2. 右上角区域开关 + 皮肤（参考 info_report 标题行）
+
+- **区域开关**：按面板 kind 划三区 —— 主侧栏（preview）/ 面板区（board·talk·save·探索者）/
+  辅助侧栏（chat）。点一下收起该区：记下该区面板规格快照 → `removePanel`；
+  再点展开：按快照原样放回（同 info_report 的 hide-panel 手法）。
+  状态存 `tokensave:desk-regions.v1`。
+- **关键坑**：`reconcile` effect 会把「不是 desired 的面板」补回来，于是收起立刻被撤销——
+  已加闸门 `inHiddenRegion()`：被收起区域的固定面板与探索者面板**不补**。
+- **皮肤**：5 套内置（无 / 深蓝 / 墨绿 / 暗红 / 光晕），选中即写 dock 背景并持久化
+  `tokensave:desk-skin.v1`。
+
+### 3. 默认布局 / 保存布局（参考 info_report 状态栏）
+
+- **保存布局**：把当前 dock 快照存为默认（`tokensave:desk-saved.v1:<projectId>`）。
+- **默认布局**：优先恢复用户保存过的那份；没保存过则回内置摆位。
+- **语义对齐 info_report**：拖动/关闭**不再自动覆盖**已保存的默认布局，只把「保存布局」
+  按钮点亮（`●`）提醒；程序化恢复期间用 `suppressDirtyRef` 抑制误点亮
+  （否则 `fromJSON` 会触发 layout 事件、恢复完又亮灯）。
+
+### 真机验证（3080 + agent-browser）
+
+| 项 | 结果 |
+| --- | --- |
+| 落点变量 | ✓ `--dv-drag-over-background-color: rgba(79,142,247,.22)`、`--dv-drag-over-border-color: #4f8ef7` 已解析生效 |
+| 拖拽光标 | ✓ tab `cursor: grab`；sash 悬停变蓝 |
+| 区域收起 | ✓ 点「面板区」：4 面板 → 1（只剩辅助侧栏 chat） |
+| 区域展开 | ✓ 再点：完整还原 4 面板（快照放回） |
+| 保存布局 | ✓ 944B 落盘、按钮熄灯 |
+| dirty 提醒 | ✓ 关一个面板 → 按钮亮 `●`「保存布局 ●」 |
+| 默认布局 | ✓ 恢复后与保存内容一致、按钮熄灯 |
+| 皮肤 | ✓ 选「深蓝」→ dock 背景生效 + 持久化 |
+
+`pnpm check` 全绿；全量测试链 **12 项 ALL PASS**；产物 1,221,952 B。
+
+## Step 13-I（2026-10-12）：参考 info_report 重做外壳 —— 多区布局 + 图标 chrome + ⋯ 菜单
+
+用户两项要求：①界面分成【主侧栏、辅助侧栏、编辑区、面板区、状态栏】；
+②标题行/⋯菜单/皮肤**照 info_report 抄作业**。
+
+### 骨架：三个 dockview 实例 + 标题行 + 状态栏
+
+```
+┌──────────────────────────────────────────────┐
+│ 标题行：[图标] 项目名 │ 已关闭 chips │ 区域键 ⋯ 皮肤 │
+├──────────┬──────────────────────┬───────────┤
+│ 主侧栏   │ 编辑区（预览/主对话） │ 辅助侧栏  │
+│ dockview ├──────────────────────┤ dockview  │
+│          │ 面板区（黑板/协作）   │           │
+├──────────┴──────────────────────┴───────────┤
+│ 状态栏：当前面板 · 面板数 · 锁 · 保存 · 默认  │
+└──────────────────────────────────────────────┘
+```
+
+- CSS Grid 三行三列（`grid-template-areas`），左右列宽走 `--ts-side-l/-r`。
+- **编辑区与面板区共用一个实例**（同 info_report）：面板区「向上扩充」只盖编辑区，
+  两侧侧栏不受影响；两者之间的把手是原生 sash。
+- **区域收起 = 列宽塌陷到 0**（同 info_report 的 hide-panel），
+  **不 removePanel** —— 比上一版「记快照 + 移除」干净得多，面板 DOM 不销毁。
+- 跨实例拖拽：`onUnhandledDragOver` accept + `onDidDrop` 搬面板（info_report 同款）。
+
+### 标题行 / ⋯ 菜单 / 状态栏（照抄 info_report）
+
+- 标题行：左边 `[区域图标] 项目名` + 已关闭 chips；右边**图标化**三个区域键 + `⋯` + 皮肤
+  （全部走 `iconSvg` 线条图标，不再是一排文字按钮）。
+- `⋯` 菜单：每窗口一行（图标 + 名称 + **三个区域按钮**）——点当前所在区 = 收起，
+  点别的区 = 搬过去（未打开则打开）；底部「全部打开 / 恢复默认布局 / 关闭菜单」。
+- 状态栏：当前面板 · 面板数（打开/关闭）· 锁定 · **保存布局** · **默认布局**。
+
+### 踩坑（真错误，非猜测）
+
+`TypeError: this._watermark.init is not a function` —— 我给的 `createWatermarkComponent`
+只返回了 `{ element }`，而 dockview 的组件契约是 `{ element, init(params), dispose() }`
+（默认类 `pr` 的实现就是 `init(e){}`）。补上 init/dispose 后外壳正常渲染。
+
+### 真机验证（3080 + agent-browser，零 page error）
+
+| 项 | 结果 |
+| --- | --- |
+| 三实例 | ✓ left/center/right 各有 `.dv-dockview` |
+| 默认摆位 | ✓ chat@center、board/talk/save@center（预览有 devUrl 时落 left） |
+| 区域收起 | ✓ 点左区键 → `data-hide-left`、左列宽 **220 → 0**，面板仍在实例里（不销毁） |
+| 区域展开 | ✓ 再点 → 左列宽恢复 220 |
+| ⋯ 菜单 | ✓ 4 行窗口、每行三区域按钮（当前区高亮）、含「全部打开」 |
+| **搬区** | ✓ 菜单里把黑板点去主侧栏 → `board@left`、`apis.left.getPanel` 持有它 |
+| 保存布局 | ✓ 1401B 落盘（含三区结构）、按钮熄灯 |
+| 默认布局 | ✓ 精确恢复保存时的布局（含 `board@left` 自定义位置）、熄灯 |
+| dirty 提醒 | ✓ 关一个面板 → 状态栏按钮亮 `●` |
+| 皮肤 | ✓ 选「墨绿/暗红」→ dock 背景生效；**刷新后仍保留**（`desk-skin.v1`） |
+| 持久化 | ✓ 刷新后 `desk-saved.v2:p-tokensave` 与皮肤都在（探针验证新版键未被 STALE 清理误删） |
+
+`pnpm check` 全绿；全量测试链 **12 项 ALL PASS**（`check-desk-dock.mjs` 扩到 34 项，
+含新增的多区外壳 8 项）；产物 1,236,782 B。
+
+## Step 13-J（2026-10-12）：修三处 —— 去超链接 / ⋯ 定位 / 自由拖动（根因三个）
+
+用户三项反馈。第三项「窗口拖不动」排查出**三个独立根因**，逐一定位（都有实测证据，非猜测）。
+
+### ① 去掉顶部「项目中心」超链接
+
+标题行不再渲染 `data-desk-back`；`onBack` 能力保留但默认不显示。
+恢复入口 = 项目中心 tab 本身（原设计如此）。
+
+### ② ⋯ / 皮肤浮动面板定位到右上角
+
+原实现是 `<div>` 无定位信息 → 落在左上角。改为**锚定触发按钮**：
+`placePop(anchor, width)` 读按钮 rect，`left = clamp(anchor.right - width)`（右缘对齐）、
+`top = anchor.bottom + 6`；未定位时兜底 `{right:12, top:48}`。
+实测：⋯ 按钮 rect.right=1240，菜单 rect.right=1254，锚在按钮下方且在视口内。
+
+### ③ 窗口不能自由拖动（三个根因）
+
+用真实鼠标拖拽 + 事件探针逐层排查，依次定位：
+
+**根因 A：`theme.dndOverlayMounting` 未设 → 根级落点容器被禁用。**
+读 vendor 源码：`updateTheme()` 里 `switch(dndOverlayMounting) default: rootDropTargetContainer.disabled = true`。
+不设它，拖动时**落点浮层永不出现**。→ 加 `dndOverlayMounting: 'absolute'`（外加
+`dndPanelOverlay:'group'`、`dndOverlayBorder:'2px solid var(--dv-active-sash-color)'`）。
+
+**根因 B：空实例没有 group，drop 无处可去。**
+实测右侧栏 `api.groups.length === 0`：dockview 的落点是**组**，没有组时仅根上有一个
+`dv-watermark-container`，drop 落在那里但无人接收（探针实锤：`drop@dv-watermark-container`）。
+→ `ensureDropTarget()`：任何没有面板的实例预置一个空组（`addGroup({direction})`），
+并在每次 layout 变化后补一次（用户把某区关空时重新有落点）。
+
+**根因 C：跨实例回调放错了位置。**
+我最初把 `onUnhandledDragOver` / `onDidDrop` 当**构造选项**传（不生效），
+info_report 是创建后用 **运行时 API** 注册。且必须**只 accept 外来载荷**
+（无条件 accept 会搅乱同实例的 center 落点判定）。
+→ 改为 `apis[r].onUnhandledDragOver(...)` / `apis[r].onDidDrop(...)`，
+以 `isForeign = data?.panelId && !api.getPanel(data.panelId)` 为条件 accept。
+
+### 真机验证（3080 + agent-browser，零 page error）
+
+| 项 | 结果 |
+| --- | --- |
+| 超链接 | ✓ 标题行无 `data-desk-back` |
+| ⋯ 定位 | ✓ 锚在按钮下方、右缘对齐、在视口内 |
+| **手动拖动** | ✓ 「DSH 主对话」从 center **拖到辅助侧栏** → `chat@right`，`apis.right.getPanel` 持有 |
+| **反向拖动** | ✓ 再从辅助侧栏拖回主侧栏 → `chat@left` |
+| 空区落点 | ✓ 左/右实例各有 1 个空组（作为落点） |
+| 刷新持久化 | ✓ 重载后仍是 `chat@left`（拖动结果写进快照） |
+| 落点浮层 | ✓ 拖动中出现 `.dv-drop-target-anchor` |
+
+`pnpm check` 全绿；全量测试链 **12 项 ALL PASS**（desk-dock 扩到 40 项，含本次 6 条新断言）；
+产物 1,239,306 B。
+
+## Step 13-K（2026-10-12）：去输入条下的黑覆盖 / 标题行加会话控件
+
+### ① 输入条下面的黑色覆盖
+
+**根因（读宿主 CSS 确认）**：宿主的 `wSkVaW_composerSeat` 自带一条渐变遮罩 ——
+`linear-gradient(transparent 0px, rgb(21,21,23) 36px)`，用途是让滚到输入条上沿的消息淡出。
+我把输入条 `position:fixed` 停靠进聊天格后，这条**按宿主原位置算高度**的遮罩**跟着一起被搬走**，
+于是在聊天区下方留下一块黑（用户看到的"黑色覆盖"）。
+
+**修法（两块）**：
+- `composer-dock.ts`：停靠时把 `background` / `backgroundImage` 也纳入接管键，
+  写入 `none` / `transparent`（卸载时随其余键一起还原）。
+- `DeskDock.tsx`：新增 `.ts-dock-fade` —— 贴在**聊天格底部**的独立渐变条
+  （`height: calc(var(--ts-composer-h) + 18px)`，随输入条实测高度自适应），
+  **保留了「内容到达输入框上边缘时看不见底下」的能力**，只是位置正确了。
+
+### ② 标题行加【历史会话 / 新建会话】
+
+复用既有 `SessionPicker`（旧工作台用它，HDesk 删除后失去入口），搬到标题行：
+- `useProjectSessions(project.path)` 取本项目会话列表（只读）；
+- 选择：`rememberOpenedProject(id, project.id)` → `openSession(id)`；
+- 新建：`startProjectSession(project.path, project.id)` → 成功后同样记项目记忆；
+- 失败信息显示在标题行（`data-desk-session-error`）。
+
+### 真机验证（3080 + agent-browser，零 page error）
+
+| 项 | 结果 |
+| --- | --- |
+| 黑覆盖消除 | ✓ composerSeat `backgroundImage: none` / `backgroundColor: rgba(0,0,0,0)` |
+| 遮挡能力保留 | ✓ `.ts-dock-fade` 在，`linear-gradient(to top, rgba(21,21,23,.94) …)`，高度 124px（跟随输入条） |
+| 几何关系 | ✓ 渐变 top=210 覆盖到聊天格底 334，**越过输入条上沿 228**（即上沿以上的滚动内容被遮） |
+| 历史会话 | ✓ 标题行控件在位；点开 31 条会话列表（含时间与操作菜单） |
+| 新建会话 | ✓ 「＋ 新建会话」在位可点 |
+
+`pnpm check` 全绿；全量测试链 **12 项 ALL PASS**；产物 1,263,648 B。
+
+## Step 13-L（2026-10-12）：浮动面板自动关闭 / 侧栏宽度拖拽 / 菜单与状态栏整理
+
+用户五点反馈，全部照 info_report 口径实现。
+
+### ① 浮动面板点外部自动关闭
+
+⋯ 与皮肤面板打开时挂 document 级 `mousedown`(capture) + `keydown`：
+点击目标不在面板内、也不在触发按钮上 → 关闭两者；Esc 同样关闭。
+（同 info_report 的 `closePopMenu` 行为。）
+
+### ② 侧栏宽度拖拽（同 info_report 的 `bindSideResizer`）
+
+- 常量照抄：`SIDE_MIN 180` / `SIDE_MAX 720` / **收起阈值 `COLLAPSE_W 56`** / **拉出阈值 `PULL_OUT_W 18`**。
+- 两侧各一条把手，贴在自己那条边上；往里拖 = 加宽（delta 按方向取反）。
+- **拖到 56 以下整条收起**；**收起后从边框往里拉过 18px 重新展开**
+  （拉出时必须把起点重锚到 `SIDE_MIN`，否则当前宽度只有十几像素、立刻又低于阈值 → 表现为「拉一下又弹回」，info_report 注释里记过这个坑）。
+- 宽度存 `tokensave:desk-side-w.v1`；收起状态存 `tokensave:desk-regions.v1`。
+
+**三个实测踩到的坑（都有 elementFromPoint 证据）**：
+1. 把手放在区域**外侧**（`right:-4px`）→ 被区域的 `overflow:hidden` 裁掉，命中的是区域本身。
+   → 区域改 `overflow:visible`，把裁切下放到 `.ts-region-host`。
+2. 收起后区域宽 0，把手落在边界外被**中区**盖住（命中的是 `.ts-region`）→ 外移到 `-5px` 并抬 z。
+3. 抬到 z=14 仍命不中，因为**宿主停靠的输入条**（z-index 35）浮在那块上方（命中的是 `uV2eYG_root`）
+   → 把手 z 抬到 **50/51**（压过 35），并让中区在侧栏收起时让出 8px 命中带。
+- 另外：**收起时必须不写内联宽度**（`--ts-side-l`），否则内联优先级压过 `.hide-*` 里的 `0px`，收起不生效。
+
+### ③ 历史会话 / 新建会话移到状态栏右侧
+
+从标题行移到状态栏（仍在右侧组），复用 `SessionPicker`；选择/新建逻辑不变。
+
+### ④ 去重：菜单里的「恢复默认布局」删掉；状态栏两个布局按钮合成一套
+
+- 菜单（⋯）不再有「恢复默认布局」。
+- 状态栏改为**「布局」**（点击存为默认，改动时显示 `●`）+ **「恢复」**（恢复默认）。
+
+### ⑤ 菜单头右侧「全部打开」，删掉底部按钮区与「关闭菜单」
+
+`.ts-pop-head` 用 flex `space-between`：标题左、「全部打开」右；底部那三个按钮（全部打开 /
+恢复默认布局 / 关闭菜单）整体移除。
+
+### 真机验证（3080 + agent-browser，零 page error）
+
+| 项 | 结果 |
+| --- | --- |
+| ① 点外部关闭 | ✓ 菜单开着时点页面其它处 → `closedByOutside: true` |
+| ② 拖拽调宽 | ✓ 左栏 220 → 299px |
+| ② 拖窄收起 | ✓ 拖到阈值下 → `data-hide-left`、左列宽 **0** |
+| ② 从边框拉出 | ✓ 收起态把手可命中（z 51 > 输入条 35）→ 拖出后 `hideLeft:false`、宽 252 |
+| ③ 会话控件 | ✓ 在状态栏（`sessionInStatusbar:true`）、不在标题行 |
+| ④ 去重 | ✓ 菜单无 `data-desk-pop-default`；状态栏「布局 + 恢复」 |
+| ⑤ 菜单头 | ✓ `openAllInHeader:true`；无 `data-desk-pop-close`、无「关闭菜单」 |
+
+`pnpm check` 全绿；全量测试链 **12 项 ALL PASS**；产物 1,272,343 B。
+（测试期间拖动的宽度/收起状态已复原为 220/260 且未收起。）
+
+## Step 13-M（2026-10-14）：会话控件归位后的七处体验修复
+
+用户一次报了 7 条（前 4 条是上一轮遗留、后 3 条是本轮新发现）。逐条按「根因 → 修法」记。
+
+### ① 点「新建会话」没反应（根因两个，缺一不可）
+
+**根因 A（显示侧）**：`DeskDock` 的 `sid` 旧口径是
+`latestProjectSession(...) ?? sessionId` —— **一律取「本项目最近的非空白会话」**，
+把宿主注入的当前会话只当兼容兵。于是宿主切到刚新建的空白会话后，工作台仍停在旧
+对话上（实锤：`dsh.sessions.current` = 空白会话，工作台显示 msg234）。
+
+**根因 B（创建侧）**：`startProjectSession` 会「复用本项目已有的空白会话」；
+状态栏那个「＋ 新建会话」没把**当前会话**排除掉，而复用到的恰好就是当前这条 →
+`openSession(自身)` = 什么都没发生。
+
+**修法**：
+- `sid`：宿主当前会话属于本项目（且非探索者）就**用它**；否则才回退到
+  「本项目最近的非空白会话」；本项目一条会话都没有则回退 **空串**（不再退给宿主
+  那条属于**别的项目**的会话）。
+- 状态栏新建：`startProjectSession(path, id, sessionId || sid)` —— 排除当前这条。
+- `startProjectSession`：`navigated` 标记，两个导航入口都不可用时返回
+  `会话导航服务不可用`，不再静默 `ok:true`。
+
+### ② 历史会话浮动面板弹到视口外（用户原话「我改到底部了，面板应该出现在上方」）
+
+会话控件从标题行搬到状态栏后，面板仍按 `top: r.bottom + 6` 向下弹：状态栏
+`r.bottom ≈ 576`、视口高 577 → 整块面板在视口之外（实测 `rect.y=582`，`innerH=577`）。
+
+**修法**（SessionPicker）：按**实测面板高度**自动翻转 —— 下方放不下且上方更宽裕就
+改为 `bottom: innerHeight - r.top + gap` 向上弹；同时给 `maxHeight`（不超过 60vh 与
+可用空间），首帧先 `visibility:hidden`，layout effect 在绘制前写好真坐标。
+另：`.ts-sess-pop` 样式表里写死了 `top:calc(100%+6px)`，内联必须显式给 `top:'auto'` 压住它，
+只靠不写 top 是无效的。
+
+### ③ 窗口标题的拟物 emoji 全部去掉 + 黑板刷新图标按钮删除
+
+- `💬 DSH 主对话` / `💬 协作对话` / `📊 协作收益` / `📋 共享黑板` / `🔍 探索者` / `🖥 项目预览`
+  —— 六个窗口标题里的拟物 emoji 全部删掉（保留文字；探索者窗口标题不再加放大镜）。
+- 共享黑板标题行那颗 `🔄` 刷新按钮**整个删掉**（它就是那个 emoji 图标本身）：
+  黑板本来每 20s 自动 `load(true)`，不需要手动刷新入口。
+
+### ④ 状态栏实时提示去掉「· 对话已完成」
+
+完成态本来就由左侧那个小圆点表达（`data-done` + `.ts-sb-dot` 由蓝转灰）。
+每轮都拼一句相同的话尾只是噪音 → 后缀改为 `gotNotice ? ' · 本轮异常结束' : ''`
+（异常结束保留，那有信息量）。**截断长度（42 字）未动**，按用户要求保持原样。
+
+### ⑤ 项目预览拖不到别的区（根因：dockview 只在**空组**上把外来载荷交给我们）
+
+实测（3080 + 注入 `onWillDragPanel/onWillDrop/onDidDrop` 探针）：
+
+| 落点 | 事件 | 结果 |
+| --- | --- | --- |
+| 空区（侧栏无窗口） | `onDidDrop` 触发 | ✓ 面板搬过去 |
+| 已有窗口的内容区 | 只 `onUnhandledDragOver`（已 accept），**`onWillDrop`/`onDidDrop` 永不触发** | ✗ 松手什么都没发生 |
+
+读 vendor 源码定位：落到**面板内容区**时，drop 被那个面板自己的落点接收
+（`PanelContainer.onDrop` → 面板级 `_onDidDrop`，**没人监听**）就 return 了，
+组的 `handleDropEvent` 根本不跑。空区没有面板，才轮到组 → dockview 的 `onDidDrop`。
+所以六类窗口的跨区拖拽一直是坏的，只是「项目预览」最常用到跨区拖拽才先被报出来。
+
+**修法（兜底，与 dockview 自身的处理幂等共存）**：
+- 每实例注册 `onWillDragPanel` 记下正在拖的面板 id；
+- document 捕获 `dragend`（+ `pointerup` 兼容触摸拖拽）：按松手坐标 `elementFromPoint`
+  找到 `[data-desk-host]` → 目标区；面板还在别区就 `moveWindowTo(id, region)`；
+  已在目标区（dockview 已经搬过）直接跳过；松手点在工台之外（Esc 取消等）不动作。
+- 同区拖动（组内换序 / 分屏）仍由 dockview 自己处理，这条兜底不插手。
+- 拖动期间给 `body` 加 `ts-dock-dragging`：`iframe { pointer-events:none }`，
+  否则鼠标一进预览 iframe，父文档再也收不到 dragover（落点浮层在 iframe 上方不显示）。
+
+### ⑥ 项目隔离：宿主会话必须与工作台显示的那条一致
+
+宿主的原生输入条（停靠进「DSH 主对话」）**永远属于宿主当前会话**，而工作台显示的是
+`sid`。两者不一致时：草稿跟着宿主会话走、发消息也进宿主会话 —— 用户看到的就是
+「在 A 项目里写的内容，切到 B 项目后还在输入框里」（容易发错位置）。
+
+**修法**：`DeskDock` 加一条对齐副作用 —— 宿主不在本项目会话上时，
+`rememberOpenedProject(sid, project.id)` 后 `openSession(sid)` 切过去；本项目一条
+会话都没有时，在本项目下开一条空白会话再切（`autoSessionRef` 只试一次，防循环）。
+
+### 真机验证（3080 + agent-browser）
+
+| 项 | 结果 |
+| --- | --- |
+| ① 新建会话 | ✓ 点后宿主会话切到空白会话、主对话 `msg0`、选择器显示空白会话、无错误条 |
+| ② 浮动面板 | ✓ `rect 690,200,349,348`、`inView:true`、内联 `inset: auto 241.5px 29.5px auto` |
+| ③ 窗口标题 | ✓ 六个标题依次为「DSH 主对话 / 协作对话 / 协作收益 / 共享黑板 / 项目预览」，无 emoji |
+| ③ 刷新按钮 | ✓ 标题行只剩 `全部/需求/坑/方案/简报` 五个标签 |
+| ④ 实时提示 | ✓ 状态栏尾部无「· 对话已完成」（保留 42 字截断） |
+| ⑤ 拖动（左→中，中区有窗口） | ✓ `previewRegion: center`（旧版本此步失败） |
+| ⑤ 拖动（中→右，空区） | ✓ `previewRegion: right` |
+| ⑤ 拖动（右→左） | ✓ 回到 `left` |
+| ⑥ 隔离 | ✓ 在 tokensave 输入草稿 → 切到 info_report：宿主会话切到 info_report 会话、输入框**空** |
+
+`pnpm check` 全绿；全量测试链 **12 项 ALL PASS**（desk-dock 扩到 70 项，含本次 8 条新断言）；
+产物 1,282,641 B。
+
+## Step 13-N（2026-10-14）：外观与状态的全局化 —— 锁定分项目 / 布局整块存 / 设置合并 / 字体可调
+
+用户又报 5 条，指向同一类问题：**哪些状应当按项目分、哪些应当全局一份、哪些应当一起存**。
+
+### ① 锁定状态改为**按项目分键**
+
+旧实现只有一个 `tokensave:desk-dock-lock.v1` —— A 项目一锁，B 项目打开也是「已锁定」。
+
+**修法**：`LOCK_KEY(projectId)` =`tokensave:desk-dock-lock.v1:<projectId>`；
+`readLocked(projectId)` / `disableDnd: readLocked(project.id)` / 按钮写键三处同步；
+旧全局单键做**一次性迁移**（首次读某项目时当作它的初值并清掉）。
+
+### ② 保存/恢复布局要控「全局」
+
+旧实现只存三个区的 dockview JSON，收起状态与侧栏宽度另存两个键，而且 `恢复` 里硬
+写 `setHiddenRegions([])` —— 于是「存了含有主侧栏收起的布局，一点恢复主侧栏又被拉回来」。
+
+**修法**：快照升级为 `LayoutSnapshot = { regions, hidden, sideW }`（`normalizeSnapshot`
+兼容旧格式）；`保存` 存整块，`恢复` 三个一起套用；宽度拖拽落盘也改成写**最终**宽度
+（旧代码写的是起始值 `from`，拖完一刷新就回到旧宽度）。
+重载时的分工保持清楚：**面板排布**读 SAVED→SNAPSHOT（同旧行为），**收起/宽度**读
+REGIONS_KEY / SIDE_W_KEY 这两个「当前状态」键 —— 否则重载会拿「保存的默认」盖掉
+用户后来改过的收起状态。
+
+### ③ 侧栏把手换成 info_report 的样式
+
+旧样式是悬停/拖动就铺**一整条**浅色块（用户嫌难看）。改成 info_report 那一套：
+
+| 状态 | 可见物 |
+| --- | --- |
+| 静止 | 命中区 8px 透明（一无所有） |
+| 悬停 / 拖动中 | `::after` 2×40px 中性短杠 → 62px、`rgba(127,127,127,.8)` |
+| 收起 | `::before` 4×26px 小短杠（灰，悬停变主题蓝 #4f8ef7）提示「从这里拉出来」 |
+
+### ④ 右上角「⋯ + 皮肤」合并为「设置」齿轮，三块：显示/隐藏窗口 · 皮肤 · **字体**
+
+- 旧的两个浮层（`.ts-pop` / `.ts-skin`）合并成一个 `.ts-set` 浮层（`data-desk-settings-panel`），
+  块间一条细分隔线；`data-desk-more` / `data-desk-skin-toggle` / `data-desk-pop` 三个钩子
+  退场，换成 `data-desk-settings`（齿轮按钮，图标 `gear`）。
+- **字体（新功能）**：字号四档（小/标准/大/特大 = 11.5/12.5/14/15.5px）+ 字族三项
+  （默认/黑体/等宽），存 `tokensave:desk-font.v1` / `tokensave:desk-font-family.v1`。
+  实现：`applyFont()` 把 `--ts-fs` / `--ts-font` 写到 `:root`（项目中心也要跟着变），
+  并把工作台 + 项目中心 CSS 里 **150 条 `font-size:<N>px`** 机械换成
+  `calc(var(--ts-fs, 12.5px) * N/12.5)`（一条脚本改完，真机比过两档），
+  `font-family` 统一走 `var(--ts-font, inherit)`。插件一加载就套上一次，不留首帧回跳。
+
+### ⑤ 状态栏实时提示不再过早截断
+
+旧实现 `shorten(raw, 42)` 固定截 42 字。现在只压平换行 + 400 字极端兜底，
+真正「显示多少」交给 CSS `text-overflow: ellipsis`（区域多宽就显示多少），
+完整内容仍在 `title` 悬停提示里。实测：文本 401 字 / 容器 537px / `scrollWidth` 2163 →
+可视约 135 字（旧版只能看 42 字）。
+
+### 真机验证（3080 + agent-browser）
+
+| 项 | 结果 |
+| --- | --- |
+| ① 锁定分项目 | ✓ tokensave 锁定 → `…lock.v1:p-tokensave=1`；切到 info_report 显示「未锁定」且无该项键 |
+| ② 收起主侧栏 → 保存 → 展开 → 恢复 | ✓ 恢复后又收起（`data-hide-left`、`regions=["left"]`、`--ts-side-l:0px`） |
+| ② 快照形状 | ✓ `{regions:{left,center,right}, hidden:[left], sideW:{left,right}}` |
+| ② 宽度落盘 | ✓ 拖 220→319，SIDE_W 写 319（旧版写回 220） |
+| ③ 把手静止 | ✓ `.ts-resizer` 背景 `rgba(0,0,0,0)`；`::after` 2×40 透明 |
+| ③ 把手悬停 | ✓ `::after` 62px / `rgba(127,127,127,.8)` |
+| ③ 收起短杠 | ✓ `::before` 4×26 灰；悬停 `rgb(79,142,247)`；从窄缝拖出 → 展开宽 220 |
+| ④ 设置浮层 | ✓ 一个齿轮按钮；三块 `windows/skin/font`；面板 972,115 在视口内 |
+| ④ 字体生效 | ✓ 选「特大」→ `--ts-fs:15.5px`、状态栏 11.5→14.26px，`localStorage` 存 `xl` |
+| ④ 字族生效 | ✓ 选「等宽」→ `.ts-dock` font-family 变等宽，存 `mono` |
+| ④ 窗口开关仍可用 | ✓ 面板里把「共享黑板」放到辅助侧栏 → `board@right`，再移回 center |
+| ④ 外部点击 / Esc | ✓ 都能关面板 |
+| ⑤ 实时提示 | ✓ 401 字进状态栏，可视约 135 字（旧版 42） |
+
+`pnpm check` 全绿；全量测试链 **12 项 ALL PASS**（desk-dock 扩到 75 项，含本次 12 条新断言）；
+产物 1,295,260 B。
+
+## Step 13-O（2026-10-14）：一体化外观 / 项目切换器 / 设置合并 / 探索者设置回归 / 拖拽顺滑
+
+用户一次报了 8 条外观交互问题，另加一条「侧栏拖拽卡顿」（见 ⑨）。
+
+### ① 探索者设置回归 + 搬到右上角
+
+HDesk 删除后 `<ExplorerSettings/>` 失去挂载点（组件还在、没人渲染）——所以「看不到」。
+修法：`ExplorerSettings` 加 `variant='icon'`（图标按钮 + 右上角计数徽标），
+在标题行右上角渲染 `<ExplorerSettings variant="icon" />`。实测面板照旧分
+默认 / 免费 / 收费 三组、116 行可选，位置在视口内。
+
+### ② 窗口标签右键菜单：看不清 / 点不中 / 字体太大 / 关不掉
+
+**根因**：为了跳出面板链路的 `overflow:hidden`（否则菜单在区域边缘被裁），菜单被搬到
+`document.body`；但 dockview 的外观全靠 `--dv-*` 变量，搬走后**变量不再继承** ——
+实测 `background: rgba(0,0,0,0)`、`font-size: 16px`（回退到 body 默认），
+而且 dockview 自己的「点外部关闭」也失效（菜单永远留着）。
+
+修法（两头都补）：
+- CSS：`.dv-context-menu[data-ts-hoisted="1"]` 兜底写死外观（深色底、描边、10px 圆角、
+  阴影、`font-size: calc(var(--ts-fs) * .96)`、菜单项 26px 高 + 悬停底色）；
+- 行为：搬出去时把坐标**夹进视口**；关闭交给我们自己的监听（点外部 mousedown /
+  Esc / scroll / resize / blur / 点菜单项后 `setTimeout(0)` 收菜单——先让动作跑完）。
+
+实测：背景 `rgba(14,16,21,.97)`、字 12px、z 120、在视口内；
+点外部关、Esc 关、点「最大化」动作生效且菜单自动收。
+
+### ③ 项目名左侧图标改成「项目切换器」
+
+点它弹出浮层，列出「项目中心」里的全部项目（名称 + 路径 + 更新于 + 当前标记），
+点一行即进那个项目的工作台。同时按要求删掉项目名后的 `workbench` 与那圈蓝色胶囊
+（`styles.ts` 里 H 台时代的 `.ts-title-proj` 徽标样式 + `.ts-proj-locked/unlocked`）。
+
+**顺带修掉一个真根因**：`enterProjectWorkbench` 原先是「先广播信号、再写『上次打开的项目』
+记忆」，而 ControlRoom 收到信号时是**按记忆**决定打开哪个项目的 → 在**已经挂着工作台**的
+情况下（正是从工作台内切换项目的场景）读到旧记忆，点了没反应。改成**先写记忆再广播**。
+
+### ④ 区域三键：不用蓝色 / 外框，只看图标细节
+
+新增 `regionIconSvg(region, on)`：外框 + 分割线固定，内部那块色块**显示时填充、隐藏时不填充**。
+`.ts-tg--region[data-on]` 显式压掉通用 `[data-on]` 的蓝色描边与底色。
+实测：显示 `fill="currentColor"`、隐藏 `fill="none"`，按钮自身 border / bg 全透明。
+
+### ⑤ 设置浮层收窄
+
+`.ts-pop.ts-set { min-width: 0 }` + `.ts-set { width: 238px; box-sizing: border-box }`
+（box-sizing 很关键：不然 238 + 内边距 + 描边会超出锚点算出的右边缘 6px），
+`placePop(..., 238)`。实测宽 238、右 / 下都不溢出。
+
+### ⑥ 状态栏实时提示与右侧会话控件之间留白
+
+`.ts-statusbar .ts-sb-grow { padding-right: 26px }`。实测实时提示右边缘到「历史会话」
+左边缘 **36px**。
+
+### ⑦ 一体化：不留区域分界与背景填充
+
+删掉：左右区域的 `border-right/left`、标题行 `border-bottom`、状态栏 `border-top`；
+三张面板卡（`.ts-board` / `.ts-talk` / `.ts-save`）的描边 + 圆角 + 半透明底色，
+只保留一条很淡的表头下边线分标题与内容（同 info_report 的「靠留白分界」）。
+
+### ⑧ 项目预览默认落在编辑区
+
+- 默认落点从 `left` 改成 `center`，并且**分屏**摆在主对话左边（`buildDefault` 与
+  reconcile 的 `ensure` 两处都改）；
+- 存量布局一次性归位（键 `tokensave:desk-preview-in-editor.v1:<projectId>`，值 `v2`）：
+  旧默认在主侧栏、或旧实现把它当标签页塞进主对话那一组（**把主对话盖住**）的，
+  都搬到主对话左边的分屏位。放在 reconcile 里做 —— 挂载时预览面板可能还没建出来
+  （devUrl 是轮询拿到的），在挂载时做会白跑一次。
+- 顺带补一条兜底：主对话卡**不可见**（被关 / 被同组别的窗口挡住）时给 body 加
+  `ts-desk-nochat`，把宿主输入条整条藏掉 —— 否则那条 fixed 的输入条会悬在别的窗口上
+  （实测盖在预览上）。
+
+实测：预览 `regionOf=center`、与主对话**不同组**（`sameGroup:false`）、主对话可见。
+
+### ⑨ 侧栏拖拽卡顿 / 拉出迟钝
+
+**根因**：每个 `pointermove` 都 `setSideW` / `setHiddenRegions` → 每帧重渲染整棵工作台
+（三个 dockview 实例 + 所有面板），手感就是一顿一顿的。
+
+修法：拖动期间**只写 DOM**（`--ts-side-l/-r` 变量 + `data-hide-*` 属性），
+`pointermove` 用 `requestAnimationFrame` 合并（一帧最多一次写入），
+**松手时才同步一次 React 状态**（`applyRegions` / `applySideW`）；
+松手若 rAF 还没跑（同一帧内快速一甩）补跑一次，避免这次拖动白做。
+`PULL_OUT_W` 18 → **12**：收起后再拉出来起步更快。
+
+实测：连续派发 200 个 `pointermove` 只花 1ms（0.006ms/次，等同「不重渲染」）；
+同帧内按下即松手也能落到 420px；拖到很窄 `hide=true` + `REGIONS_KEY=["left"]`、
+从窄缝拉出 `hide=false` + 宽 255px 且落盘。
+
+### 真机验证（3080 + agent-browser）
+
+| 项 | 结果 |
+| --- | --- |
+| ① 探索者设置 | ✓ 右上角图标按钮 + 徽标；面板三组 116 行，在视口内 |
+| ② 右键菜单外观 | ✓ 深色底 / 12px 字 / z 120 / 在视口内 |
+| ② 右键菜单关闭 | ✓ 点外部关、Esc 关、点菜单项（最大化生效）后自动关 |
+| ③ 项目切换器 | ✓ 列出项目（名称+路径+更新于+当前）；点 info_report → 真的切过去 |
+| ③ 去 workbench/外框 | ✓ 标题只剩项目名，border 0、背景透明 |
+| ④ 区域三键 | ✓ 显示 = 内部填充、隐藏 = 不填充；无蓝无框 |
+| ⑤ 设置浮层 | ✓ 宽 238，右 / 下都不溢出 |
+| ⑥ 状态栏留白 | ✓ 实时提示与「历史会话」之间 36px |
+| ⑦ 一体化 | ✓ 区域无分割线、面板卡无底色 |
+| ⑧ 预览落编辑区 | ✓ `sameGroup:false`、主对话可见、输入条停靠在主对话格里 |
+| ⑨ 拖拽流畅度 | ✓ 200 次 pointermove = 1ms；收起 / 拉出 / 落盘都对 |
+
+`pnpm check` 全绿；全量测试链 **12 项 ALL PASS**（desk-dock 75 项）；产物 1,321,265 B。

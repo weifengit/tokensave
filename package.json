@@ -30,8 +30,11 @@
     "test:sound": "node scripts/check-alert-kick.mjs",
     "test:todo": "node scripts/check-todo-collapse.mjs",
     "test:sidebar": "node scripts/check-sidebar-collapse.mjs",
+    "test:dockview": "node scripts/check-dockview-spike.mjs",
+    "test:composer-focus": "node scripts/check-composer-focus.mjs",
     "test:desk": "node scripts/check-desk-ux.mjs",
-    "test": "pnpm check && pnpm test:continue && pnpm test:width && pnpm test:hover && pnpm test:sound && pnpm test:todo && pnpm test:sidebar && pnpm test:desk && pnpm test:ui"
+    "test:desk-dock": "node scripts/check-desk-dock.mjs",
+    "test": "pnpm check && pnpm test:continue && pnpm test:width && pnpm test:hover && pnpm test:sound && pnpm test:todo && pnpm test:sidebar && pnpm test:composer-focus && pnpm test:dockview && pnpm test:desk && pnpm test:desk-dock && pnpm test:ui"
   },
   "dependencies": {
     "@deepseek-ai/dsh-brand": "0.2.0-rc.2",

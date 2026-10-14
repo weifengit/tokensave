@@ -56,7 +56,7 @@ export function ExplorerWindow({
     >
       <div className="ts-win-head" onDoubleClick={handleHeadDoubleClick} title="双击全屏">
         <span className={`ts-win-dot${running ? '' : ' idle'}`} />
-        <span className="ts-win-name">🔍 {label}</span>
+        <span className="ts-win-name">{label}</span>
         <span className="ts-head-mid ts-win-mid">{messages.length} 条消息</span>
         {overlay ? (
           <span>

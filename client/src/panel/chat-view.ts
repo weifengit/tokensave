@@ -38,31 +38,47 @@ function normalize(v: unknown): ChatView {
   return v === 'user' || v === 'agent' ? v : 'all'
 }
 
-function load(): ChatView {
+/**
+ * 作用域键（Step 13-C）：每个会话一份镜头。
+ * 不传 scope 时退化为旧的全局单值（兼容旧调用与旧存储键）。
+ */
+function scopeKey(scope?: string): string {
+  return scope ? `${KEY}:${scope}` : KEY
+}
+
+const values = new Map<string, ChatView>()
+
+function load(scope: string): ChatView {
   try {
     if (typeof window === 'undefined') return 'all'
-    return normalize(JSON.parse(window.localStorage.getItem(KEY) ?? 'null'))
+    return normalize(JSON.parse(window.localStorage.getItem(scopeKey(scope)) ?? 'null'))
   } catch {
     // 隐私模式 / 坏数据：退回默认视图，不影响使用
     return 'all'
   }
 }
 
-let current: ChatView = load()
 const listeners = new Set<() => void>()
 
-export function getChatView(): ChatView {
-  return current
+/** 读某个作用域当前的镜头（不带 scope = 旧的全局镜头）。 */
+export function getChatView(scope?: string): ChatView {
+  const k = scope || ''
+  if (!values.has(k)) values.set(k, load(k))
+  return values.get(k) ?? 'all'
 }
 
-/** 切换视图：写内存真值 → 通知所有实例 → 持久化（失败只影响持久性）。 */
-export function setChatView(v: ChatView): void {
+/**
+ * 切换镜头：写内存真值 → 通知所有实例 → 持久化（失败只影响持久性）。
+ * 通知是「全量」的，各实例自己重读自己的作用域键——因此 A 项目切镜头不会改到 B。
+ */
+export function setChatView(v: ChatView, scope?: string): void {
+  const k = scope || ''
   const next = normalize(v)
-  if (next === current) return
-  current = next
+  if (getChatView(k) === next) return
+  values.set(k, next)
   for (const fn of listeners) fn()
   try {
-    window.localStorage.setItem(KEY, JSON.stringify(next))
+    window.localStorage.setItem(scopeKey(k), JSON.stringify(next))
   } catch {
     /* 隐私模式：仅本次会话有效 */
   }
@@ -73,9 +89,17 @@ function subscribe(fn: () => void): () => void {
   return () => { listeners.delete(fn) }
 }
 
-/** 订阅当前视图：返回 [值, 切换函数]（两个 MainChat 实例共用同一份真值）。 */
-export function useChatView(): [ChatView, (v: ChatView) => void] {
-  const [v, setV] = useState<ChatView>(getChatView)
-  useEffect(() => subscribe(() => setV(getChatView())), [])
-  return [v, setChatView]
+/**
+ * 订阅镜头：返回 [值, 切换函数]。
+ * 同一会话的多个 MainChat 实例（如面板 + 浮层）共用同一份真值；
+ * 不同会话（多项目并存）各持一份，互不干扰。
+ */
+export function useChatView(scope?: string): [ChatView, (v: ChatView) => void] {
+  const k = scope || ''
+  const [v, setV] = useState<ChatView>(() => getChatView(k))
+  useEffect(() => {
+    setV(getChatView(k))
+    return subscribe(() => setV(getChatView(k)))
+  }, [k])
+  return [v, (next: ChatView) => setChatView(next, k)]
 }

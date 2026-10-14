@@ -249,7 +249,7 @@ export function TalkColumn({
     <div className="ts-talk">
       {/* #3 标题条：标题 + 中间信息居中，三键固定右上角 */}
       <div className="ts-talk-head">
-        <span className="ts-head-title">💬 协作对话</span>
+        <span className="ts-head-title">协作对话</span>
         <span className="ts-head-mid ts-card-count">{explorers.length} 位探索者 · {talkCount} 条发言</span>
         {actions}
       </div>

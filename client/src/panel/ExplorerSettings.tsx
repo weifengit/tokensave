@@ -53,7 +53,7 @@ function Switch({
   )
 }
 
-export function ExplorerSettings() {
+export function ExplorerSettings({ variant = 'text' }: { variant?: 'text' | 'icon' } = {}) {
   const [open, setOpen] = useState(false)
   const [pos, setPos] = useState<{ top: number; right: number } | null>(null)
   const [data, setData] = useState<ExplorerSettingsPayload | null>(null)
@@ -169,13 +169,32 @@ export function ExplorerSettings() {
 
   return (
     <span className="ts-expset" ref={boxRef}>
-      <button
+      {variant === 'icon' ? (
+        <button
+          className="ts-tg"
+          data-desk-explorers=""
+          data-on={open ? '1' : undefined}
+          onClick={() => setOpen((v) => !v)}
+          title="探索者设置：自行选择哪些探索者参与（默认 / 免费 / 收费，可逐个或整组开关，至少保留 1 个）"
+        >
+          <span
+            aria-hidden="true"
+            dangerouslySetInnerHTML={{
+              __html:
+                '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="8.5" width="16" height="11" rx="3"/><path d="M12 8.5V5.5"/><circle cx="12" cy="4" r="1.4"/><circle cx="9.2" cy="13.5" r="1.2" fill="currentColor" stroke="none"/><circle cx="14.8" cy="13.5" r="1.2" fill="currentColor" stroke="none"/><path d="M9.5 16.6h5"/></svg>',
+            }}
+          />
+          {total ? <span className="ts-tg-badge">{total}</span> : null}
+        </button>
+      ) : (
+        <button
         className={`ts-btn ts-expset-btn${open ? ' active' : ''}`}
         onClick={() => setOpen((v) => !v)}
         title="探索者设置：自行选择哪些探索者参与（默认 / 免费 / 收费，可逐个或整组开关，至少保留 1 个）"
       >
         ⚙️ 探索者设置{total ? `（${total}）` : ''}
-      </button>
+        </button>
+      )}
 
       {open && pos && createPortal((
         <div

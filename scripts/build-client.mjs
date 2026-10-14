@@ -24,6 +24,21 @@ await build({
   external: ['react', 'react-dom', 'react/jsx-runtime', 'react/jsx-dev-runtime'],
   tsconfigRaw: '{}',
   legalComments: 'none',
+  // vendor 资产按文本打进产物（Step 13 Step A）：
+  //   .css    → 字符串（dockview 官方样式，运行时注入 <style>）
+  //   *.min.js → 字符串（dockview-core 是 UMD，必须 new Function(src)() 全局执行）
+  loader: { '.css': 'text' },
+  plugins: [
+    {
+      name: 'vendor-min-js-as-text',
+      setup(b) {
+        b.onLoad({ filter: /vendor[\\/][^/\\]+\.min\.js$/ }, (args) => ({
+          contents: readFileSync(args.path, 'utf8'),
+          loader: 'text',
+        }))
+      },
+    },
+  ],
   logLevel: 'info',
 })
 

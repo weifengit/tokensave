@@ -462,8 +462,14 @@ export async function startProjectSession(
     // （例如上次停在「对话」tab），那种情况下宿主不会再读偏好，必须显式激活视图。
     if (projectId) bindToProject(id, projectId)
     else primeViewPreference(id)
-    if (ui && typeof ui.openSession === 'function') ui.openSession(id)
-    else if (workspaceId && typeof ui?.openWorkspace === 'function') await ui.openWorkspace(workspaceId)
+    // 导航失败必须上报：静默吞掉会让用户看到「点了新建会话但什么也没发生」。
+    let navigated = false
+    if (ui && typeof ui.openSession === 'function') navigated = openSession(id)
+    else if (workspaceId && typeof ui?.openWorkspace === 'function') {
+      await ui.openWorkspace(workspaceId)
+      navigated = true
+    }
+    if (!navigated) return { ok: false, error: '会话导航服务不可用' }
     // 兜底：刚创建的会话可能还没进会话列表快照（cwd 读不到）→ 等它就绪后再绑一次
     bindSessionEventually(id)
     return { ok: true, id }
@@ -976,8 +982,14 @@ export function enterProjectWorkbench(
   // 本次导航的意图以这里为准：先广播（已挂载的 ControlRoom 当场接住），再按项目留存
   // 一段时间（因本项目会话绑定而重建的那个实例靠 peekWorkbenchIntent 补齐）。
   // **不带 intent 的进入也要调用**：它把上一项目的「去调试」当场清掉（见 peekWorkbenchIntent）。
-  requestWorkbench(undefined, intent, projectId)
+  //
+  // ⚠️ 顺序：**先写「上次打开的项目」记忆，再广播**。
+  // ControlRoom 收到信号时是按「记忆」决定打开哪个项目的（它不知道我们要切到哪），
+  // 写晚一步就会在**已经挂着工作台**的情况下用到旧记忆 —— 于是「从工作台标题行的项目切换器
+  // 点另一个项目」看着没反应（实测）。从项目中心进没事，因为那边 ControlRoom 随后会重挂，
+  // 惰性初始化时重新读一次记忆。
   if (current) rememberOpenedProject(current, projectId)
+  requestWorkbench(undefined, intent, projectId)
   if (targetSessionId) {
     rememberOpenedProject(targetSessionId, projectId)
     if (targetSessionId !== current) {

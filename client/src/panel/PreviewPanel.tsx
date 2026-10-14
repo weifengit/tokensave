@@ -50,7 +50,7 @@ export function PreviewPanel({
   return (
     <section className="ts-preview-panel">
       <div className="ts-preview-bar">
-        <span className="ts-preview-title">🖥 项目预览</span>
+        <span className="ts-preview-title">项目预览</span>
         <span className="ts-preview-url" title={url}>{url}</span>
         {devRunning && <span className="ts-tag ts-tag-live">● 已启动</span>}
         <span className="ts-preview-ops">

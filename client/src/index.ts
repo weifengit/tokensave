@@ -29,6 +29,8 @@ import { applyDockkitPatch } from './dockkit-patch'
 import { installComposerResize } from './composer-resize'
 import { installScrollMemory } from './scroll-memory'
 import { installSidebarCollapse } from './sidebar-collapse'
+import { installComposerFocus } from './composer-focus'
+import { DockSpikeGate } from './panel/dock-spike'
 
 export const inject = { slots: true }
 
@@ -191,6 +193,13 @@ export function apply(ctx: Context) {
   } catch (e) {
     console.warn('[sidebar-collapse] install failed:', e)
   }
+  // 点击输入条任意空白（含 composer-resize 拉高后的中下行）即聚焦可编辑面；
+  // 发送/换模型/权限等按钮由 INTERACTIVE_SEL 排除，不抢它们的焦点。
+  try {
+    installComposerFocus()
+  } catch (e) {
+    console.warn('[composer-focus] install failed:', e)
+  }
   // DockKit 补丁：关闭主对话窗口后，空出的 docked pane 自动合并（相邻窗口扩展，不残留空白/遮罩）
   try {
     applyDockkitPatch()
@@ -256,6 +265,15 @@ export function apply(ctx: Context) {
       slots.register(
         { name: 'sidebar.footer.action', id: 'tokensave-control-room-entry', order: 10 },
         ControlRoomEntry
+      )
+    )
+    // 5. shell.overlay —— dockview spike（Step 13 Step A，一次性验证容器）
+    //    只在开关打开时渲染（?dockview-spike=1 或 localStorage tokensave:dock-spike.v1=1），
+    //    平时完全不入 DOM；验证完即删（见 docs/prompts/step-13-dockview.md 的 Step A）。
+    slots?.inject('shell.overlay', () =>
+      slots.register(
+        { name: 'shell.overlay', id: 'tokensave-dock-spike', order: 95 },
+        DockSpikeGate
       )
     )
   } catch (e) {

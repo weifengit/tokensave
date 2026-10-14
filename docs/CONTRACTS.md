@@ -389,3 +389,144 @@ tokensave/
 │       │   └── ...
 └── tests/
 ```
+## 工作台布局契约（2026-10-12 Step 13 起：dockview 接管，单项目）
+
+> 取代原「H 型网格」契约（HDesk 与 desk-layout.ts 已删除）。核心：**项目中心独立 tab
+> → 选项目 → 工作台**；工作台外壳参考 info_report：**三个 dockview 实例分区**
+> （主侧栏 / 编辑区+面板区 / 辅助侧栏）+ 标题行 + 状态栏。
+
+**区域与面板归属**
+
+- 区域：`left`（主侧栏）/ `center`（编辑区 + 面板区，**同一实例**）/ `right`（辅助侧栏）。
+- 默认落点：预览→left；主对话→center（编辑区）；黑板/协作对话/收益→center（面板区，下方分组）；
+  探索者→center。落点只是**首次**位置，拖拽/⋯菜单可改。
+- 区域收起 = **列宽塌陷到 0**（`--ts-side-l/-r`），不销毁面板；状态存
+  `tokensave:desk-regions.v1`。
+- 跨实例拖拽（**四个必要件，缺一即拖不动** —— 第 4 件是 2026-10-14 Step 13-M 补的）：
+  1. `theme.dndOverlayMounting: 'absolute'` —— 不设它根级落点容器被禁用、浮层永不显示；
+  2. **每个实例至少一个组**（空实例要 `addGroup` 预置，否则 drop 无处可去）；
+  3. 回调必须用**运行时 API** 注册（`api.onUnhandledDragOver` / `api.onDidDrop`，
+     放构造选项不生效），且**只 accept 外来载荷**（无条件 accept 会破坏同实例落点判定）；
+  4. **dragend 兜底**：dockview 只在落点是**空组**时才把外来载荷交给我们的
+     `onDidDrop`；落在**已有窗口的内容区**上时，事件被那个面板自己的落点吃掉
+     （面板级 `_onDidDrop` 没人监听）就 return 了、组的 `handleDropEvent` 不跑。
+     因此必须自己接：每实例 `onWillDragPanel` 记下拖动中的面板 id，document 捕获
+     `dragend`（+ `pointerup` 兼容触摸）→ 按松手坐标 `elementFromPoint` 找
+     `[data-desk-host]` → `moveWindowTo(id, region)`；已在目标区（dockview 已搬过）
+     跳过、落在工台之外不动作。拖动期间 `body.ts-dock-dragging` 把 iframe 的
+     `pointer-events` 关掉（预览面板是全插件唯一的 iframe）。
+- ⋯ 菜单：每窗口三个区域按钮（点当前区=收起，点别区=搬过去）+ 全部打开 + 恢复默认布局。
+
+**面板 id 命名（client/src/panel/desk-panes.ts，纯模块，可单测）**
+
+- `<projectId>:<kind>` —— kind ∈ `preview | board | chat | talk | save`（单个项目）
+- `<projectId>:exp:<sessionId>` —— 每个探索者一个面板
+- 两个项目的面板因此天然不撞名（多项目不串台的第一道保障）。
+
+**存储键**
+
+| 键 | 内容 | 谁写 |
+| --- | --- | --- |
+| `tokensave:desk-dock.v2:<projectId>` | 该项目布局快照（dockview `toJSON`），300ms 节流 | DeskDock |
+| `tokensave:desk-dock-lock.v1:<projectId>` | 该项目的布局锁（`1` = 锁定）—— **按项目分键**（旧全局单键首次读时迁移） | DeskDock |
+| `tokensave:desk-saved.v2:<projectId>` | 用户「保存的默认布局」= `{regions, hidden, sideW}`（面板排布 + 收起区 + 两侧栏宽度） | DeskDock |
+| `tokensave:desk-regions.v1` | **当前**收起的区域（全局一份，项目间共用） | DeskDock |
+| `tokensave:desk-side-w.v1` | **当前**两侧栏宽度（全局一份） | DeskDock |
+| `tokensave:desk-skin.v1` | 背景皮肤（全局一份） | DeskDock |
+| `tokensave:desk-font.v1` | 界面字号档位 `s|m|l|xl`（全局一份） | DeskDock |
+| `tokensave:desk-font-family.v1` | 字族 `default|sans|mono`（全局一份） | DeskDock |
+| `tokensave:chat-view.v1:<sessionId>` | 每会话的阅读镜头（**按会话分键**；不带后缀 = 旧全局单值，向后兼容） | chat-view.ts |
+
+**输入条策略（单项目）**
+
+- **只用宿主原生 composer**（`[data-conversation-region="composer"]`，全页一座）：
+  由 `client/src/panel/composer-dock.ts` 的 `useDockNativeComposer` 把它
+  `position:fixed` **停靠进「DSH 主对话」面板**（向下锚定、内容向上生长）；
+  面板关闭/组件卸载即还原原始行内样式，宿主在其它 tab 行为不变。
+- 自建输入框（ProjectComposer / `sendToSession` 那条路）已按用户要求删除；
+  `sendToSession` 本身仍在（黄灯「继续」等场景继续用）。
+- `MainChat` 只读镜像本项目会话流；**会话由 DeskDock 决定并写回宿主**（2026-10-14
+  Step 13-M 修正）：因为原生输入条永远属于**宿主当前会话**，两者不一致时草稿跟着
+  宿主会话走、发消息也进宿主会话（「在 A 项目写的内容跑到 B 项目」）。因此：
+  - `sid`（工作台主对话显示哪条）= 宿主当前会话**若属于本项目且非探索者**，
+    否则回退「本项目最近的非空白会话」，本项目一条都没有时回退**空串**；
+  - 一条对齐副作用：`sessionId !== sid` 时 `rememberOpenedProject(sid, project.id)` +
+    `openSession(sid)` 把宿主切过去（本项目无会话则先开一条空白会话）。
+  - `replaceMain` / `primeViewPreference` 仍不由 DeskDock 调用。
+
+**dockview 使用口径（vendor 见 client/src/vendor/dockview.ts）**
+
+- `vendor/dockview-core.min.js` 是 **UMD**，必须按文本取源 + `new Function(src)()`
+  在全局作用域执行才会挂到 `globalThis['dockview-core']`（直接 import 会走 CJS 分支）。
+- 实例参数：`theme:{name:'intel',className:'dv-intel',colorScheme:'dark',gap:0}`、
+  `defaultRenderer:'always'`（非激活面板 DOM 不摘 → 背景项目保活）、
+  `noPanelsOverlay:'emptyGroup'`、`disableDnd`（布局锁）、`tabComponent:'iconTab'`
+  （只画线条图标）。
+- 面板内容用 `createPortal` 渲染进 dockview 容器（单棵 React 树、无额外 root）。
+- 能力（v8.5.1）：`addFloatingGroup`/`addPopoutGroup`/`createTabGroup`/`toJSON`/`fromJSON`/
+  `dndCapabilities`/`setVisible`；**无** `api.options` 与 `api.floatingGroups`
+  （读回锁状态用 `dndCapabilities`）。
+
+**不变量**
+
+- 引擎只有一个：`ControlRoom` 直接渲染 `DeskDock`（旧的 `grid` 回退开关已移除）。
+- 快照按「整块」存（不是每项目一份）：多项目同屏时相对排布才有意义。
+- 数据面仍按项目隔离（黑板/探索者/收益按 `workspace=`；消息按 `sessionId`）。
+
+**UI 约定（2026-10-14 Step 13-M）**
+
+- **窗口标题不出现拟物 emoji**：六类面板的标题条（`.ts-head-title` / `.ts-win-name` /
+  `.ts-preview-title`）只写文字（「DSH 主对话 / 协作对话 / 协作收益 / 共享黑板 /
+  探索者 / 项目预览」）；dockview 标签本身只画线条图标（`tabComponent:'iconTab'`）。
+  测试 `窗口标题条无拟物 emoji` 会扫这六个文件的标题文本。
+- 共享黑板标题行**没有**手动刷新按钮（原来那颗 emoji 图标已删）：黑板每 20s
+  自动 `load(true)`。
+- 状态栏左侧实时提示：只跑文字（不加「· 对话已完成」之类话尾，完成态由 `.ts-sb-dot`
+  由蓝转灰表达）；异常结束仍加「· 本轮异常结束」；**不再固定截 42 字**（只压平换行 +
+  400 字兜底），显示多少交给 CSS `text-overflow:ellipsis`，完整内容在 `title` 里。
+- 会话控件（历史会话 / 新建会话）在**状态栏右侧**：「未锁定」左侧；它的下拉面板
+  **自动向上/向下翻转**（控件在视口底部 → 向上弹），定位用 portal + `position:fixed`，
+  内联必须显式写 `top:'auto'`（样式表里写死了 `top:calc(100%+6px)`）。
+
+**UI 约定（2026-10-14 Step 13-N）**
+
+- 右上角只有**一个「设置」齿轮**（`data-desk-settings`，图标 `gear`）——原来的 ⋯ 与
+  皮肤两个按钮已合并；浮层 `data-desk-settings-panel`（class `.ts-set`）分三块：
+  `data-desk-set-block="windows|skin|font"`（显示/隐藏窗口 · 背景皮肤 · 字体）。
+  旧的 `data-desk-more` / `data-desk-skin-toggle` / `data-desk-pop` / `data-desk-skin-panel`
+  已废弃（测试同步改了）。
+- **字体调控**：`--ts-fs`（字号，默认 12.5px）与 `--ts-font`（字族）写到 `:root`；
+  插件所有视图的 CSS 一律用 `font-size:calc(var(--ts-fs, 12.5px) * 比例)` 与
+  `font-family:var(--ts-font, inherit)` —— 大小比例 = 原始 px / 12.5，改字号时全 UI 等比缩放。
+- **侧栏把手照 info_report**：命中区 8px 全透明（没有整条背景色块）；悬停/拖动只显示
+  `::after` 中性短杠（2×40 → 悬停 62px）；区域收起后改成 `::before` 4×26 小短杠
+  （灰 → 悬停主题蓝）提醒「可从窄缝拉出」。
+- **锁定按项目**：状态栏「已锁定/未锁定」读写的都是 `…lock.v1:<projectId>`。
+
+**UI 约定（2026-10-14 Step 13-O）**
+
+- **标题行左侧**：图标即「项目切换器」（`data-desk-projswitch` → 浮层 `data-desk-projsw-panel`，
+  每行 `data-desk-projsw-item=<projectId>`，点击 `enterProjectWorkbench(id)`）；
+  项目名只留文字（`.ts-title-proj` 无边框无底色，**没有** `workbench` 后缀）。
+- **右上角按钮**：区域三键（`data-desk-region-toggle=left|center|right`，class `ts-tg--region`）+
+  探索者设置（`<ExplorerSettings variant="icon" />`，`data-desk-explorers` + `.ts-tg-badge` 计数）+
+  设置齿轮（`data-desk-settings` → 浮层 `data-desk-settings-panel`，宽 238px）。
+- **区域三键的状态表达**：只看图标内部那块**填充**（`regionIconSvg(region, on)`：显示 =
+  `fill="currentColor"`，隐藏 = `fill="none"`）；**不用蓝色、不用外框**
+  （`.ts-tg--region[data-on]` 已显式压掉通用 `[data-on]` 的蓝底蓝框）。
+- **一体化**：区域之间不画分割线（`.ts-region` 无 border）、标题行无 `border-bottom`、
+  状态栏无 `border-top`；三张面板卡（`.ts-board`/`.ts-talk`/`.ts-save`）透明无边框，
+  只留一条很淡的表头下边线。改外观请沿用这个口径，别再往卡片上加底色。
+- **窗口标签右键菜单**：为跳出 `overflow:hidden` 会被搬到 `body`（`data-ts-hoisted="1"`），
+  因此外观**必须**由 `.dv-context-menu[data-ts-hoisted="1"]` 自己写死（dockview 的 `--dv-*`
+  变量在 body 上不继承），关闭也由 DeskDock 自己的监听负责（点外部 / Esc / scroll /
+  resize / blur / 点菜单项后 `setTimeout(0)`），坐标要夹进视口。
+- **项目预览默认落编辑区**：`KIND_REGION.preview = 'center'`，并且**分屏**摆在主对话左边
+  （`buildDefault` 与 reconcile 的 `ensure` 两处都按 `{direction:'left', referencePanel: chat}`），
+  绝不允许当标签页塞进主对话那一组（会把主对话盖住 → 宿主输入条悬在预览上）。
+  存量布局由一次性迁移 `tokensave:desk-preview-in-editor.v1:<projectId>`（值 `v2`）归位。
+- **输入条可见性兜底**：主对话卡不可见时加 `body.ts-desk-nochat`（与 H 台的
+  `ts-hdesk-nochat` 同一套 CSS），把宿主 `[data-conversation-region="composer"]` 整条藏掉。
+- **侧栏拖拽性能口径**：拖动期间**禁止 setState**——只写 `--ts-side-l/-r` 与 `data-hide-*`，
+  `pointermove` 用 rAF 合并，松手（含「同帧内按下即松手」）才 `applyRegions`/`applySideW`
+  同步一次 React 状态。`PULL_OUT_W = 12`。

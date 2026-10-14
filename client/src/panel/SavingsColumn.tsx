@@ -139,7 +139,7 @@ export function SavingsColumn({
     <div className="ts-save">
       {/* #3 标题条：标题 + 中间信息居中，三键固定右上角 */}
       <div className="ts-save-head">
-        <span className="ts-head-title">📊 协作收益</span>
+        <span className="ts-head-title">协作收益</span>
         <span className="ts-head-mid ts-card-count">{stat.calls} 次派发 · {explorers.length} 位探索者</span>
         {actions}
       </div>

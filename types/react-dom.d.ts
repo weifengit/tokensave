@@ -7,4 +7,6 @@ declare module 'react-dom' {
   import type { ReactNode } from 'react'
   /** 把子树渲染到另一个 DOM 容器（用于逃出 overflow:hidden 祖先的浮层）。 */
   export function createPortal(children: ReactNode, container: Element | DocumentFragment): ReactNode
+  /** 带 key 的重载（数组里渲染多个 portal 时需要；React 18/19 均支持）。 */
+  export function createPortal(children: ReactNode, container: Element | DocumentFragment, key?: string | null): ReactNode
 }

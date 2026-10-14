@@ -1,13 +1,13 @@
 /**
- * 工作台顶部第一行：该项目历史会话选择器 + 新建会话
+ * 工作台状态栏：该项目历史会话选择器 + 新建会话
  *
- * - 点「🕘 历史会话」展开该项目全部历史会话（含非 tokensave 的普通对话），
+ * - 点「历史会话」展开该项目全部历史会话（含非 tokensave 的普通对话），
  *   点选即经宿主 uiWorkspace.openSession 切换当前会话，可直接在历史对话中继续发言；
  * - 点「＋ 新建会话」在该项目下开一个新对话（复用已有空白会话，没有则创建）。
  *
  * 行交互（对齐原生左侧边栏工作区）：
- *   - 鼠标悬浮在某一对话上时，右侧出现两个按钮：**⋯**（更多）与 **📥**（归档图标）；
- *   - 点 📥 直接归档（等价于菜单里的「归档」）；
+ *   - 鼠标悬浮在某一对话上时，右侧出现两个按钮：**⋯**（更多）与**归档**（📥 图标）；
+ *   - 点归档图标直接归档（等价于菜单里的「归档」）；
  *   - 点 ⋯ 展开更多：**置顶会话 / 重命名 / 归档 / 分叉**；
  *   - 悬浮时若标题超宽，标题变跑马灯（左右来回滚动）。
  *
@@ -73,10 +73,17 @@ export interface SessionPickerProps {
   onArchived?: (sessionId: string) => void
 }
 
+/** 线条图标（24 视窗 / currentColor / 1.6 描边，与工作台其它按钮同规；不用 emoji）。 */
+const ICON_HISTORY =
+  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v3.5l2.5 1.5"/><path d="M12 21a9 9 0 1 1 .001-18.001A9 9 0 0 1 12 21z"/><path d="M3 12h2"/><path d="M19 12h2"/></svg>'
+const ICON_NEW =
+  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>'
+
 export function SessionPicker({ sessions, currentId, onPick, onNew, onArchived }: SessionPickerProps) {
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)
-  const [pos, setPos] = useState<{ top: number; right: number } | null>(null)
+  /** 面板位置：向上弹（bottom）或向下弹（top）；maxHeight 保证不出视口 */
+  const [pos, setPos] = useState<{ top?: number; bottom?: number; right: number; maxHeight: number } | null>(null)
   const boxRef = useRef<HTMLSpanElement>(null)
   const popRef = useRef<HTMLDivElement>(null)
   // 展开「⋯」菜单的会话 id（同一时刻只开一个）
@@ -92,14 +99,30 @@ export function SessionPicker({ sessions, currentId, onPick, onNew, onArchived }
   const pinned = usePinnedSessions()
 
   // 下拉定位：卡片链路上有 overflow:hidden（.ts-cr），就地渲染会被裁掉。
-  // 改用 portal 挂到 body，并按按钮位置算 fixed 坐标（右对齐，不超出视口）。
+  // 改用 portal 挂到 body，并按**触发按钮**的位置算 fixed 坐标（右对齐，不超出视口）。
+  //
+  // 向上 / 向下自动翻转：会话控件现在在状态栏（视口底部），下方只有几个像素，
+  // 一律 `top: r.bottom + 6` 会把整块面板推到视口之外 —— 用户看到的就是
+  // 「点历史会话什么也没弹出来」（旧版控件在标题行，所以当时向下弹是对的）。
   useLayoutEffect(() => {
-    if (!open) return
+    if (!open) { setPos(null); return }
     const place = () => {
       const r = boxRef.current?.getBoundingClientRect()
       if (!r) return
       const margin = 12
-      setPos({ top: r.bottom + 6, right: Math.max(margin, window.innerWidth - r.right) })
+      const gap = 6
+      const right = Math.max(margin, window.innerWidth - r.right)
+      // portal 与本次 layout effect 在同一个 commit，popRef 已挂上 → 量得到真实高度；
+      // 量不到（极端情况）就用一个保守估值决定方向。
+      const h = popRef.current?.offsetHeight ?? 340
+      const below = window.innerHeight - r.bottom - gap - margin
+      const above = r.top - gap - margin
+      const openUp = below < Math.min(h, 340) && above > below
+      const room = Math.max(160, openUp ? above : below)
+      const maxHeight = Math.min(room, Math.round(window.innerHeight * 0.6))
+      setPos(openUp
+        ? { bottom: Math.max(margin, window.innerHeight - r.top + gap), right, maxHeight }
+        : { top: r.bottom + gap, right, maxHeight })
     }
     place()
     window.addEventListener('resize', place)
@@ -108,7 +131,7 @@ export function SessionPicker({ sessions, currentId, onPick, onNew, onArchived }
       window.removeEventListener('resize', place)
       window.removeEventListener('scroll', place, true)
     }
-  }, [open])
+  }, [open, sessions.length])
   const current = useMemo(() => sessions.find((s) => s.id === currentId), [sessions, currentId])
 
   // 点击外部 / Esc 关闭下拉
@@ -210,34 +233,53 @@ export function SessionPicker({ sessions, currentId, onPick, onNew, onArchived }
   return (
     <span className="ts-sess" ref={boxRef}>
       <button
-        className={`ts-btn ts-sess-btn${open ? ' active' : ''}`}
+        className={`ts-sb-btn ts-sess-btn${open ? ' active' : ''}`}
         onClick={() => setOpen((v) => !v)}
         title="该项目的历史会话：点选即切换过去，可直接继续发言"
       >
-        <span>🕘 历史会话（{sessions.length}）</span>
+        <span className="ts-sess-ico" aria-hidden="true" dangerouslySetInnerHTML={{ __html: ICON_HISTORY }} />
+        <span>历史会话（{sessions.length}）</span>
         <span className="ts-sess-cur" title={current?.title || currentId}>
           {current ? current.title : '当前会话'}
         </span>
         <span className="ts-sess-caret">{open ? '▴' : '▾'}</span>
       </button>
       <button
-        className="ts-btn ts-btn-primary"
+        className="ts-sb-btn ts-sess-new"
         onClick={handleNew}
         disabled={busy}
         title="在该项目下开启一个新对话"
       >
-        {busy ? '新建中…' : '＋ 新建会话'}
+        {busy ? (
+          '新建中…'
+        ) : (
+          <>
+            <span className="ts-sess-ico" aria-hidden="true" dangerouslySetInnerHTML={{ __html: ICON_NEW }} />
+            新建会话
+          </>
+        )}
       </button>
       {notice && <span className="ts-sess-notice" title={notice}>{notice}</span>}
 
       {/* 下拉用 portal 挂到 body：卡片链路上有 overflow:hidden（.ts-cr），
           就地渲染会被裁掉；坐标由上面 useLayoutEffect 按按钮位置算（fixed）。 */}
-      {open && pos && createPortal((
+      {open && createPortal((
         <div
           className="ts-sess-pop"
           role="listbox"
           ref={popRef}
-          style={{ position: 'fixed', top: pos.top, right: pos.right, left: 'auto' }}
+          style={{
+            position: 'fixed',
+            // top / bottom 必须显式给值：.ts-sess-pop 的样式表里写死了 top:calc(100%+6px)，
+            // 只靠不写 top 是压不住它的。
+            top: pos?.top ?? 'auto',
+            bottom: pos?.bottom ?? 'auto',
+            right: pos?.right ?? 12,
+            left: 'auto',
+            maxHeight: pos?.maxHeight,
+            // 首帧（还没量出坐标）先隐形，layout effect 会在绘制前把真坐标写好。
+            visibility: pos ? undefined : 'hidden',
+          }}
         >
           <div className="ts-sess-pop-head">
             历史会话 · {sessions.length} 个

@@ -140,10 +140,10 @@ const CSS = `
 /* —— 横线已按用户要求**彻底移除**（连带此前拖动中的横线残影/闪屏源）：
    抓手只保留一条不可见的 16px 命中区（cursor:ns-resize + title 提示可发现），
    拖动反馈只靠 px 数字胶囊与悬停浮出的「重置」按钮。 */
-.ts-composer-grabber .ts-composer-size{margin-left:var(--ts-grab-inset,16px);border-radius:99px;padding:0 7px;font-size:10px;line-height:15px;font-variant-numeric:tabular-nums;background:rgba(127,127,127,.25);color:var(--dsw-alias-label-secondary,#9aa0a6);opacity:0;transition:opacity .14s ease;pointer-events:none;transform:translateY(-2px)}
+.ts-composer-grabber .ts-composer-size{margin-left:var(--ts-grab-inset,16px);border-radius:99px;padding:0 7px;font-size:calc(var(--ts-fs, 12.5px) * 0.8);line-height:15px;font-variant-numeric:tabular-nums;background:rgba(127,127,127,.25);color:var(--dsw-alias-label-secondary,#9aa0a6);opacity:0;transition:opacity .14s ease;pointer-events:none;transform:translateY(-2px)}
 .ts-composer-grabber[data-ts-dragging="1"] .ts-composer-size{opacity:1}
 /* 重置胶囊：悬停才浮出，右端同样按圆角内缩，不越过卡片圆角 */
-.ts-composer-reset{position:absolute;right:var(--ts-grab-inset,16px);top:-11px;height:18px;border-radius:99px;padding:0 8px;border:.5px solid rgba(127,127,127,.4);background:var(--dsw-specific-menu,rgba(30,30,32,.92));color:var(--dsw-alias-label-secondary,#9aa0a6);font-size:10.5px;line-height:1;cursor:pointer;opacity:0;transition:opacity .14s ease}
+.ts-composer-reset{position:absolute;right:var(--ts-grab-inset,16px);top:-11px;height:18px;border-radius:99px;padding:0 8px;border:.5px solid rgba(127,127,127,.4);background:var(--dsw-specific-menu,rgba(30,30,32,.92));color:var(--dsw-alias-label-secondary,#9aa0a6);font-size:calc(var(--ts-fs, 12.5px) * 0.84);line-height:1;cursor:pointer;opacity:0;transition:opacity .14s ease}
 .ts-composer-grabber:hover .ts-composer-reset,.ts-composer-grabber:focus-within .ts-composer-reset{opacity:1}
 .ts-composer-reset:hover{color:var(--dsw-alias-label-primary,#e6e8eb);border-color:rgba(127,127,127,.85)}
 body.ts-composer-resizing{cursor:ns-resize}

@@ -25,7 +25,9 @@ interface HistoryState {
 
 export function MainChat({ sessionId, actions }: { sessionId: string; actions?: React.ReactNode }) {
   const [messages, setMessages] = useState<StreamMsg[]>([])
-  const [view, setView] = useChatView()
+  // 镜头按**会话**分键（Step 13-C）：多项目并存时 A 切镜头不会改到 B；
+  // 同一会话的面板/浮层两实例仍共用同一份真值。
+  const [view, setView] = useChatView(sessionId)
   const [history, setHistory] = useState<HistoryState>({ hasMore: false, loadingOlder: false })
 
   useEffect(() => {
@@ -84,7 +86,7 @@ export function MainChat({ sessionId, actions }: { sessionId: string; actions?: 
     <div className="ts-mainchat">
       {/* #3 标题条：标题 + 中间信息（消息条数）居中，三键固定右上角 */}
       <div className="ts-mainchat-head">
-        <span className="ts-head-title">💬 DSH 主对话</span>
+        <span className="ts-head-title">DSH 主对话</span>
         {/* 中间段 = 统计 + 视图开关，同一个 grid 格子里（grid 仍是 [标题][中][三键] 三段式）。
            两样东西本来就该在一起：它两回答的是同一个问题——「现在看的是哪一档、有多少」。 */}
         <span
