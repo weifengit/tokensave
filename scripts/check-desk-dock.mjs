@@ -30,6 +30,11 @@ const chatView = readFileSync(join(root, 'client/src/panel/chat-view.ts'), 'utf8
 const mainChat = readFileSync(join(root, 'client/src/panel/MainChat.tsx'), 'utf8')
 const cr = readFileSync(join(root, 'client/src/panel/ControlRoom.tsx'), 'utf8')
 const sessSrc = readFileSync(join(root, 'client/src/panel/SessionPicker.tsx'), 'utf8')
+const styles = readFileSync(join(root, 'client/src/panel/styles.ts'), 'utf8')
+const crCenter = readFileSync(join(root, 'client/src/panel/ProjectCenter.tsx'), 'utf8')
+const explorerStatus = readFileSync(join(root, 'client/src/panel/explorer-status.ts'), 'utf8')
+const sessionsSrc = readFileSync(join(root, 'client/src/panel/sessions.ts'), 'utf8')
+const themeSrc = readFileSync(join(root, 'client/src/panel/theme.ts'), 'utf8')
 
 // —— 1. 面板集合与真组件 ——
 check('固定面板 kind 齐备（纯模块 desk-panes）',
@@ -38,7 +43,7 @@ check('探索者面板为动态 id（<projectId>:exp:<sessionId>）',
   /paneId\(project\.id, `exp:\$\{s\.id\}`\)/.test(dock) && /kind\.startsWith\('exp:'\)/.test(dock))
 check('面板内容是真组件（非镜像）：黑板/协作对话/收益/主对话/预览/探索者',
   /<Blackboard workspace=\{project\.path\} \/>/.test(dock) &&
-  /<TalkColumn sessionId=\{sid\} explorers=\{data\.explorers\} \/>/.test(dock) &&
+  /<TalkColumn\s+sessionId=\{sid\}\s+explorers=\{data\.explorers\}/.test(dock) &&
   /<SavingsColumn sessionId=\{sid\} explorers=\{data\.explorers\} \/>/.test(dock) &&
   /<MainChat sessionId=\{sid\} \/>/.test(dock) &&
   /<PreviewPanel/.test(dock) && /<ExplorerWindow/.test(dock))
@@ -151,6 +156,23 @@ check('区域开关：主侧栏 / 编辑区面板区 / 辅助侧栏（状态持�
 check('区域收起不销毁面板（列宽塌陷；同 info_report 的 hide-panel）',
   /data-hide-left=\{hiddenRegions\.includes\('left'\) \? '' : undefined\}/.test(dock) &&
   /--ts-side-l: 0px/.test(dock) && !/regionSnapshotRef/.test(dock))
+check('编辑区/面板区也能收起（data-hide-center）',
+  /data-hide-center=\{hiddenRegions\.includes\('center'\) \? '' : undefined\}/.test(dock) &&
+  /\.ts-dock\[data-hide-center\] \{ grid-template-columns: minmax\(0,var\(--ts-side-l,220px\)\) 0px/.test(dock) &&
+  /\.ts-dock\[data-hide-center\] \.ts-region\[data-region="center"\] \{ display: none; \}/.test(dock))
+check('移动端（≤900px）：三栏 → 单栏 + 两侧栏改覆盖式抽屉',
+  // 断点与远程插件的 mobile presets 一致；中间永远整宽，抽屉同时只开一个
+  /@media \(max-width: 900px\) \{/.test(dock) &&
+  /\.ts-dock \{ grid-template-columns: 0 minmax\(0,1fr\) 0 !important/.test(dock) &&
+  /\.ts-dock\[data-ts-drawer="left"\] \.ts-region\[data-region="left"\] \{ display: block; left: 0; \}/.test(dock) &&
+  /\.ts-drawer-mask \{/.test(dock) &&
+  // 触屏上 8px 把手拖不动 → 窄屏隐藏，改用区域三键
+  /\.ts-dock \.ts-resizer \{ display: none !important; \}/.test(dock) &&
+  // JS 侧：matchMedia 判定 + 抽屉状态 + 区域键状态跟抽屉走
+  /window\.matchMedia\('\(max-width: 900px\)'\)/.test(dock) &&
+  /const \[drawer, setDrawer\] = useState<Region \| null>\(null\)/.test(dock) &&
+  /data-ts-drawer=\{drawer \?\? undefined\}/.test(dock) &&
+  /const regionShown = \(r: Region\) =>/.test(dock))
 check('被收起区域的面板不会被 reconcile 立刻补回（否则收起无效）',
   /const inHidden = \(id: string\) => hiddenRegions\.includes\(defaultRegionOf\(id\)\)/.test(dock) &&
   /if \(inHidden\(id\)\) return/.test(dock))
@@ -165,10 +187,21 @@ check('保存/恢复布局是**全局快照**（面板排布 + 收起区 + 侧�
   /applyRegions\(snap\?\.hidden \?\? \[\]\)/.test(dock) &&
   /if \(snap\?\.sideW\) applySideW\(snap\.sideW\)/.test(dock) &&
   !/setHiddenRegions\(\[\]\)/.test(dock))
-check('皮肤：内置若干套 + 持久化 + 写入 dock 背景',
-  /const SKIN_KEY = 'tokensave:desk-skin\.v1'/.test(dock) &&
+const skinsSrc = readFileSync(join(root, 'client/src/panel/skins.ts'), 'utf8')
+check('皮肤：目录在 skins.ts（分组 + 分类，参考 info_report）+ 写到 :root 变量',
+  // 分类：纯色 / 渐变 / 科技 / 艺术（info_report 同款分法），数量至少 15 套
+  ['纯色 · 深色', '渐变 · 深色', '科技 · 深色', '艺术 · 深色', '纯色 · 浅色', '渐变 · 浅色'].every((g) => skinsSrc.includes(`group: '${g}'`)) &&
+  (skinsSrc.match(/id: '/g) || []).length >= 25 &&
+  /SKIN_KEY_LIGHT = 'tokensave:desk-skin-light\.v1'/.test(skinsSrc) &&
+  /SKIN_ADAPT_KEY = 'tokensave:desk-skin-adapt\.v1'/.test(skinsSrc) &&
+  /export function setAdapt/.test(skinsSrc) &&
+  /mode: 'dark' | 'light'/.test(skinsSrc) &&
+  /export function applySkin/.test(skinsSrc) &&
+  /--ts-skin-color/.test(skinsSrc) && /--ts-skin-bg/.test(skinsSrc) &&
   /data-desk-set-block="skin"/.test(dock) &&
-  /\.\.\.\(skin \? \{ background: skin \} : \{\}\)/.test(dock))
+  /background-color: var\(--ts-skin-color, var\(--ts-surface\)\); background-image: var\(--ts-skin-bg, none\)/.test(dock) &&
+  /SKIN_GROUPS\.filter\(\(g\) =>/.test(dock) &&
+  /data-desk-skin-adapt=/.test(dock))
 
 // —— 8. 多区外壳（参考 info_report）——
 check('三个 dockview 实例分区：主侧栏 / 编辑区 / 辅助侧栏',
@@ -241,6 +274,7 @@ const composerDockSrc = readFileSync(join(root, 'client/src/panel/composer-dock.
 check('停靠时清掉宿主 composerSeat 的渐变遮罩（否则聊天区下方一块黑覆盖）',
   /'background',/.test(composerDockSrc) && /'backgroundImage',/.test(composerDockSrc) &&
   /seat\.style\.backgroundImage = 'none'/.test(composerDockSrc) &&
+  // 座位底色跟主题（深色下 --ts-surface=transparent，与原来等效；浅色下有浅底）
   /seat\.style\.background = 'transparent'/.test(composerDockSrc))
 check('保留「滚到输入条上沿看不见底下」：聊天格底部有独立渐变条',
   /data-desk-chat-fade=""/.test(dock) &&
@@ -286,8 +320,8 @@ check('拖动只改 DOM（CSS 变量 + data-hide-*），松手才同步一次 Re
   /if \(raf\) return/.test(dock) && /requestAnimationFrame\(\(\) => \{/.test(dock) &&
   /applySideW\(\{ \.\.\.sideW, \[side\]: to \}\)/.test(dock) &&
   !/to = clamped/.test(dock))
-check('收起时清掉内联宽度（内联优先级高于 .hide-* 的 0px）',
-  /hiddenRegions\.includes\('left'\) \? \{\} : \{ \['--ts-side-l' as any\]/.test(dock))
+check('收起/空白时清掉内联宽度（内联优先级高于 .hide-* 的 0px）',
+  /hiddenRegions\.includes\('left'\) \|\| emptyRegion\('left'\) \? \{\} : \{ \['--ts-side-l' as any\]/.test(dock))
 check('收起态把手外移 + 抬 z（压过宿主输入条 35，否则抓手命不中）',
   /\.ts-resizer \{[^}]*z-index: 50/.test(dock) &&
   /\.ts-dock\[data-hide-left\][^}]*z-index: 51/.test(dock))
@@ -371,3 +405,130 @@ if (existsSync(dist)) {
 
 console.log(fail === 0 ? '\nALL PASS' : `\n${fail} FAILED`)
 process.exitCode = fail === 0 ? 0 : 1
+
+// —— 12. 手机适配 + 本轮 9 条反馈的回归位（2026-10-14 第二批）——
+check('移动端（≤900px）：三栏 → 单栏 + 抽屉（中间永远整宽）',
+  /@media \(max-width: 900px\)/.test(dock) &&
+  /grid-template-columns: 0 minmax\(0,1fr\) 0 !important/.test(dock) &&
+  /data-ts-drawer=\{drawer \?\? undefined\}/.test(dock) &&
+  /className="ts-drawer-mask"/.test(dock) &&
+  /window\.matchMedia\('\(max-width: 900px\)'\)/.test(dock))
+check('输入框不因「主对话是后台标签」被藏掉（info_report / compare-text 的 bug）',
+  /const shown = !!p && !centerHidden/.test(dock) && !/isVisible !== false && !centerHidden/.test(dock))
+check('主对话留白 + 阅读宽度（宽面板不拉满）',
+  /\.ts-chat-msgs \{ flex:1; min-height:0; overflow:auto; overflow-anchor:none; padding:16px max\(22px, calc\(\(100% - var\(--ts-chat-w, 920px\)\) \/ 2\)\)/.test(styles))
+check('状态栏实时信息最多占一半',
+  /\.ts-statusbar \.ts-sb-grow \{ flex: 0 1 50%; min-width: 0; \}/.test(dock))
+check('项目清单悬浮即开（点击仍可用）',
+  /const hoverProj = \(open: boolean\) =>/.test(dock) &&
+  /onMouseEnter=\{\(\) => hoverProj\(true\)\}/.test(dock) &&
+  /onMouseLeave=\{\(\) => hoverProj\(false\)\}/.test(dock) &&
+  /open \? 110 : 260/.test(dock))
+check('关掉的窗口不再自己回来（按项目持久化 + reconcile 跳过 + 卸载不记账）',
+  /const CLOSED_KEY = \(projectId: string\) => `tokensave:desk-closed\.v1:\$\{projectId\}`/.test(dock) &&
+  /if \(closedRef\.current\.has\(id\)\) return/.test(dock) &&
+  /closedRef\.current\.add\(id\)\n\s+writeClosed\(project\.id, closedRef\.current\)/.test(dock) &&
+  // ⚠️ unregister 里不得再推断「用户关掉了」（dockview 移动/重建/热重载也会 dispose）
+  !/closedRef\.current\.add\(id\)[\s\S]{0,120}const unregister/.test(dock) &&
+  /const unregister = \(id: string, el: HTMLElement\) => \{\n\s+if \(containersRef\.current\[id\] === el\) \{\n\s+delete containersRef\.current\[id\]/.test(dock))
+check('探索者窗口：独立图标 + 去圆角边框 + 标题行无底色',
+  /if \(kind\.startsWith\('exp:'\)\) return 'explorers'/.test(panes) &&
+  /explorers: '<rect x="4\.5" y="7\.5"/.test(dock) &&
+  /\.ts-win \{ border:0; border-radius:0; background:transparent;/.test(styles) &&
+  /\.ts-win-head \{ display:flex; align-items:center; gap:6px; padding:6px 8px; border-bottom:1px solid/.test(styles))
+check('探索者状态角标（跑 / 异常 / 新汇报）画在标签图标上',
+  /export function useExplorerBadges/.test(explorerStatus) &&
+  /tone: running \? 'run' : freshNotice \? 'notice' : unread \? 'new' : 'idle'/.test(explorerStatus) &&
+  /\.dv-intel \.dv-tab\[data-tone="run"\]::after/.test(dock) &&
+  /\.dv-intel \.dv-tab\[data-tone="notice"\]::after/.test(dock) &&
+  /content: attr\(data-badge\)/.test(dock) &&
+  // dockview 会自己重建标签 DOM，所以要有心跳兜底 + 建标签时补画
+  /window\.setInterval\(\(\) => paintRef\.current\(\), 1500\)/.test(dock) &&
+  /data-ts-pane/.test(dock))
+check('全部停止探索者：宿主 cancel + 标题行按钮 + 主对话结束自动停',
+  /export async function stopSession/.test(sessionsSrc) &&
+  /get\('conversation'\)/.test(sessionsSrc) && /conv\.cancel\(\)/.test(sessionsSrc) &&
+  /data-desk-stop-explorers=""/.test(dock) &&
+  /const stopAllExplorers = useCallback/.test(dock) &&
+  /autoStopTurnRef\.current !== turnKey/.test(dock))
+check('项目中心不再单独设皮肤（皮肤只在工作台里选，两处共用同一份目录/变量）',
+  !/data-desk-center-skin/.test(crCenter) &&
+  !/SKIN_GROUPS/.test(crCenter) &&
+  /installThemeCss\(\)/.test(crCenter) &&
+  /background-color: var\(--ts-skin-color, transparent\);/.test(styles))
+
+// —— 13. 浅色模式适配 + 手机端收尾（2026-10-14 第三批）——
+check('主题探测：读 color-scheme → 退化到底色亮度 → 写 <html data-ts-theme>',
+  /export function detectTheme/.test(themeSrc) &&
+  /getComputedStyle\(document\.documentElement\)\.colorScheme/.test(themeSrc) &&
+  /root\.setAttribute\('data-ts-theme', theme\)/.test(themeSrc) &&
+  /startThemeWatch\(/.test(dock) &&
+  /matchMedia\?\.\('\(prefers-color-scheme: light\)'\)/.test(themeSrc))
+check('浅色模式：外壳换浅底深字（原来写死浅色前景 + 透明底 → 白底上看不见）',
+  /html\[data-ts-theme="light"\] \{/.test(themeSrc) &&
+  /--ts-fg: #1f2328;/.test(themeSrc) && /--ts-surface: #f7f8fa;/.test(themeSrc) &&
+  /color: var\(--ts-fg\);/.test(dock) &&
+  /background-color: var\(--ts-skin-color, var\(--ts-surface\)\)/.test(dock))
+check('深色皮肤不跟随宿主浅色主题（否则深底 + 深字 = 看不见）',
+  /root\.setAttribute\('data-ts-skin'/.test(skinsSrc) &&
+  /html\[data-ts-skin="dark"\] \{/.test(themeSrc) &&
+  // 必须在浅色覆盖之后（同权重靠源码顺序）
+  themeSrc.indexOf('html[data-ts-theme="light"] {') < themeSrc.indexOf('html[data-ts-skin="dark"] {') &&
+  // styles.ts 里那份重复的浅色覆盖已删（它会盖掉深色皮那条）
+  !/html\[data-ts-theme="light"\] \{ --ts-fg: #1f2328/.test(styles))
+check('手机端收尾：主对话自动最大化 + 设置面板里可跳到任意窗口',
+  /const autoMaxRef = useRef<string \| null>\(null\)/.test(dock) &&
+  /if \(p && !p\.api\.isMaximized\(\)\)/.test(dock) &&
+  /p\.api\.exitMaximized\(\)/.test(dock) &&
+  /const focusPane = useCallback/.test(dock) &&
+  /data-desk-focus=\{id\}/.test(dock))
+
+// —— 14. 正文宽度可调（复用宿主偏好）+ 浅色内容面 + 空侧栏自收 + 线条图标 ——
+check('正文宽度随时可调，且复用宿主官方那份偏好',
+  /const WIDTH_PREF_KEY = 'dsh\.conversation\.contentWidth'/.test(mainChat) &&
+  /const CONTENT_MIN = 640/.test(mainChat) && /const CONTENT_EDGE_BUDGET = 176/.test(mainChat) &&
+  /data-desk-chat-w="left"/.test(mainChat) && /data-desk-chat-w="right"/.test(mainChat) &&
+  /document\.documentElement\.style\.setProperty\('--ts-chat-w'/.test(mainChat) &&
+  /padding:16px max\(22px, calc\(\(100% - var\(--ts-chat-w, 920px\)\) \/ 2\)\)/.test(styles))
+// —— 15. 浅色皮/预览/输入条三处修正（2026-10-14 第四批）——
+check('项目预览 iframe 固定 color-scheme（宿主浅色时内嵌项目不再一片发白）',
+  /\.ts-preview-frame \{ color-scheme: dark; \}/.test(styles))
+check('输入条停靠：内容格没尺寸时退化到最近可见祖先（后台标签也有输入框）',
+  /const pickRect = \(\): DOMRect \| null =>/.test(composerDock) &&
+  /for \(let node = cell\.parentElement, i = 0; node && i < 6; node = node\.parentElement, i\+\+\)/.test(composerDock) &&
+  /const r = pickRect\(\)/.test(composerDock))
+
+// —— 16. 浮动面板统一主题化（浅色主题下不再是一堆深色卡片）——
+check('弹层调色板集中一处（theme.ts），外壳/皮肤/弹层三组变量分开',
+  /export const THEME_CSS/.test(themeSrc) &&
+  /--ts-t-fg:/.test(themeSrc) && /--ts-pop-bg:/.test(themeSrc) &&
+  /export function installThemeCss/.test(themeSrc) &&
+  /installThemeCss\(\)/.test(crCenter) && /installThemeCss\(\)/.test(themeSrc) &&
+  // 外壳那套变量不再在 DOCK_CSS 里重复定义
+  !/--ts-fg: #e6e8eb;          \/\* 主前景 \*\//.test(dock))
+check('所有浮动面板都吃弹层变量（底/字/描边/阴影），并重定向内部 --ts-fg*',
+  ['.ts-pop', '.ts-sess-pop', '.ts-expset-pop', '.ts-warn-pop', '.ts-skin-pop', '.ts-win-overlay', '.ts-jump-latest', '.ts-modal', '.dv-context-menu[data-ts-hoisted="1"]']
+    .every((sel) => themeSrc.includes(sel)) &&
+  /--ts-fg: var\(--ts-pop-fg\);/.test(themeSrc) &&
+  /--ts-fg-mute: var\(--ts-pop-fg-mute\);/.test(themeSrc))
+check('项目中心/弹窗里的深色底已清空（不再有写死的深色卡片）',
+  !/rgba\(24,27,33/.test(styles) && !/rgba\(14,16,21/.test(styles) && !/rgba\(20,23,29/.test(styles) &&
+  !/rgba\(14,16,21/.test(dock) &&
+  /background:var\(--ts-pop-bg\)/.test(styles) &&
+  /background: var\(--ts-pop-bg\)/.test(dock))
+
+// —— 17. 状态栏悬浮（参考 info_report 的 #statusbar）——
+check('状态栏悬浮在页面之上（脱离网格行 + 上边线 + 向上阴影 + 模糊）',
+  /\.ts-statusbar \{[^}]*position: absolute; left: 0; right: 0; bottom: 0; z-index: 45;/.test(dock) &&
+  /box-shadow: 0 -6px 18px rgba\(0,0,0,\.18\);/.test(dock) &&
+  /background: var\(--ts-sb-bg\);/.test(dock) &&
+  // 网格那行塌成 0（内容从状态栏底下穿过）
+  /grid-template-rows: 42px minmax\(0,1fr\) 0px;/.test(dock) &&
+  // 高度由 ResizeObserver 量出来写进 --ts-sb-h（窄屏会换行成两行）
+  /data-desk-statusbar/.test(dock) &&
+  /document\.documentElement\.style\.setProperty\('--ts-sb-h'/.test(dock) &&
+  // min-height 不能读自己写出去的变量（自反馈会把状态栏撑到整屏 —— 实测踩过）
+  /min-height: 28px;/.test(dock) &&
+  // 底部留白与输入条都要让开状态栏
+  /padding-bottom:calc\(var\(--ts-composer-h, 72px\) \+ var\(--ts-sb-h, 28px\) \+ 14px\)/.test(styles) &&
+  /const overlap = Math\.max\(0, r\.bottom - \(window\.innerHeight - sbH\)\)/.test(composerDock))

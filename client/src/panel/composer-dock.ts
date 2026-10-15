@@ -68,12 +68,31 @@ export function useDockNativeComposer(
     // 让消息流底部预留同样高度的留白（跟随多行输入动态变化）。
     const root = document.documentElement
 
+    /**
+     * 取一个「可用矩形」。
+     *
+     * 为什么需要：主对话是**后台标签**（被同组别的窗口挡在后面）或面板暂时隐藏时，
+     * 内容格的 rect 是 0×0 —— 原来这里直接 return，输入条就一直留在宿主原位置
+     * （工作台把它盖住了），用户看到的就是「DSH 主对话里没有输入框」（info_report /
+     * compare-text 反馈两次）。现在退化到**最近的可见祖先**（dockview 的组容器），
+     * 输入条照样停靠在那块可见区域里。
+     */
+    const pickRect = (): DOMRect | null => {
+      const own = cell.getBoundingClientRect()
+      if (own.width > 0 && own.height > 0) return own
+      for (let node = cell.parentElement, i = 0; node && i < 6; node = node.parentElement, i++) {
+        const r = node.getBoundingClientRect()
+        if (r.width > 0 && r.height > 0) return r
+      }
+      return null
+    }
+
     let raf = 0
     const apply = () => {
       raf = 0
       try {
-        const r = cell.getBoundingClientRect()
-        if (r.width <= 0 || r.height <= 0) return
+        const r = pickRect()
+        if (!r) return
         // 容器内缩：border + padding，让输入条落在容器边框内部
         const cs = getComputedStyle(cell)
         const insetX = (parseFloat(cs.borderLeftWidth) || 0) + (parseFloat(cs.paddingLeft) || 0)
@@ -92,11 +111,17 @@ export function useDockNativeComposer(
         seat.style.width = `${Math.round(contentW)}px`
         seat.style.top = 'auto'
         // 向下锚定：聚焦/多行输入时向上生长，不挤动面板布局
-        seat.style.bottom = `${Math.round(window.innerHeight - r.bottom + insetY)}px`
+        // 悬浮状态栏压在页面底部：只有当本面板的底边真的伸到状态栏底下时才把它让开
+        // （无条件加高度会在面板本来就没到底的情况下，把输入条从自己面板底部顶起来）。
+        const sbH = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--ts-sb-h')) || 28
+        const overlap = Math.max(0, r.bottom - (window.innerHeight - sbH))
+        seat.style.bottom = `${Math.round(window.innerHeight - r.bottom + insetY + overlap)}px`
         // 层级：浮层里停靠时要压过面板浮层；普通面板内 35 就够
         seat.style.zIndex = aboveOverlay ? '42' : '35'
         // 清掉宿主那条渐变遮罩（它按「停靠前的位置」算高度，搬进来就是一块黑）
         seat.style.backgroundImage = 'none'
+        // 座位保持透明：宿主自己的输入卡片是不透明的（自带底色与字色），
+        // 我们再垫一层只会把皮肤盖掉（用户反馈：输入框往下整块发白）。
         seat.style.background = 'transparent'
         // 输入条实际高度（含边框）→ 消息流底部留白，末尾几行不被遮挡
         const seatH = Math.ceil(seat.getBoundingClientRect().height) || 0

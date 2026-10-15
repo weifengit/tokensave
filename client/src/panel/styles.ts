@@ -52,14 +52,20 @@ body.ts-hdesk-open [data-width-handle] { display:none !important; }
    （同在 [data-conversation-scroll] 内），且它自带不透明渐变底。
    因此把网格与光晕铺到共享容器上，并把输入条座位改透明。 */
 body.ts-center-open [data-conversation-scroll] {
+  /* 皮肤（--ts-skin-bg / --ts-skin-color，见 skins.ts）垫在最底层：
+     用户要求「项目中心页面也能自由换皮肤」，换皮肤时工作台与这里同时变。
+     无皮肤时 --ts-skin-bg = none、--ts-skin-color = transparent，就是原来的中性底。 */
+  background-color: var(--ts-skin-color, transparent);
   background-image:
+    var(--ts-skin-bg, none),
     /* 用户反馈：原来那层紫/粉/青彩光太跳，跟工作台不一个调子 → 改成极淡的中性冷光，
        让「项目中心」看着还是同一个界面的一个页，而不是另一个产品。 */
     radial-gradient(circle at 12% 6%, rgba(96,165,250,.10), transparent 46%),
     radial-gradient(circle at 84% 96%, rgba(96,165,250,.07), transparent 50%),
     linear-gradient(rgba(127,127,127,.055) 1px, transparent 1px),
     linear-gradient(90deg, rgba(127,127,127,.055) 1px, transparent 1px);
-  background-size: auto, auto, 30px 30px, 30px 30px;
+  background-size: auto, auto, auto, 30px 30px, 30px 30px;
+  background-repeat: no-repeat, no-repeat, no-repeat, repeat, repeat;
 }
 /* —— 项目中心（列表态）：**整条隐藏**宿主输入条 ——
    用户要求：项目中心页不该出现聊天输入框及其状态信息（模型名 · 费用 · 上下文占比 ·
@@ -172,7 +178,7 @@ body.ts-desk-nochat [data-conversation-region="composer"] {
 
 /* 清单浮层：portal 到 body + position:fixed（top/left 由 JSX 按按钮矩形给），
    所以 rail（56px 收起）与展开态都从按钮右缘飞出，不被侧边栏 overflow 裁剪 */
-.ts-warn-pop { position:fixed; z-index:60; max-width:calc(100vw - 24px); max-height:80vh; display:flex; flex-direction:column; border-radius:12px; border:1px solid rgba(127,127,127,.35); background:rgba(24,27,33,.97); color:#e6e8eb; box-shadow:0 14px 40px rgba(0,0,0,.5); backdrop-filter:blur(12px) saturate(1.2); overflow:hidden; }
+.ts-warn-pop { position:fixed; z-index:60; max-width:calc(100vw - 24px); max-height:80vh; display:flex; flex-direction:column; border-radius:12px; border:1px solid var(--ts-pop-line); background:var(--ts-pop-bg); color:var(--ts-pop-fg); box-shadow:var(--ts-pop-shadow); backdrop-filter:blur(12px) saturate(1.2); overflow:hidden; }
 /* 跑马灯悬浮面板：**宽度由 JS 固定给**（见 ControlRoomEntry 的 panelWidth）。
    这里只保证它是个全宽容器 —— 设置区 / 清单区都是 width:100%，
    整块面板只有一种宽度，不再出现“清单被长标题撐宽、设置区停在原宽”的割裂感。 */
@@ -340,7 +346,7 @@ body.ts-desk-nochat [data-conversation-region="composer"] {
 .ts-sess-caret { opacity:.6; font-size:calc(var(--ts-fs, 12.5px) * 0.88); }
 /* 浮动面板宽度：**跟随内容**（主要是标题宽度）动态决定，而不是写死 520px；
    min/max 只兜底（太窄不好看、太宽超出视口）。 */
-.ts-sess-pop { position:absolute; top:calc(100% + 6px); right:0; left:auto; z-index:44; width:max-content; min-width:240px; max-width:min(560px, calc(100vw - 32px)); max-height:60vh; display:flex; flex-direction:column; border-radius:12px; border:1px solid rgba(127,127,127,.35); background:rgba(24,27,33,.97); color:#e6e8eb; box-shadow:0 14px 40px rgba(0,0,0,.5); backdrop-filter:blur(12px) saturate(1.2); overflow:hidden; }
+.ts-sess-pop { position:absolute; top:calc(100% + 6px); right:0; left:auto; z-index:44; width:max-content; min-width:240px; max-width:min(560px, calc(100vw - 32px)); max-height:60vh; display:flex; flex-direction:column; border-radius:12px; border:1px solid var(--ts-pop-line); background:var(--ts-pop-bg); color:var(--ts-pop-fg); box-shadow:var(--ts-pop-shadow); backdrop-filter:blur(12px) saturate(1.2); overflow:hidden; }
 /* 表头：max-width 封顶 + 允许换行，否则它的长文案会把动态宽度撑开 */
 .ts-sess-pop-head { flex:none; max-width:320px; padding:9px 12px; font-size:calc(var(--ts-fs, 12.5px) * 0.92); font-weight:600; opacity:.7; border-bottom:1px solid rgba(127,127,127,.25); letter-spacing:.03em; white-space:normal; }
 .ts-sess-list { flex:1; min-height:0; overflow:auto; padding:5px; display:flex; flex-direction:column; gap:2px; }
@@ -404,6 +410,28 @@ body.ts-desk-nochat [data-conversation-region="composer"] {
 /* 头部不再放“添加项目”按钮（与网格末尾的新建卡重复，已删）*/
 
 /* —— 项目中心：卡片网格（玻璃卡 + 圆锥渐变描边） —— */
+/* 主题变量兜底：皮肤/主题变量由 DeskDock 的 DOCK_CSS 定义（:root + html[data-ts-theme]）。
+   这里给项目中心页一个同名的兜底，保证即使工作台还没挂载也不会取到空值。 */
+/* 只给「工作台还没挂载」时兜个底：真正的主题/皮肤分支由 DOCK_CSS 定
+   （写 :root 权重最低，不会盖掉 html[data-ts-*] 那几条 —— 之前在这里重复了一份
+   浅色覆盖，结果把「深色皮强制浅字」那条盖掉了，宿主浅色 + 深色皮时字又看不见）。 */
+:root { --ts-fg: #e6e8eb; --ts-fg-dim: #9aa4b2; --ts-fg-mute: #6b7280; }
+.ts-cr, .ts-center { color: var(--ts-fg); }
+
+/* 项目中心的皮肤面板（挂在工具条里的「🎨 皮肤」上） */
+.ts-skin-wrap { position:relative; }
+.ts-skin-pop { position:absolute; right:0; top:calc(100% + 6px); z-index:40; width:min(92vw, 360px); max-height:60vh; overflow:auto;
+  display:flex; flex-direction:column; gap:8px; padding:10px 12px; border-radius:12px;
+  border:1px solid var(--ts-pop-line); background:var(--ts-pop-bg); color:var(--ts-pop-fg);
+  box-shadow:0 14px 40px rgba(0,0,0,.5); backdrop-filter:blur(12px) saturate(1.2); }
+.ts-skin-pop-head { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+.ts-skin-pop-hint { font-size:calc(var(--ts-fs, 12.5px) * 0.84); color:#6b7280; }
+.ts-skin-pop-grid { display:flex; flex-wrap:wrap; gap:6px; }
+.ts-skin-pop .ts-skin-cell { flex:1 1 46%; min-width:88px; height:38px; border:1px solid rgba(127,127,127,.32); border-radius:7px; background:rgba(127,127,127,.08); color:var(--ts-fg, #e6e8eb); font:inherit; font-size:calc(var(--ts-fs, 12.5px) * 0.9); cursor:pointer; }
+.ts-skin-pop .ts-skin-cell[data-on] { border-color:#4f8ef7; box-shadow:inset 0 0 0 1px rgba(79,142,247,.5); }
+.ts-skin-pop .ts-skin-none { flex:1 1 100%; }
+.ts-skin-pop .ts-skin-group { display:flex; flex-direction:column; gap:5px; }
+.ts-skin-pop .ts-skin-glabel { font-size:calc(var(--ts-fs, 12.5px) * 0.8); color:#6b7280; letter-spacing:.04em; }
 .ts-center-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(248px,1fr)); gap:16px; align-content:start; }
 .ts-center-emptywrap { flex:1; display:flex; align-items:center; justify-content:center; padding:24px; }
 .ts-center-card { position:relative; box-sizing:border-box; min-height:186px; display:flex; flex-direction:column; gap:10px; padding:18px; border:1px solid transparent; border-radius:16px; background:linear-gradient(135deg,rgba(255,255,255,.14) 0%,rgba(255,255,255,.05) 32%,rgba(255,255,255,.01) 62%,rgba(0,0,0,.06) 100%),rgba(127,127,127,.09); box-shadow:0 10px 26px rgba(0,0,0,.22),inset 0 1px 0 rgba(255,255,255,.10); backdrop-filter:blur(6px) saturate(1.15); transition:transform .14s ease, box-shadow .14s ease; }
@@ -444,7 +472,7 @@ body.ts-desk-nochat [data-conversation-region="composer"] {
 /* —— 列表模式：表格（宽裕、不拥挤）—— */
 .ts-plist-wrap { flex:1; min-height:0; overflow:auto; border:1px solid rgba(127,127,127,.26); border-radius:14px; background:linear-gradient(180deg,rgba(255,255,255,.05),rgba(255,255,255,.01)),rgba(127,127,127,.05); box-shadow:0 6px 20px rgba(0,0,0,.16); }
 .ts-plist { width:100%; border-collapse:separate; border-spacing:0; font-size:calc(var(--ts-fs, 12.5px) * 1.04); }
-.ts-plist th { position:sticky; top:0; z-index:1; text-align:left; font-weight:600; font-size:calc(var(--ts-fs, 12.5px) * 0.92); letter-spacing:.04em; padding:12px 16px; background:rgba(20,23,29,.94); color:inherit; border-bottom:1px solid rgba(127,127,127,.32); backdrop-filter:blur(10px); white-space:nowrap; }
+.ts-plist th { position:sticky; top:0; z-index:1; text-align:left; font-weight:600; font-size:calc(var(--ts-fs, 12.5px) * 0.92); letter-spacing:.04em; padding:12px 16px; background:var(--ts-pop-bg-solid); color:var(--ts-pop-fg); border-bottom:1px solid rgba(127,127,127,.32); backdrop-filter:blur(10px); white-space:nowrap; }
 .ts-plist td { padding:12px 16px; border-bottom:1px solid rgba(127,127,127,.14); vertical-align:middle; text-align:left; }
 .ts-plist tbody tr { transition:background .12s ease; }
 .ts-plist tbody tr:hover { background:rgba(127,127,127,.11); }
@@ -540,8 +568,9 @@ body.ts-vsplit-dragging .ts-card { transition:none !important; animation:none !i
 .ts-center-emptywrap .ts-center-addcard { width:min(320px,80%); min-height:200px; display:flex; flex-direction:column; }
 
 /* —— 弹层 —— */
-.ts-modal-mask { position:fixed; inset:0; background:rgba(0,0,0,.45); display:flex; align-items:center; justify-content:center; z-index:45; }
-.ts-modal { background:rgba(30,32,38,.98); color:#e8eaed; border:1px solid rgba(127,127,127,.4); border-radius:12px; width:min(680px,92%); max-height:88%; display:flex; flex-direction:column; box-shadow:0 12px 40px rgba(0,0,0,.5); }
+.ts-modal-mask { position:fixed; inset:0; background:var(--ts-pop-mask, rgba(0,0,0,.45)); display:flex; align-items:center; justify-content:center; z-index:45; }
+/* 弹窗（添加项目 / 确认框）：同弹层调色板（浅色主题下不再是深卡片） */
+.ts-modal { background:var(--ts-pop-bg); color:var(--ts-pop-fg); border:1px solid var(--ts-pop-line); border-radius:12px; width:min(680px,92%); max-height:88%; display:flex; flex-direction:column; box-shadow:var(--ts-pop-shadow); }
 .ts-modal-head { padding:14px 18px; font-size:calc(var(--ts-fs, 12.5px) * 1.2); font-weight:600; border-bottom:1px solid rgba(127,127,127,.25); display:flex; justify-content:space-between; align-items:center; }
 .ts-modal-body { padding:14px 18px; overflow:auto; display:flex; flex-direction:column; gap:14px; }
 .ts-modal-foot { padding:12px 18px; border-top:1px solid rgba(127,127,127,.25); display:flex; justify-content:flex-end; gap:10px; }
@@ -664,7 +693,7 @@ body.ts-vsplit-dragging .ts-card { transition:none !important; animation:none !i
 /* #4 输入条 fixed 停在卡片底部，会盖住消息末尾几行：
    底部留白 = 输入条实测高度（--ts-composer-h，由 HDesk 停靠时写入）+ 余量。
    以前写死 72px，输入条多行/换行时就不够，末尾几行被遮住。 */
-.ts-mainchat .ts-chat-msgs { padding-bottom:calc(var(--ts-composer-h, 72px) + 14px); }
+.ts-mainchat .ts-chat-msgs { padding-bottom:calc(var(--ts-composer-h, 72px) + var(--ts-sb-h, 28px) + 14px); }
 /* 主对话消息宽度：**跟自己的面板宽度自适应**，不再吃宿主那套全局宽度。
    历史：原先跟 --ts-chat-content-w（由输入条停靠逻辑写，取自宿主的
    --dsh-chat-user-width，带 680px 下限）并居中——面板变窄时它仍按 680px 算，
@@ -700,9 +729,10 @@ body.ts-vsplit-dragging .ts-card { transition:none !important; animation:none !i
 .ts-win-mid { flex:0 1 auto; margin:0 auto; }
 
 /* —— 探索者窗口卡 —— */
-.ts-win { border:1px solid rgba(127,127,127,.32); background:rgba(127,127,127,.09); border-radius:9px; display:flex; flex-direction:column; min-height:70px; flex:1; overflow:hidden; position:relative; }
-.ts-win-head { display:flex; align-items:center; gap:6px; padding:6px 8px; background:rgba(127,127,127,.14); cursor:default; user-select:none; flex-wrap:nowrap; overflow:hidden; }
-.ts-win-head:hover { background:rgba(127,127,127,.22); }
+/* 一体化：探索者窗口不再画圆角边框与底色（用户反馈「整个窗口使用的圆角边框」要调整） */
+.ts-win { border:0; border-radius:0; background:transparent; display:flex; flex-direction:column; min-height:70px; flex:1; overflow:hidden; position:relative; }
+.ts-win-head { display:flex; align-items:center; gap:6px; padding:6px 8px; border-bottom:1px solid rgba(127,127,127,.16); cursor:default; user-select:none; flex-wrap:nowrap; overflow:hidden; }
+.ts-win-head:hover { background:rgba(127,127,127,.08); }
 /* 按钮组永不压缩：否则窄列里按钮会被压到换行、标题条变高溢出 */
 .ts-win-head > span:last-child { flex:none; display:inline-flex; align-items:center; gap:1px; }
 .ts-win-name { font-size:var(--ts-fs, 12.5px); font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; flex:0 1 auto; min-width:0; }
@@ -712,7 +742,7 @@ body.ts-vsplit-dragging .ts-card { transition:none !important; animation:none !i
 .ts-win.collapsed { flex:none; }
 .ts-win.collapsed .ts-win-body { display:none; }
 /* 最大化：补不透明底（原仅 shadow，父级 .ts-win 底色 9% 透度，全屏后看不清） */
-.ts-win-overlay { position:absolute; inset:0; z-index:40; flex:none; background:rgba(14,16,21,.97); color:#e6e8eb; border:1px solid rgba(127,127,127,.35); box-shadow:0 8px 32px rgba(0,0,0,.45); backdrop-filter:blur(8px) saturate(1.1); }
+.ts-win-overlay { position:absolute; inset:0; z-index:40; flex:none; background:var(--ts-pop-bg-solid); color:var(--ts-pop-fg); border:1px solid var(--ts-pop-line); box-shadow:var(--ts-pop-shadow); backdrop-filter:blur(8px) saturate(1.1); }
 .ts-win-overlay .ts-win-head { background:rgba(255,255,255,.07); }
 .ts-win-overlay .ts-win-head:hover { background:rgba(255,255,255,.13); }
 .ts-msg-user { align-self:flex-end; background:rgba(96,165,250,.22); border:1px solid rgba(96,165,250,.4); border-radius:8px 8px 2px 8px; padding:5px 9px; max-width:88%; white-space:pre-wrap; word-break:break-word; }
@@ -777,7 +807,7 @@ body.ts-vsplit-dragging .ts-card { transition:none !important; animation:none !i
 /* 注：此处**不能用** backdrop-filter。
    它是个 sticky 元素且位于滚动容器**内部**：滚动时浏览器每帧都要为它重新
    模糊身后的内容，在 WebKit 上会留下未及时清除的旧帧——同样表现为「重影」。 */
-.ts-jump-latest { position:sticky; bottom:6px; align-self:center; margin-top:-28px; z-index:2; padding:4px 12px; border-radius:99px; border:1px solid rgba(96,165,250,.6); background:rgba(24,27,33,.98); color:#e6e8eb; font:inherit; font-size:calc(var(--ts-fs, 12.5px) * 0.92); cursor:pointer; box-shadow:0 4px 14px rgba(0,0,0,.4); visibility:hidden; }
+.ts-jump-latest { position:sticky; bottom:6px; align-self:center; margin-top:-28px; z-index:2; padding:4px 12px; border-radius:99px; border:1px solid rgba(96,165,250,.6); background:var(--ts-pop-bg); color:var(--ts-pop-fg); font:inherit; font-size:calc(var(--ts-fs, 12.5px) * 0.92); cursor:pointer; box-shadow:0 4px 14px rgba(0,0,0,.4); visibility:hidden; }
 .ts-jump-latest[data-visible] { visibility:visible; }
 .ts-jump-latest:hover { background:rgba(96,165,250,.35); }
 /* 任务列表 */
@@ -822,8 +852,18 @@ body.ts-vsplit-dragging .ts-card { transition:none !important; animation:none !i
    两个写者来回拉扯 → 底部附近高频微抖，视觉上就是「重影」。
    宿主的对话 scrollport 在跟随尾部时也是这么关的
    （.EvIC1a_root[data-chat-following-tail] .EvIC1a_scroll{overflow-anchor:none}）。 */
-/* 消息与面板边线的左右间距（用户反馈「和边框之间太挤」）：10px → 18px，上下也略放宽。 */
-.ts-chat-msgs { flex:1; min-height:0; overflow:auto; overflow-anchor:none; padding:14px 18px; display:flex; flex-direction:column; gap:7px; }
+/* 消息与面板边线的左右间距（用户两次反馈「和边框之间太挤」）：10 → 18 → 22px。
+   同时限制**阅读宽度**：正文最宽 920px、超出部分两侧平分留白（居中）——
+   面板很宽时（例如只看一个 DSH 主对话）不会把每行拉太长（用户反馈「宽度太长阅读疲劳」）。
+   为什么不给消息加 max-width：那会带着 margin:auto 把「我发的」气泡从右对齐变成居中。 */
+.ts-chat-msgs { flex:1; min-height:0; overflow:auto; overflow-anchor:none; padding:16px max(22px, calc((100% - var(--ts-chat-w, 920px)) / 2)); display:flex; flex-direction:column; gap:7px; }
+/* 正文宽度把手（同宿主 [data-width-handle] 的手感：贴边细条、悬停高亮、左右对称收放）。
+   位置跟着正文列的两条边：left/right = 那半边留白的一半。 */
+.ts-chat-w { position:absolute; top:34px; bottom:0; width:7px; cursor:col-resize; z-index:3; opacity:0; transition:opacity .12s, background .12s; }
+.ts-chat-w--left { left:calc(max(22px, calc((100% - var(--ts-chat-w, 920px)) / 2)) - 4px); }
+.ts-chat-w--right { right:calc(max(22px, calc((100% - var(--ts-chat-w, 920px)) / 2)) - 4px); }
+.ts-mainchat:hover .ts-chat-w { opacity:.5; }
+.ts-chat-w:hover, .ts-chat-w:active { opacity:1; background:rgba(79,142,247,.55); border-radius:3px; }
 
 /* —— 左栏：协作对话时间轴 —— */
 .ts-talk { display:flex; flex-direction:column; min-height:104px; overflow:hidden; }
@@ -909,6 +949,11 @@ body.ts-vsplit-dragging .ts-card { transition:none !important; animation:none !i
 .ts-preview-ops { display:flex; gap:6px; flex:none; }
 /* 预览 iframe：不加自己的边框与底色（原先的 1px 边框 + 白底在部分项目上会显出白边，
    与其它窗口不一致）；留白由外层卡片/标题条负责 */
+/* 项目预览是**内嵌 iframe**：它自己的文档没声明 color-scheme 时会继承宿主页面的。
+   宿主切浅色主题后，内嵌项目（例如 info_report 这种深色底 + 透明面的 UI）会拿到浅色画布，
+   整块看着「一片发白」。这里给 iframe 固定深色画布，让内嵌项目按它自己的深色设计渲染；
+   项目自己声明了 color-scheme 的话以项目为准（iframe 内文档优先）。 */
+.ts-preview-frame { color-scheme: dark; }
 .ts-preview-frame { flex:1 1 0; min-height:0; width:100%; display:block; border:0; background:transparent; }
 /* 主对话顶部的「加载更早」行（瀑布式回翻的入口与忙碌提示） */
 .ts-msgs-topbar { flex:none; display:flex; align-items:center; justify-content:center; gap:8px; padding:2px 0 6px; }
@@ -935,7 +980,7 @@ body.ts-vsplit-dragging .ts-card { transition:none !important; animation:none !i
 .ts-expset-btn { display:inline-flex; align-items:center; gap:6px; white-space:nowrap; }
 .ts-expset-btn.active { border-color:rgba(96,165,250,.7); background:rgba(96,165,250,.18); }
 /* 面板：portal 挂 body（避开 .ts-cr 的 overflow:hidden），宽度跟随内容但有限，列表内部滚动 */
-.ts-expset-pop { z-index:46; width:max-content; min-width:300px; max-width:min(420px, calc(100vw - 32px)); max-height:64vh; overflow:auto; display:flex; flex-direction:column; gap:8px; padding:10px 12px; border-radius:12px; border:1px solid rgba(127,127,127,.35); background:rgba(24,27,33,.97); color:#e6e8eb; box-shadow:0 14px 40px rgba(0,0,0,.5); backdrop-filter:blur(12px) saturate(1.2); }
+.ts-expset-pop { z-index:46; width:max-content; min-width:300px; max-width:min(420px, calc(100vw - 32px)); max-height:64vh; overflow:auto; display:flex; flex-direction:column; gap:8px; padding:10px 12px; border-radius:12px; border:1px solid var(--ts-pop-line); background:var(--ts-pop-bg); color:var(--ts-pop-fg); box-shadow:var(--ts-pop-shadow); backdrop-filter:blur(12px) saturate(1.2); }
 .ts-expset-head { display:flex; align-items:baseline; gap:8px; font-size:var(--ts-fs, 12.5px); font-weight:600; }
 .ts-expset-head-tip { margin-left:auto; font-size:calc(var(--ts-fs, 12.5px) * 0.84); font-weight:400; opacity:.6; }
 .ts-expset-err { font-size:calc(var(--ts-fs, 12.5px) * 0.92); color:#fca5a5; }
@@ -953,7 +998,7 @@ body.ts-vsplit-dragging .ts-card { transition:none !important; animation:none !i
 /* 开关（role=switch）：轨道 + 圆钮；开=绿 */
 .ts-switch { flex:none; width:34px; height:18px; padding:0; border-radius:99px; border:1px solid rgba(127,127,127,.5); background:rgba(127,127,127,.25); cursor:pointer; position:relative; transition:background .15s ease, border-color .15s ease; }
 .ts-switch:disabled { opacity:.4; cursor:not-allowed; }
-.ts-switch .ts-switch-knob { position:absolute; top:1px; left:1px; width:14px; height:14px; border-radius:50%; background:#e6e8eb; transition:transform .15s ease; }
+.ts-switch .ts-switch-knob { position:absolute; top:1px; left:1px; width:14px; height:14px; border-radius:50%; background:var(--ts-fg); transition:transform .15s ease; }
 .ts-switch.on { background:rgba(74,222,128,.55); border-color:rgba(74,222,128,.8); }
 .ts-switch.on .ts-switch-knob { transform:translateX(16px); }
 /* 分组开关：蓝色调，与单个探索者的绿色开关区分开 */

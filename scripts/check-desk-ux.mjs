@@ -48,9 +48,10 @@ try {
     m.paneTitle('prj-A:chat', 'A项目') === 'A项目 · DSH 主对话' &&
     m.paneTitle('prj-A:exp:s1', 'A项目') === 'A项目 · 探索者' &&
     m.paneTitle('center') === '项目中心')
-  check('paneIcon：center=list / save=database / 探索者=chat',
+  // 探索者图标必须与主对话（chat）**不同**：用户反馈两者一模一样，认不出谁是谁
+  check('paneIcon：center=list / save=database / 探索者=explorers（≠chat）',
     m.paneIcon('center') === 'list' && m.paneIcon('prj-A:save') === 'database' &&
-    m.paneIcon('prj-A:exp:s1') === 'chat')
+    m.paneIcon('prj-A:exp:s1') === 'explorers' && m.paneIcon('prj-A:chat') === 'chat')
 
   // desiredPaneIds：多项目并存的核心推导
   const A = { id: 'A' }

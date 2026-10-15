@@ -1524,3 +1524,25 @@ export function useProjectSessions(projectPath: string): ProjectSession[] {
 
   return sessions
 }
+
+/**
+ * 让某条会话**当前这一轮停下来**（宿主 conversation 面的 cancel）；
+ * 用于「全部停止探索者」：主对话已经结束，还挂着的探索者不该继续跑下去。
+ *
+ * 走的就是插件里已有的那个面：sessions.scope(id).get('conversation')（sendToSession 同源）。
+ * 返回 {ok}：调用方据此给出提示；停止失败不抛异常（面板里点按钮不该炸页面）。
+ */
+export async function stopSession(sessionId: string): Promise<{ ok: boolean; error?: string }> {
+  const ctx: any = getClientContext()
+  if (!ctx || !sessionId) return { ok: false, error: '客户端上下文不可用' }
+  try {
+    const scope = svc(ctx, 'sessions')?.scope?.(sessionId)
+    const conv = scope && typeof scope.get === 'function' ? scope.get('conversation') : null
+    if (!conv || typeof conv.cancel !== 'function') return { ok: false, error: '该会话不支持停止' }
+    const res: any = await conv.cancel()
+    if (res && res.ok === false) return { ok: false, error: String(res.error ?? '宿主拒绝了停止请求') }
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : '停止失败' }
+  }
+}

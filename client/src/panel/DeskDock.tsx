@@ -45,11 +45,16 @@ import {
   isExplorerSessionId,
   sessionBelongsToProject,
 } from './sessions'
-import { enterProjectWorkbench } from './sessions'
+import { enterProjectWorkbench, stopSession } from './sessions'
+import { useExplorerBadges } from './explorer-status'
 import { ExplorerSettings } from './ExplorerSettings'
 import { SessionPicker } from './SessionPicker'
 import { loadProjects, rememberOpenedProject } from './store'
 import { useProjectsActivity } from './activity'
+import {
+  SKIN_GROUPS, readSkinId, chooseSkin, applySkin as applySkinVars, bootSkin, currentThemeMode,
+} from './skins'
+import { startThemeWatch } from './theme'
 import { getClientContext, subscribeSession } from '../session-subscribe'
 import { KINDS, paneId, parsePaneId, paneTitle, paneIcon, type Kind } from './desk-panes'
 import type { ProjectRecord } from './store'
@@ -57,7 +62,7 @@ import type { ProjectRecord } from './store'
 const SNAPSHOT_KEY = (projectId: string) => `tokensave:desk-dock.v2:${projectId}`
 const SAVED_KEY = (projectId: string) => `tokensave:desk-saved.v2:${projectId}`
 const REGIONS_KEY = 'tokensave:desk-regions.v1'
-const SKIN_KEY = 'tokensave:desk-skin.v1'
+/* SKIN_KEY 已搬到 skins.ts（改名为 SKIN_KEY，值不变，兼容旧的 background 字符串） */
 /* 布局锁已按用户要求整个删除（功能 + 状态栏显示）；遗留键在 STALE 里清掉。 */
 /** 界面字体与字族（外观设置，全局一份，同皮肤）。 */
 const FONT_KEY = 'tokensave:desk-font.v1'
@@ -101,7 +106,12 @@ const KIND_REGION: Record<string, Region> = {
 
 /** 线条图标（24 视窗 / currentColor / 1.6 描边，与 info_report 的 icons.js 同规）。 */
 const ICONS: Record<string, string> = {
+  /** 探索者窗口：与 DSH 主对话**必须区分开**（用户反馈两者图标一模一样）。
+     画一个机器人头：与右上角「探索者设置」的图标同一套语言。 */
+  explorers: '<rect x="4.5" y="7.5" width="15" height="11" rx="3"/><path d="M12 4.5v3"/><circle cx="12" cy="3.4" r="1.1" fill="currentColor" stroke="none"/><circle cx="9.2" cy="12.2" r="1.2" fill="currentColor" stroke="none"/><circle cx="14.8" cy="12.2" r="1.2" fill="currentColor" stroke="none"/><path d="M9.5 15.2h5"/>',
   zone: '<rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M3.5 9.5h17"/><path d="M3.5 14.5h17"/><path d="M9 4.5v15"/><path d="M15 4.5v15"/>',
+  /** 停止（画出「停」）：协作对话标题行的「全部停止」。 */
+  stop: '<rect x="5.5" y="5.5" width="13" height="13" rx="2.5"/><path d="M9.5 12h5"/>',
   book: '<path d="M3 5h6a3 3 0 0 1 3 3v11a3 3 0 0 0-3-3H3z"/><path d="M21 5h-6a3 3 0 0 0-3 3v11a3 3 0 0 1 3-3h6z"/>',
   report: '<rect x="4.5" y="3.5" width="15" height="17" rx="2.5"/><path d="M8 8h8"/><path d="M8 12h8"/><path d="M8 16h5"/>',
   chat: '<path d="M4 5.5h16v11H9.5L4 20.5z"/><path d="M8 10h8"/><path d="M8 13.5h5"/>',
@@ -168,9 +178,23 @@ function relAge(ms: number): string {
 const DOCK_CSS_ID = 'tokensave-desk-dock-css'
 /** 外壳 + 主题（透明 + 线条标签 + 落点高亮）。 */
 const DOCK_CSS = `
-.ts-dock { position: absolute; inset: 0; display: grid; grid-template-rows: 42px minmax(0,1fr) 26px; grid-template-columns: minmax(0,var(--ts-side-l,220px)) minmax(0,1fr) minmax(0,var(--ts-side-r,260px)); grid-template-areas: "title title title" "left center right" "status status status"; color: #e6e8eb; font-size:var(--ts-fs, 12.5px); font-family:var(--ts-font, inherit); background: transparent; }
+/* 主题调色板（外壳/皮肤/弹层三组变量）统一在 client/src/panel/theme.ts 的 THEME_CSS 里，
+   工作台、项目中心、浮动面板共用一份；这里只留外壳自己的规则。 */
+.ts-dock { position: absolute; inset: 0; display: grid; grid-template-rows: 42px minmax(0,1fr) 0px; grid-template-columns: minmax(0,var(--ts-side-l,220px)) minmax(0,1fr) minmax(0,var(--ts-side-r,260px)); grid-template-areas: "title title title" "left center right" "status status status"; color: var(--ts-fg); font-size:var(--ts-fs, 12.5px); font-family:var(--ts-font, inherit); background-color: var(--ts-skin-color, var(--ts-surface)); background-image: var(--ts-skin-bg, none); }
+/* 皮肤格子里的「无皮肤」+ 分组标题 */
+.ts-skin-none { flex: 1 1 100%; min-width: 0; }
+.ts-skin-group { flex: 1 1 100%; display: flex; flex-direction: column; gap: 4px; margin-top: 2px; }
+.ts-skin-glabel { font-size: calc(var(--ts-fs, 12.5px) * 0.8); color: var(--ts-fg-mute); letter-spacing: .04em; }
 .ts-dock[data-hide-left] { --ts-side-l: 0px; }
 .ts-dock[data-hide-right] { --ts-side-r: 0px; }
+/* 侧栏里一个窗口都没有 → 自动收起（列宽塌到 0，把手也收掉）。
+   有窗口放进来（拖动 / ⋯ 菜单 / chip）时属性消失，区域自动展开回来。 */
+.ts-dock[data-empty-left] { --ts-side-l: 0px; }
+.ts-dock[data-empty-right] { --ts-side-r: 0px; }
+.ts-dock[data-empty-left] .ts-region[data-region="left"],
+.ts-dock[data-empty-right] .ts-region[data-region="right"] { min-width: 0; overflow: hidden; }
+.ts-dock[data-empty-left] .ts-resizer--left,
+.ts-dock[data-empty-right] .ts-resizer--right { display: none; }
 /* 编辑区/面板区（center）也能收起：列宽塌陷到 0 + 区域内隐藏（面板不销毁，展开即回）。 */
 .ts-dock[data-hide-center] { grid-template-columns: minmax(0,var(--ts-side-l,220px)) 0px minmax(0,var(--ts-side-r,260px)); }
 .ts-dock[data-hide-center] .ts-region[data-region="center"] { display: none; }
@@ -179,7 +203,7 @@ const DOCK_CSS = `
 .ts-title-left { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1; overflow: hidden; }
 /* 项目名左侧：**项目切换按钮**。用户反馈「只画个图标看不出是按钮」→ 改成有底有框的
    胶囊按钮（图标 + 小箭头），悬停/展开时高亮。 */
-.ts-title-switch { display: inline-flex; align-items: center; gap: 4px; flex: none; border: 1px solid rgba(127,127,127,.32); border-radius: 8px; background: rgba(127,127,127,.10); color: #e6e8eb; cursor: pointer; padding: 3px 6px 3px 7px; }
+.ts-title-switch { display: inline-flex; align-items: center; gap: 4px; flex: none; border: 1px solid rgba(127,127,127,.32); border-radius: 8px; background: var(--ts-hover); color: var(--ts-fg); cursor: pointer; padding: 3px 6px 3px 7px; }
 .ts-title-switch:hover { border-color: #4f8ef7; background: rgba(79,142,247,.16); color: #4f8ef7; }
 .ts-title-switch[data-open] { border-color: #4f8ef7; background: rgba(79,142,247,.20); color: #4f8ef7; }
 .ts-title-switch .ts-title-caret { display: inline-flex; opacity: .7; }
@@ -258,7 +282,7 @@ body.ts-resizing { cursor: col-resize !important; user-select: none !important; 
 .ts-projsw-top { display: flex; align-items: center; gap: 6px; }
 .ts-projsw-name { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ts-projsw-cur { flex: none; margin-left: auto; color: #4f8ef7; font-size: calc(var(--ts-fs, 12.5px) * 0.8); }
-.ts-projsw-meta { color: #6b7280; font-size: calc(var(--ts-fs, 12.5px) * 0.82); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ts-projsw-meta { color: var(--ts-fg-mute); font-size: calc(var(--ts-fs, 12.5px) * 0.82); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* 行首状态圆点：绿 = 有对话在跑，黄 = 有对话等你确认，灰 = 都闲着 */
 .ts-projsw-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: rgba(127,127,127,.55); }
 .ts-projsw-dot.is-run { background: #3fb950; box-shadow: 0 0 0 2px rgba(63,185,80,.20); }
@@ -268,16 +292,16 @@ body.ts-resizing { cursor: col-resize !important; user-select: none !important; 
 .ts-projsw-tag { border-radius: 999px; padding: 1px 7px; border: 1px solid transparent; }
 .ts-projsw-tag.run { color: #7ee787; border-color: rgba(63,185,80,.45); background: rgba(63,185,80,.14); }
 .ts-projsw-tag.wait { color: #f5c451; border-color: rgba(245,196,81,.45); background: rgba(245,196,81,.14); }
-.ts-projsw-tag.idle { color: #6b7280; border-color: rgba(127,127,127,.28); }
-.ts-projsw-age { margin-left: auto; color: #6b7280; }
+.ts-projsw-tag.idle { color: var(--ts-fg-mute); border-color: rgba(127,127,127,.28); }
+.ts-projsw-age { margin-left: auto; color: var(--ts-fg-mute); }
 /* 有对话在跑的项目：整行左边加一条绿竖线，扫一眼就能分辨（用户要求） */
 .ts-projsw-row[data-busy] { box-shadow: inset 2px 0 0 0 #3fb950; }
 .ts-set-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 4px 2px; }
-.ts-set-title { font-size:calc(var(--ts-fs, 12.5px) * 0.88); font-weight: 600; color: #9aa4b2; letter-spacing: .02em; }
-.ts-set-hint { font-size:calc(var(--ts-fs, 12.5px) * 0.84); color: #6b7280; }
+.ts-set-title { font-size:calc(var(--ts-fs, 12.5px) * 0.88); font-weight: 600; color: var(--ts-fg-dim); letter-spacing: .02em; }
+.ts-set-hint { font-size:calc(var(--ts-fs, 12.5px) * 0.84); color: var(--ts-fg-mute); }
 .ts-set-grid { display: flex; flex-wrap: wrap; gap: 6px; padding: 2px 4px; }
 .ts-set-row { display: flex; align-items: center; gap: 8px; padding: 3px 4px; }
-.ts-set-k { flex: none; width: 62px; color: #9aa4b2; font-size:calc(var(--ts-fs, 12.5px) * 0.88); }
+.ts-set-k { flex: none; width: 62px; color: var(--ts-fg-dim); font-size:calc(var(--ts-fs, 12.5px) * 0.88); }
 .ts-set-seg { display: inline-flex; flex-wrap: wrap; gap: 4px; }
 .ts-set-opt { border: 1px solid rgba(127,127,127,.3); border-radius: 6px; background: rgba(127,127,127,.08); color: inherit; font: inherit; font-size:calc(var(--ts-fs, 12.5px) * 0.88); padding: 2px 9px; cursor: pointer; }
 .ts-set-opt:hover { border-color: rgba(127,127,127,.55); }
@@ -295,9 +319,19 @@ body.ts-resizing { cursor: col-resize !important; user-select: none !important; 
 @keyframes ts-sb-pulse { from { opacity: .45 } to { opacity: 1 } }
 .ts-sb-item[data-done] { color: #3fb950; }
 /* 状态栏里的会话控件与布局按钮：紧凑排布 */
-.ts-statusbar .ts-sb-grow { flex: 1; min-width: 0; }
+/* 实时提示最多占状态栏一半（用户要求）：剩下的一半留给右侧会话/布局控件。 */
+.ts-statusbar .ts-sb-grow { flex: 0 1 50%; min-width: 0; }
 /* 一体化：状态栏不画上边线；左侧实时提示与右侧会话控件之间留出空白（用户反馈贴太近）。 */
-.ts-statusbar { grid-area: status; display: flex; align-items: center; gap: 10px; padding: 0 8px; font-size:calc(var(--ts-fs, 12.5px) * 0.92); color: #9aa4b2; overflow: hidden; }
+.ts-statusbar { grid-area: status; display: flex; align-items: center; gap: 10px; padding: 0 10px; font-size:calc(var(--ts-fs, 12.5px) * 0.92); color: var(--ts-fg-dim); overflow: hidden;
+  /* 悬浮在页面之上（同 info_report 的 #statusbar：不透明底 + 上边线 + **向上投的阴影**）：
+     状态栏脱离网格行（那一行高度为 0），内容从它底下穿过；高度由 DeskDock 量出写进 --ts-sb-h。 */
+  position: absolute; left: 0; right: 0; bottom: 0; z-index: 45;
+  min-height: 28px;
+  background: var(--ts-sb-bg);
+  border-top: 1px solid var(--ts-line);
+  box-shadow: 0 -6px 18px rgba(0,0,0,.18);
+  backdrop-filter: blur(10px) saturate(1.1);
+}
 .ts-statusbar .ts-sb-grow { padding-right: 26px; }
 .ts-sb-group { display: flex; align-items: center; gap: 8px; min-width: 0; overflow: hidden; }
 .ts-sb-group--right { margin-left: auto; }
@@ -311,15 +345,17 @@ body.ts-resizing { cursor: col-resize !important; user-select: none !important; 
 .ts-dock-chatcell { flex: 1; min-height: 0; display: flex; flex-direction: column; position: relative; }
 /* 底部渐变：保留「消息滚到输入条上沿就看不见底下」的视觉，
    但把它放在聊天格底部（而不是像宿主那样跟着 seat 一起被搬走 → 那块就是黑覆盖）。 */
-.ts-dock-fade { position: absolute; left: 0; right: 0; bottom: 0; height: calc(var(--ts-composer-h, 72px) + 18px); pointer-events: none; z-index: 30; background: linear-gradient(to top, rgba(21,21,23,.94) 0, rgba(21,21,23,.55) 44%, transparent 100%); }
+/* 输入条上方的渐隐（滚到输入条底下的消息淡出）：底色必须跟着主题走，
+   原来写死成宿主深色 rgba(21,21,23,…)，浅色主题下就是聊天底部一块黑（自查发现）。 */
+.ts-dock-fade { position: absolute; left: 0; right: 0; bottom: 0; height: calc(var(--ts-composer-h, 72px) + 18px); pointer-events: none; z-index: 30; background: linear-gradient(to top, var(--ts-fade-from, rgba(21,21,23,.94)) 0, var(--ts-fade-mid, rgba(21,21,23,.55)) 44%, transparent 100%); }
 .ts-dock-tabico { display: inline-flex; align-items: center; }
 /* 拖动窗口期间：iframe 不吃指针事件。否则鼠标一进 iframe，父文档就再也收不到
    dragover/drop，dockview 的落点浮层在 iframe 上方不显示（预览面板是全插件唯一的 iframe，
    落点浮层恰好总在它上方）；松手后的实际搬运自 dragend 兜底，不受影响。 */
 body.ts-dock-dragging iframe { pointer-events: none !important; }
-.ts-dock-empty { position: absolute; inset: 0; display: grid; place-items: center; color: #6b7280; font-size:calc(var(--ts-fs, 12.5px) * 1.04); }
-.ts-dock-watermark { color: #6b7280; font-size:calc(var(--ts-fs, 12.5px) * 0.96); }
-.ts-pop { position: fixed; z-index: 80; right: auto; min-width: 268px; max-height: 72vh; overflow: auto; border: 1px solid rgba(127,127,127,.32); border-radius: 10px; background: rgba(14,16,21,.97); backdrop-filter: blur(8px); box-shadow: 0 16px 40px rgba(0,0,0,.5); padding: 6px; }
+.ts-dock-empty { position: absolute; inset: 0; display: grid; place-items: center; color: var(--ts-fg-mute); font-size:calc(var(--ts-fs, 12.5px) * 1.04); }
+.ts-dock-watermark { color: var(--ts-fg-mute); font-size:calc(var(--ts-fs, 12.5px) * 0.96); }
+.ts-pop { position: fixed; z-index: 80; right: auto; min-width: 268px; max-height: 72vh; overflow: auto; border: 1px solid var(--ts-pop-line); border-radius: 10px; background: var(--ts-pop-bg); color: var(--ts-pop-fg); backdrop-filter: blur(8px); box-shadow: var(--ts-pop-shadow); padding: 6px; }
 /* 旧版 ⋯ / 皮肤两个浮层已并入 .ts-set（.ts-pop-* 的通用部分保留） */
 .ts-pop-item { display: flex; align-items: center; gap: 8px; padding: 4px 6px; border-radius: 7px; }
 .ts-pop-item:hover { background: rgba(127,127,127,.12); }
@@ -329,21 +365,44 @@ body.ts-dock-dragging iframe { pointer-events: none !important; }
 .ts-pop-region:hover { background: rgba(127,127,127,.18); border-color: rgba(127,127,127,.3); }
 .ts-pop-region[data-on] { color: #4f8ef7; border-color: rgba(79,142,247,.5); background: rgba(79,142,247,.15); }
 .ts-pop-sep { height: 1px; background: rgba(127,127,127,.22); margin: 6px 4px; }
+/* 设置面板里的窗口名：可点 = 跳到那个窗口（窄屏下会最大化） */
+.ts-pop-name--jump { border: 0; background: 0 0; color: inherit; font: inherit; padding: 0; cursor: pointer; text-align: left; }
+.ts-pop-name--jump:hover { color: #4f8ef7; text-decoration: underline; }
 .ts-pop-btn { display: flex; width: 100%; align-items: center; gap: 6px; border: 0; border-radius: 7px; background: 0 0; color: inherit; font: inherit; font-size:calc(var(--ts-fs, 12.5px) * 0.96); padding: 6px; cursor: pointer; text-align: left; }
 .ts-pop-btn:hover { background: rgba(127,127,127,.14); }
 /* 皮肤格子（现在是设置面板里的一个区块） */
-.ts-skin-cell { flex: 1 1 46%; min-width: 96px; height: 40px; border: 1px solid rgba(127,127,127,.32); border-radius: 7px; background: rgba(127,127,127,.08); color: #e6e8eb; font: inherit; font-size:calc(var(--ts-fs, 12.5px) * 0.92); cursor: pointer; }
+.ts-skin-cell { flex: 1 1 46%; min-width: 96px; height: 40px; border: 1px solid rgba(127,127,127,.32); border-radius: 7px; background: rgba(127,127,127,.08); color: var(--ts-fg); font: inherit; font-size:calc(var(--ts-fs, 12.5px) * 0.92); cursor: pointer; }
 .ts-skin-cell[data-on] { border-color: #4f8ef7; box-shadow: inset 0 0 0 1px rgba(79,142,247,.5); }
 .dv-intel { background: transparent; }
 .dv-intel .dv-dockview, .dv-intel .dv-groupview { background: transparent; border-radius: 0; }
 .dv-intel .dv-tabs-and-actions-container { background: transparent !important; height: 33px; font-size:var(--ts-fs, 12.5px); }
 .dv-intel .dv-tab { background: transparent !important; border-radius: 0 !important; opacity: .5; transition: opacity .12s; }
 /* 激活的标签**不画底色**（用户反馈「标题行区域还有背景色」）：只把图标提亮。 */
-.dv-intel .dv-tab.dv-active-tab { background: transparent !important; color: #e6e8eb !important; opacity: 1; }
+.dv-intel .dv-tab.dv-active-tab { background: transparent !important; color: var(--ts-fg) !important; opacity: 1; }
 .dv-intel .dv-tab:hover { opacity: .85; }
+/* 探索者窗口的状态角标（用户要求：窗口一多，谁在跑/谁被中断/谁刚回消息要一眼看见）
+   画在**标签图标右上角**：蓝 = 正在跑，红 = 本轮异常结束，绿 = 有新的汇报。 */
+.dv-intel .dv-tab { position: relative; }
+.dv-intel .dv-tab[data-tone]::after {
+  content: '';
+  position: absolute; top: 3px; right: 3px;
+  width: 7px; height: 7px; border-radius: 50%;
+}
+.dv-intel .dv-tab[data-tone="run"]::after { background: #4f8ef7; box-shadow: 0 0 0 2px rgba(79,142,247,.22); animation: ts-sb-pulse 1.2s ease-in-out infinite alternate; }
+.dv-intel .dv-tab[data-tone="notice"]::after { background: #f85149; box-shadow: 0 0 0 2px rgba(248,81,73,.22); }
+.dv-intel .dv-tab[data-tone="new"]::after {
+  content: attr(data-badge);
+  width: auto; min-width: 13px; height: 13px; padding: 0 3px; border-radius: 7px;
+  display: grid; place-items: center;
+  background: #3fb950; color: #04140a;
+  font-size: calc(var(--ts-fs, 12.5px) * 0.72); font-weight: 700; line-height: 1;
+}
+/* 协作对话标题行里的「全部停止」与结果提示 */
+.ts-talk-note { font-size: calc(var(--ts-fs, 12.5px) * 0.86); color: #7ee787; white-space: nowrap; }
+
 .dv-intel .dv-separator, .dv-intel .dv-sash { border-color: transparent !important; }
 .dv-intel .dv-sash.dv-active-sash { background: #4f8ef7 !important; }
-.dv-intel .dv-floating { box-shadow: 0 18px 48px rgba(0,0,0,.5); border: 1px solid #242b36; }
+.dv-intel .dv-floating { box-shadow: 0 18px 48px rgba(0,0,0,.5); border: 1px solid var(--ts-line); }
 /* 窗口标签的右键菜单。
    为什么必须自己上样式：为了跳出面板链路的 overflow:hidden（否则菜单在区域边缘被裁掉），
    我们把它搬到了 document.body —— 于是 dockview 自己的 --dv-* 变量不再继承，
@@ -352,9 +411,9 @@ body.ts-dock-dragging iframe { pointer-events: none !important; }
 .dv-context-menu, .dv-context-menu-container { z-index: 120 !important; }
 .dv-context-menu[data-ts-hoisted="1"] {
   min-width: 172px; padding: 5px; border-radius: 10px;
-  background: rgba(14,16,21,.97); color: #e6e8eb;
-  border: 1px solid rgba(127,127,127,.32);
-  box-shadow: 0 16px 40px rgba(0,0,0,.5); backdrop-filter: blur(8px);
+  background: var(--ts-pop-bg); color: var(--ts-pop-fg);
+  border: 1px solid var(--ts-pop-line);
+  box-shadow: var(--ts-pop-shadow); backdrop-filter: blur(8px);
   font-size: calc(var(--ts-fs, 12.5px) * 0.96);
   font-family: var(--ts-font, inherit);
 }
@@ -380,6 +439,47 @@ body.ts-dock-dragging iframe { pointer-events: none !important; }
 .dv-intel .dv-sash:hover { background: rgba(79,142,247,.5) !important; }
 .dv-intel .dv-tab { cursor: grab; }
 .dv-intel .dv-tab:active { cursor: grabbing; }
+/* ── 移动端（窄视口）：三栏 → 单栏 + 抽屉 ─────────────────────
+   问题（用户反馈「手机端布局一片混乱且无法调整」）：原来三栏是
+   原来三栏是 minmax(0,220px) minmax(0,1fr) minmax(0,260px)，而 SIDE_MIN=180、SIDE_MAX=720，
+   在 393px 宽的手机上被压成 196/0/196 —— 中间「DSH 主对话」宽度为 0，看不见也点不到；
+   8px 的拖拽把手在触屏上也基本拖不动。
+   适配：中间永远整宽 + 两侧栏变成**覆盖式抽屉**（由区域三键开关，同时只开一个），
+   把手隐藏（改用三键开关），标题行/状态栏 /标签页尺寸按触屏放大。
+   断点 900px 与远程插件的 mobile presets 保持一致。 */
+@media (max-width: 900px) {
+  .ts-dock { grid-template-columns: 0 minmax(0,1fr) 0 !important; grid-template-rows: 46px minmax(0,1fr) 0px; }
+  .ts-dock .ts-region[data-region="left"],
+  .ts-dock .ts-region[data-region="right"] {
+    display: none; position: absolute; top: 46px; bottom: var(--ts-sb-h, 28px); width: min(86vw, 380px); z-index: 70;
+    background: var(--ts-surface-solid); box-shadow: 0 14px 44px rgba(0,0,0,.6); border: 0;
+  }
+  .ts-dock[data-ts-drawer="left"] .ts-region[data-region="left"] { display: block; left: 0; }
+  .ts-dock[data-ts-drawer="right"] .ts-region[data-region="right"] { display: block; right: 0; }
+  /* 抽屉展开时的遮罩：点一下收起（触屏没有「悬停」，得给个明确出路） */
+  .ts-drawer-mask { position: absolute; left: 0; right: 0; top: 46px; bottom: var(--ts-sb-h, 28px); z-index: 65; background: rgba(0,0,0,.45); }
+  /* 触屏上拖 8px 把手不现实 → 隐藏，改用三键开关区域 */
+  .ts-dock .ts-resizer { display: none !important; }
+  /* 标题行：字号收一档、按钮放大到能点中（≥ 32px） */
+  .ts-titlebar { padding: 0 6px; gap: 6px; height: 46px; }
+  .ts-title-proj { font-size: calc(var(--ts-fs, 12.5px) * 1.12); }
+  .ts-title-switch { padding: 5px 7px; }
+  .ts-tg { width: 34px; height: 32px; }
+  .ts-tg-badge { top: 0; right: 0; }
+  .ts-title-left { gap: 6px; }
+  .ts-closed-chip { padding: 4px 10px; }
+  /* 状态栏：换行成两行（提示一行、控件一行），不再把右边按钮挤掉 */
+  .ts-statusbar { flex-wrap: wrap; padding: 4px 8px 6px; gap: 6px; }
+  .ts-statusbar .ts-sb-grow { flex: 1 1 100%; padding-right: 0; }
+  .ts-statusbar .ts-sb-group--right { margin-left: 0; flex: 1 1 100%; overflow-x: auto; }
+  /* 窗口标签、面板内容：按触屏放大一点 */
+  .dv-intel .dv-tabs-and-actions-container { height: 38px; }
+  .dv-intel .dv-tab { min-width: 40px; }
+  /* 浮层：贴边、不超出屏宽 */
+  .ts-pop { min-width: 0 !important; width: min(92vw, 340px) !important; max-height: 68vh; }
+  .ts-pop.ts-set { width: min(92vw, 340px) !important; }
+  .ts-expset-pop { min-width: 0; width: calc(100vw - 20px); max-width: calc(100vw - 20px); }
+}
 `
 
 function installDockCss(): void {
@@ -403,14 +503,8 @@ function readHiddenRegions(): Region[] {
   }
 }
 
-function readSkin(): string {
-  try {
-    return window.localStorage.getItem(SKIN_KEY) ?? ''
-  } catch {
-    return ''
-  }
-}
 
+/* readSkin/SKIN_KEY 已搬到 skins.ts（工作台与项目中心共用同一套皮肤目录） */
 /** 界面字号档位（真的改字号，不是只看画）。 */
 const FONT_LEVELS = [
   { id: 's', label: '小', size: 11.5 },
@@ -427,6 +521,27 @@ const FONT_FAMILIES = [
 ] as const
 type FontFamilyId = (typeof FONT_FAMILIES)[number]['id']
 
+/**
+ * 用户主动关掉的窗口 id（按项目分键）。关掉的窗口在该项目里就是关着，不再自己弹回来；
+ * 重新打开走标题行的「＋ 面板名」chip / 设置面板的「全部打开」（那时会从这份集合里删掉）。
+ */
+const CLOSED_KEY = (projectId: string) => `tokensave:desk-closed.v1:${projectId}`
+function readClosed(projectId: string): string[] {
+  try {
+    const raw = window.localStorage.getItem(CLOSED_KEY(projectId))
+    const parsed = raw ? JSON.parse(raw) : null
+    return Array.isArray(parsed) ? parsed.filter((x: unknown): x is string => typeof x === 'string') : []
+  } catch {
+    return []
+  }
+}
+function writeClosed(projectId: string, ids: Iterable<string>): void {
+  try {
+    window.localStorage.setItem(CLOSED_KEY(projectId), JSON.stringify([...ids]))
+  } catch {
+    /* 隐私模式：仅本次会话有效 */
+  }
+}
 function readFont(): FontId {
   try {
     const raw = window.localStorage.getItem(FONT_KEY)
@@ -460,7 +575,21 @@ function applyFont(font: FontId, family: FontFamilyId): void {
 }
 
 /** 插件一加载就把上次的字体设上去：项目中心里也立即生效（不只在工作台）。 */
+/** 插件一加载就把上次的字体设上去：项目中心里也立即生效（不只在工作台）。 */
 applyFont(readFont(), readFontFamily())
+
+/** 皮肤同理：写到 :root 变量，工作台与项目中心同时生效（换皮肤不需要重挂组件）。 */
+bootSkin()
+
+/**
+ * 主题：宿主切深/浅色时把 <html data-ts-theme> 更新掉（浅色下外壳要换成浅底深字，
+ * 不然主对话里的文字会在白底上看不见）。插件加载就挂上，项目中心也吃这套变量。
+ */
+startThemeWatch(() => {
+  // 宿主主题变了 → 皮肤可能整套切换（深浅适配），重解析一次并通知面板同步状态
+  applySkinVars()
+  window.dispatchEvent(new CustomEvent('ts-theme-changed'))
+})
 
 /** 一份「完整布局」快照：三个区的面板排布 + 哪些区收起 + 两侧栏宽度。 */
 interface LayoutSnapshot {
@@ -534,7 +663,12 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
   const autoSessionRef = useRef(false)
   const apiRef = useRef<Record<Region, any> | null>(null)
   const containersRef = useRef<Record<string, HTMLElement>>({})
-  const closedRef = useRef<Set<string>>(new Set())
+  /**
+   * 用户**主动关掉**的窗口（右键菜单/三键的「关闭」）。
+   * 持久化：否则一重载（或 reconcile 跑一次）就“还回来”，而且落在默认区、不是原来那块
+   * （用户反馈「关闭了之后页面刷新一下又显示出来，位置还不对」）。
+   */
+  const closedRef = useRef<Set<string>>(new Set(readClosed(project.id)))
   const suppressDirtyRef = useRef(false)
   const resetToBuiltinRef = useRef<null | (() => void)>(null)
   const paneOptsRef = useRef<(id: string, position?: any) => any>(() => null)
@@ -543,6 +677,32 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
   const [font, setFont] = useState<FontId>(readFont)
   const [fontFamily, setFontFamily] = useState<FontFamilyId>(readFontFamily)
   const [liveIds, setLiveIds] = useState<string[]>([])
+  /** 每条探索者「上次被看到」的时间：状态角标据此判断有没有新汇报。 */
+  const seenRef = useRef<Record<string, number>>({})
+  /** 主对话轮次结束时的自动停止：轮次指纹（最后一条 assistant 的时间）+ 探索者列表镜像。 */
+  const autoStopTurnRef = useRef(0)
+  const explorersRef = useRef<readonly { id: string; state?: string }[]>([])
+  const stopAllExplorersRef = useRef<(() => Promise<void>) | null>(null)
+  /** 调试/核对用：角标快照（window.__tsDeskDock.badges()）。 */
+  const badgesRef = useRef<Record<string, unknown>>({})
+  /** 宿主主题切换（皮肤可能整套换）→ 同步面板里的当前模式与当前皮肤。 */
+  useEffect(() => {
+    const on = () => {
+      setSkinMode(currentThemeMode())
+      setSkin(readSkinId())
+    }
+    window.addEventListener('ts-theme-changed', on)
+    return () => window.removeEventListener('ts-theme-changed', on)
+  }, [])
+
+  /** 挂载 effect（右键菜单）里要用最新的 closePanel。 */
+  const closePanelRef = useRef<((id: string) => void) | null>(null)
+  /** 工作台正在拆除（卸载/恢复布局）：布局脏标记与关闭记账都不要动。 */
+  const teardownRef = useRef(false)
+  /** 标签重建时也要能立刻补画角标（挂载 effect 里用）。 */
+  const paintBadgesRef = useRef<(() => void) | null>(null)
+  /** 「全部停止探索者」的运行/结果提示。 */
+  const [stopNote, setStopNote] = useState('')
   const [reloadKey, setReloadKey] = useState(0)
   const [hiddenRegions, setHiddenRegions] = useState<Region[]>(readHiddenRegions)
   /** 隐藏区集合的即时镜像：挂载 effect 里的回调（布局变化 / 激活面板变化）要读**最新**值。 */
@@ -551,11 +711,16 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
   /** 由挂载 effect 赋值的「输入条要不要藏」判定：hiddenRegions 变化（收起编辑区）时也要重跑。 */
   const syncChatSeatRef = useRef<() => void>(() => {})
   const [layoutDirty, setLayoutDirty] = useState(false)
-  const [skin, setSkin] = useState<string>(readSkin)
   /** 右上角「设置」面板（显示/隐藏窗口 + 皮肤 + 字体，三块合一）。 */
   const [settingsOpen, setSettingsOpen] = useState(false)
   /** 标题行左侧「项目切换」面板。 */
   const [projOpen, setProjOpen] = useState(false)
+  /** 鼠标悬浮自动开合用的定时器（用户要求：项目清单悬浮就弹，不必非点不可）。 */
+  const projHoverRef = useRef<number | null>(null)
+  /** 背景皮肤 id（目录见 skins.ts；空字符串 = 无皮肤）。 */
+  const [skin, setSkin] = useState<string>(readSkinId)
+  /** 当前宿主主题模式（皮肤面板里按它显示对应的那一栏）。 */
+  const [skinMode, setSkinMode] = useState<'dark' | 'light'>(currentThemeMode)
   const [popPos, setPopPos] = useState<{ left: number; top: number } | null>(null)
   /** 侧栏宽度（可拖拽；同 info_report 的 --side-l / --side-r）。 */
   const [sideW, setSideW] = useState<{ left: number; right: number }>(() => {
@@ -684,6 +849,19 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
       const after = list.slice(idx + 1)
       const stillWorking = after.some((m) => m.role !== 'assistant')
       if (!stillWorking) {
+        // 主对话这一轮已经结束，却还有探索者在跑（用户反馈：主对话完成了，
+        // 探索者还在持续跑）—— 结果已经没人消费了，自动全部停掉，省得一直烧额度。
+        // 每轮只触发一次（用 lastAssistant.time 作轮次指纹）。
+        const turnKey = Number(lastAssistant.time ?? 0)
+        if (turnKey && autoStopTurnRef.current !== turnKey) {
+          autoStopTurnRef.current = turnKey
+          const running = (explorersRef.current ?? []).filter((e) => e.state === 'running')
+          if (running.length) {
+            setLiveTip({ text: `本轮已结束，正在停止 ${running.length} 个仍在运行的探索者…`, done: false })
+            window.setTimeout(() => void stopAllExplorersRef.current?.(), 300)
+            return
+          }
+        }
         // 不再拼「· 对话已完成」：完成态由左侧圆点表达（data-done + ts-sb-dot 由蓝转灰），
         // 每轮都挂一句相同的话尾只是噪音（用户反馈）。异常结束仍保留标注：那有信息量。
         const suffix = gotNotice ? ' · 本轮异常结束' : ''
@@ -754,9 +932,17 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
       if (!apis || !cur) return
       const p = apis[cur].getPanel(id)
       if (p) apis[cur].removePanel(p)
+      // 记成「用户关掉的」并落盘：否则 reconcile / 下次刷新又把它放回来，
+      // 而且落在默认区、不是原来那个位置（用户反馈的那条 bug）。
+      // 只有真正的关闭入口走这里（三键 / ⋯ 菜单 / 标签右键菜单），
+      // 组件被动 dispose 不记账（见 unregister 的注释）。
+      closedRef.current.add(id)
+      writeClosed(project.id, closedRef.current)
+      bump((n) => n + 1)
     },
-    [regionOf],
+    [regionOf, project.id],
   )
+  closePanelRef.current = closePanel
 
   /** 把窗口放到指定区（未打开也会打开到那里；已在别处则先摘再挂）——同 info_report。 */
   const moveWindowTo = useCallback(
@@ -829,13 +1015,17 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
 
     const register = (id: string, el: HTMLElement) => {
       containersRef.current[id] = el
-      closedRef.current.delete(id)
+      // 真正被建出来 = 不再算「关着」（chip / 全部打开 / 拖动都会走到这里）→ 同步落盘
+      if (closedRef.current.delete(id)) writeClosed(project.id, closedRef.current)
       bump((n) => n + 1)
     }
     const unregister = (id: string, el: HTMLElement) => {
       if (containersRef.current[id] === el) {
         delete containersRef.current[id]
-        closedRef.current.add(id)
+        // ⚠️ 这里**不能**推断「用户把它关掉了」：dockview 在移动面板、重建标签、
+        // 恢复布局、插件热重载时都会 dispose 组件。实测教训——一旦这么记，探索者窗口
+        // 整批会被标记成「关掉的」，刷新后集体消失。
+        // 「关掉」只在用户真的动了关闭入口时记（见 closePanel / 右键菜单）。
         bump((n) => n + 1)
       }
     }
@@ -867,6 +1057,12 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
             const id = String(params?.params?.win || '')
             el.innerHTML = iconSvg(paneIcon(id))
             el.title = paneOptsRef.current(id) && titleFor(id)
+            // 标签元素上带面板 id：状态角标（跑/中断/新消息）由 effect 按属性驱动，
+            // 不需要在标签里再拼一遍图（CSS 用 ::after 画）。
+            const host = (el.closest('.dv-tab') as HTMLElement | null) ?? el
+            host.setAttribute('data-ts-pane', id)
+            // 建标签时先画一次角标（dockview 重建标签后属性会丢，见 paintBadges 的注释）
+            window.setTimeout(() => paintBadgesRef.current?.(), 0)
           },
           dispose() {
             el.innerHTML = ''
@@ -910,8 +1106,15 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
       // 布局锁功能已删：面板/分隔条始终可拖（保留这个选项位以免 dockview 默认值不同）
       disableDnd: false,
       getTabContextMenuItems: ({ panel, group }: any) => [
-        { label: '关闭', action: () => panel.api.close() },
-        { label: '关闭其他', action: () => group.panels.slice().forEach((p: any) => p !== panel && p.api.close()) },
+        // 走 closePanel：关闭要记账（关掉的窗口不许自己回来）
+        { label: '关闭', action: () => closePanelRef.current?.(String(panel.id)) },
+        {
+          label: '关闭其他',
+          action: () =>
+            group.panels.slice().forEach((p: any) => {
+              if (p !== panel) closePanelRef.current?.(String(p.id))
+            }),
+        },
         'separator',
         {
           label: '浮动',
@@ -1078,6 +1281,14 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
     suppressDirtyRef.current = true
     restored = tryRestore(SAVED_KEY(project.id)) || tryRestore(SNAPSHOT_KEY(project.id))
     if (!restored) buildDefault()
+    // 用户关过的窗口：快照/默认布局里都有它 → 这里当场摘掉，不带回来
+    // （用户反馈：关掉后一刷新又冒出来，而且落在默认区、不是原来那块）。
+    closedRef.current.forEach((id) => {
+      const r = regionOf(id)
+      if (!r) return
+      const p = apis[r].getPanel(id)
+      if (p) apis[r].removePanel(p)
+    })
     // 「项目预览默认在编辑区」的归位迁移放到了下面的面板 reconcile 里：
     // 那时预览面板可能还没建出来（devUrl 是轮询拿到的），在挂载时做会白跑一次。
     REGIONS.forEach(ensureDropTarget)
@@ -1133,14 +1344,18 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
     window.addEventListener('blur', closeContextMenu)
 
     /**
-     * 主对话卡「看不见」时把宿主输入条整条藏掉（同 ts-hdesk-nochat 口径）。
-     * 看不见有三种：面板被关、被同组别的窗口挡在后面（例如把预览拖进主对话那一组）、
-     * 整个编辑区/面板区被收起。不藏的话，那条 position:fixed 的输入条会悬在别的窗口上。
+     * 主对话卡**真的不在了**时才把宿主输入条整条藏掉（同 ts-hdesk-nochat 口径）：
+     * 面板被关、或整个编辑区/面板区被收起。
+     *
+     * ⚠️ 不要因为「主对话被别人挡在后面」（api.isVisible === false）就藏 ——
+     * 用户反馈（info_report / compare-text）「主对话里看不到输入框」就是这个条件造成的：
+     * 那两块布局里主对话是后台标签，但输入条仍然可用、也必须看得见。
+     * 代价：当有人把别的窗口拖进主对话那一组时，输入条会浮在它上面（可接受：看得见 > 藏了）。
      */
     const syncChatSeat = () => {
       const p = apis.center.getPanel(paneId(project.id, 'chat'))
       const centerHidden = hiddenRef.current.includes('center')
-      const shown = !!p && p.api?.isVisible !== false && !centerHidden
+      const shown = !!p && !centerHidden
       document.body.classList.toggle('ts-desk-nochat', !shown)
     }
     syncChatSeatRef.current = syncChatSeat
@@ -1173,7 +1388,13 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
       })
       try {
         apis[r].onDidActivePanelChange((p: any) => {
-          if (p?.id) setActiveLabel(kindLabel(String(p.id)))
+          if (p?.id) {
+            const pid = String(p.id)
+            setActiveLabel(kindLabel(pid))
+            // 用户看到这条探索者了 → 记「已看过」，角标随之清掉（回消息提醒）
+            const m = /:exp:([^:]+)$/.exec(pid)
+            if (m) seenRef.current[m[1]] = Date.now()
+          }
           // 主对话被别人挡在后面时要把宿主输入条藏掉（见 syncChatSeat）
           syncChatSeat()
         })
@@ -1203,9 +1424,14 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
       dnd: () => apis.center.dndCapabilities,
       reset: () => resetToBuiltinRef.current?.(),
       move: (id: string, region: Region) => moveWindowTo(id, region),
+      /** 探索者状态角标快照（跑 / 异常 / 有新回复 / 安静）：真机核对与排查用。 */
+      badges: () => badgesRef.current,
+      /** 全部停止探索者（与协作对话标题行的按钮同一个入口）。 */
+      stopExplorers: () => stopAllExplorersRef.current?.(),
     }
 
     return () => {
+      teardownRef.current = true
       document.removeEventListener('contextmenu', hoistRaf, true)
       document.removeEventListener('mousedown', onMenuOutsideDown, true)
       document.removeEventListener('click', onMenuClick, true)
@@ -1245,6 +1471,8 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
     const ensure = (id: string) => {
       if (inHidden(id)) return
       if (regionOf(id)) return
+      // 用户主动关掉的窗口不补回来（放在 regionOf 之后：已在场的面板永远不受影响）
+      if (closedRef.current.has(id)) return
       const region = defaultRegionOf(id)
       // ⚠️ position 的 referencePanel 必须**属于同一个 dockview 实例**：
       // 主对话在 center 实例，而 preview 要加进 left 实例 —— 跨实例引用会让
@@ -1488,8 +1716,55 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
     }
   }, [sideW])
 
+  // —— 移动端（窄视口）：两侧栏改成覆盖式抽屉，同时只开一个 ——
+  //   窄屏下三栏根本放不下（实测 393px 被压成 196/0/196，中间对话宽度 0），
+  //   所以中间永远整宽，左右两侧由这里控制抽屉开关；桌面端行为不变。
+  const [drawer, setDrawer] = useState<Region | null>(null)
+  const [narrow, setNarrow] = useState(false)
+  /**
+   * 悬浮状态栏的高度 → `--ts-sb-h`。
+   * 状态栏脱离网格行（行高 0）、内容从它底下穿过，所以聊天底部留白与输入条位置
+   * 都要知道它有多高（窄屏它会换行成两行，高度是变的）。
+   */
+  useEffect(() => {
+    const el = document.querySelector<HTMLElement>('[data-desk-statusbar]')
+    if (!el || typeof ResizeObserver === 'undefined') return
+    const apply = () => {
+      const h = Math.ceil(el.getBoundingClientRect().height)
+      // 上限兜一下：万一量到异常值（字体/样式未就绪），别把它写进变量 ——
+      // 这个变量还会被输入条/留白读走，写大了整块界面会被顶起来。
+      if (h > 0 && h <= 120) document.documentElement.style.setProperty('--ts-sb-h', `${h}px`)
+    }
+    apply()
+    const ro = new ResizeObserver(apply)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [liveIds, narrow])
+
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return
+    const mq = window.matchMedia('(max-width: 900px)')
+    const on = () => {
+      setNarrow(mq.matches)
+      // 回到宽屏就把抽屉清掉（宽屏走 hiddenRegions 那套，抽屉概念不适用）
+      if (!mq.matches) setDrawer(null)
+    }
+    on()
+    mq.addEventListener('change', on)
+    return () => mq.removeEventListener('change', on)
+  }, [])
+  /** 区域当前是否“展现在眼前”（只在窄屏下两侧栏看抽屉状态） */
+  const regionShown = (r: Region) =>
+    narrow ? (r === 'center' ? !hiddenRegions.includes('center') : drawer === r) : !hiddenRegions.includes(r)
+
   // —— 区域开关（同 info_report 的 hide-left / hide-panel / hide-right）——
   const toggleRegion = (region: Region) => {
+    if (narrow && region !== 'center') {
+      // 触屏：开/关抽屉（不改进 hiddenRegions，手机上的开关不会污染桌面布局）
+      setDrawer((d) => (d === region ? null : region))
+      return
+    }
     setHiddenRegions((prev) => {
       const next = prev.includes(region) ? prev.filter((r) => r !== region) : [...prev, region]
       try {
@@ -1573,14 +1848,11 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
   }, [project.id, applyRegions, applySideW])
 
   // —— 皮肤 ——
+  //    目录与 :root 变量写入都在 skins.ts（工作台 .ts-dock 与项目中心页读同一份变量，
+  //    所以这里只需 setState 让开关态刷新）。
   const applySkin = useCallback((value: string) => {
-    setSkin(value)
-    try {
-      if (value) window.localStorage.setItem(SKIN_KEY, value)
-      else window.localStorage.removeItem(SKIN_KEY)
-    } catch {
-      /* 忽略 */
-    }
+    chooseSkin(value)
+    setSkin(readSkinId())
   }, [])
 
   /**
@@ -1601,6 +1873,26 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
     setPopPos({ left, top })
   }
 
+  /**
+   * 项目清单的**悬浮开合**（用户要求「鼠标浮动就弹出，不一定需要点击」）。
+   * 开：进按钮/面板后 110ms（防手滑）；关：离开后 260ms（够时间从按钮移到面板）。
+   * 窄屏（触屏没有 hover）不启用，点击照旧可用。
+   */
+  const hoverProj = (open: boolean) => {
+    if (narrow) return
+    if (projHoverRef.current) window.clearTimeout(projHoverRef.current)
+    projHoverRef.current = window.setTimeout(() => {
+      projHoverRef.current = null
+      if (open) {
+        setSettingsOpen(false)
+        placePop(projBtnRef.current, narrow ? Math.min(window.innerWidth - 20, 340) : 280)
+        setProjOpen(true)
+      } else {
+        setProjOpen(false)
+      }
+    }, open ? 110 : 260)
+  }
+
   /** 项目清单：只在面板打开时重读一次（用户可能刚在项目中心加/删项目）。 */
   const projectList = useMemo(() => (projOpen ? loadProjects() : []), [projOpen])
   /** 每个项目里「进行中 / 待确认」的对话（数据源与项目中心卡片上的 ①②③ 同源）。 */
@@ -1617,6 +1909,146 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
   }, [data, project.id])
   const openIds = liveIds.filter((id) => allPaneIds.includes(id))
   const closedIds = allPaneIds.filter((id) => !liveIds.includes(id))
+  /**
+   * 空区域：一个面板都没有的侧栏（用户要求「没有内容时自动收起来」）。
+   * 只影响**显示宽度**（CSS 塌到 0），不动 hiddenRegions —— 等有窗口被放进来
+   * （拖动 / ⋯ 菜单「移到主侧栏」/ chip 打开）它自己就展开回来。
+   */
+  const emptyRegion = (r: Region) => !liveIds.some((id) => id.startsWith(`${project.id}:`) && regionOf(id) === r)
+
+  /**
+   * 探索者状态角标：跑 / 刚出问题（notice）/ 有新汇报 / 安静。
+   * 直接在 dockview 的**标签图标**上画一个小点（CSS ::after），方便一眼定位是哪位。
+   */
+  explorersRef.current = data.explorers ?? []
+  const explorerBadges = useExplorerBadges(data.explorers ?? [], seenRef)
+  badgesRef.current = explorerBadges
+  /**
+   * 把角标画到标签上。
+   * ⚠️ dockview 会**自己重建标签 DOM**（不经过 React），重建后属性会丢 —— 所以：
+   *   ① 建标签时（createTabComponent.init）也要画一次；
+   *   ② 再挂一个 1.5s 的心跳兜底（十几个标签的 querySelectorAll，代价可忽略）。
+   * 这就是「为什么不用 useEffect 一次性画完」的原因。
+   */
+  const paintBadges = useCallback(() => {
+    const root = dockRootRef.current
+    if (!root) return
+    // init 时标签还没插进 DOM（closest('.dv-tab') 取不到），所以标记先落在内层 span 上，
+    // 这里再往上找真正的 .dv-tab 挂状态属性（CSS ::after 画在 tab 的角上）。
+    root.querySelectorAll<HTMLElement>('[data-ts-pane]').forEach((pin) => {
+      const el = (pin.closest('.dv-tab') as HTMLElement | null) ?? pin
+      const id = pin.getAttribute('data-ts-pane') || ''
+      const m = /:exp:([^:]+)$/.exec(id)
+      // ⚠️ 必须读 ref：paintBadges 的 deps 是空数组（要用最新那份快照，不能闭包住首帧的 {}）
+      const snapshot = badgesRef.current as Record<string, { tone: string; unread: number } | undefined>
+      const b = m ? snapshot[m[1]] : undefined
+      if (!b || b.tone === 'idle') {
+        el.removeAttribute('data-tone')
+        el.removeAttribute('data-badge')
+        el.removeAttribute('data-badgehint')
+        return
+      }
+      el.setAttribute('data-tone', b.tone)
+      el.setAttribute('data-badge', b.unread > 9 ? '9+' : String(b.unread || 0))
+      el.setAttribute(
+        'data-badgehint',
+        b.tone === 'run' ? '正在运行' : b.tone === 'notice' ? '本轮异常结束（中断/截断）' : '有新的汇报，点开看看',
+      )
+    })
+  }, [])
+  /** 把最新角标快照写进去（deps 变化时 + 心跳兜底）。 */
+  const paintRef = useRef(paintBadges)
+  paintRef.current = paintBadges
+  paintBadgesRef.current = paintBadges
+  useEffect(() => {
+    paintBadges()
+    const t = window.setInterval(() => paintRef.current(), 1500)
+    return () => window.clearInterval(t)
+  }, [paintBadges, explorerBadges, liveIds, reloadKey])
+
+  /** ensureById 在下面才定义：focusPane 通过 ref 调，避免「先用后声明」。 */
+  const ensureByIdRef = useRef<((id: string) => void) | null>(null)
+  /** 我们在窄屏下自动最大化的那个窗口 id（转回宽屏时只还原这一个，别动用户自己最大化的）。 */
+  const autoMaxRef = useRef<string | null>(null)
+
+  /**
+   * 跳到某个窗口：没打开就打开；**窄屏下顺带最大化** ——
+   * 手机上一次只看一个窗口才看得清（不然编辑区里几个窗口各占 100 多 px，读不了也点不准）。
+   * 桌面端不加戏：只激活。
+   */
+  const focusPane = useCallback(
+    (id: string) => {
+      const apis = apiRef.current
+      if (!apis) return
+      if (!regionOf(id)) ensureByIdRef.current?.(id)
+      const r = regionOf(id)
+      const p = r ? apis[r].getPanel(id) : null
+      if (!p) return
+      p.api.setActive()
+      if (narrow && r === 'center') {
+        if (drawer) setDrawer(null)
+        autoMaxRef.current = id
+        try {
+          p.api.maximize()
+        } catch {
+          /* 该版本不支持最大化：忽略 */
+        }
+      }
+    },
+    [regionOf, narrow, drawer],
+  )
+
+  /**
+   * 窄屏默认「一个窗口占满编辑区」：进手机就把主对话最大化，
+   * 不然默认布局里 主对话/协作对话/预览 会各分到一百多像素（实测手机端读不了）。
+   * 只动我们自己最大化的那个：转回宽屏时还原。
+   */
+  useEffect(() => {
+    const apis = apiRef.current
+    if (!apis) return
+    if (narrow) {
+      const id = paneId(project.id, 'chat')
+      const p = apis.center.getPanel(id)
+      if (p && !p.api.isMaximized()) {
+        autoMaxRef.current = id
+        try {
+          p.api.maximize()
+        } catch {
+          /* 忽略 */
+        }
+      }
+    } else if (autoMaxRef.current) {
+      const id = autoMaxRef.current
+      autoMaxRef.current = null
+      const r = regionOf(id)
+      const p = r ? apis[r].getPanel(id) : null
+      try {
+        if (p?.api?.isMaximized?.()) p.api.exitMaximized()
+      } catch {
+        /* 忽略 */
+      }
+    }
+  }, [narrow, project.id, regionOf, liveIds])
+
+  /**
+   * 全部停止探索者（用户要求）：主对话都结束了，探索者却还在跑。
+   * 宿主 API：sessions.scope(id).get('conversation').cancel()（见 sessions.ts 的 stopSession）。
+   */
+  const stopAllExplorers = useCallback(async () => {
+    const list = (data.explorers ?? []).filter((e) => e.state === 'running')
+    if (!list.length) {
+      setStopNote('没有在运行的探索者')
+      window.setTimeout(() => setStopNote(''), 2500)
+      return
+    }
+    setStopNote(`正在停止 ${list.length} 个…`)
+    const results = await Promise.all(list.map((e) => stopSession(e.id)))
+    const okN = results.filter((r) => r.ok).length
+    setStopNote(okN === list.length ? `已停止 ${okN} 个探索者` : `已停止 ${okN}/${list.length} 个（其余可能已自行结束）`)
+    window.setTimeout(() => setStopNote(''), 4000)
+    window.setTimeout(() => setReloadKey((k) => k + 1), 600)
+  }, [data.explorers])
+  stopAllExplorersRef.current = stopAllExplorers
 
   /** 恢复/打开一个面板（chips 与「全部打开」用）。 */
   const ensureById = useCallback(
@@ -1655,6 +2087,7 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
     },
     [regionOf],
   )
+  ensureByIdRef.current = ensureById
 
   const nodeFor = useCallback(
     (id: string): React.ReactNode => {
@@ -1662,7 +2095,30 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
       if (!parsed) return null
       const { kind } = parsed
       if (kind === 'board') return <Blackboard workspace={project.path} />
-      if (kind === 'talk') return <TalkColumn sessionId={sid} explorers={data.explorers} />
+      if (kind === 'talk') {
+        // 协作对话标题行右侧给一个「全部停止」（用户要求：主对话都结束了，
+        // 探索者还在跑，得能一句话全停掉）。停止结果就地显示在这条标题行里。
+        return (
+          <TalkColumn
+            sessionId={sid}
+            explorers={data.explorers}
+            actions={
+              <>
+                {stopNote ? <span className="ts-talk-note">{stopNote}</span> : null}
+                <button
+                  className="ts-pop-all"
+                  data-desk-stop-explorers=""
+                  title="停止所有还在运行的探索者（主对话已结束时特别有用）"
+                  onClick={() => void stopAllExplorers()}
+                >
+                  <span dangerouslySetInnerHTML={{ __html: iconSvg('stop', 13) }} />
+                  全部停止
+                </button>
+              </>
+            }
+          />
+        )
+      }
       if (kind === 'save') return <SavingsColumn sessionId={sid} explorers={data.explorers} />
       if (kind === 'preview') {
         return (
@@ -1718,7 +2174,6 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
     },
     [project, sid, data, reloadKey, closePanel, regionOf],
   )
-
   return (
     <div
       ref={dockRootRef}
@@ -1727,13 +2182,18 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
       data-hide-left={hiddenRegions.includes('left') ? '' : undefined}
       data-hide-right={hiddenRegions.includes('right') ? '' : undefined}
       data-hide-center={hiddenRegions.includes('center') ? '' : undefined}
+      data-ts-drawer={drawer ?? undefined}
+      data-empty-left={emptyRegion('left') ? '' : undefined}
+      data-empty-right={emptyRegion('right') ? '' : undefined}
       style={{
-        ...(skin ? { background: skin } : {}),
+        // 皮肤不在这里写：由 :root 的 --ts-skin-color / --ts-skin-bg 提供（skins.ts），
+        // 这样工作台与项目中心读的是同一份、换皮肤也不用重挂组件。
         // 侧栏宽度可拖拽（同 info_report 的 --side-l / --side-r）。
         // **收起时必须不写这个内联变量**：内联优先级高于 .hide-* 里的 0px，
         // 不清就白收（info_report 的 showSide 里专门注释过这个坑）。
-        ...(hiddenRegions.includes('left') ? {} : { ['--ts-side-l' as any]: `${sideW.left}px` }),
-        ...(hiddenRegions.includes('right') ? {} : { ['--ts-side-r' as any]: `${sideW.right}px` }),
+        // 收起 / 空白时都**不能**写内联变量（内联优先级高于 .hide-* / [data-empty-*] 里的 0px）
+        ...(hiddenRegions.includes('left') || emptyRegion('left') ? {} : { ['--ts-side-l' as any]: `${sideW.left}px` }),
+        ...(hiddenRegions.includes('right') || emptyRegion('right') ? {} : { ['--ts-side-r' as any]: `${sideW.right}px` }),
       }}
     >
       <header className="ts-titlebar" data-desk-titlebar="">
@@ -1746,13 +2206,17 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
             data-open={projOpen ? '' : undefined}
             title="切换项目：列出「项目中心」里的全部项目，点一个即进它的工作台"
             onClick={() => {
+              if (projHoverRef.current) window.clearTimeout(projHoverRef.current)
               const next = !projOpen
               if (next) {
                 setSettingsOpen(false)
-                placePop(projBtnRef.current, 272)
+                // 窄屏：面板占满可用宽度（CSS 里 .ts-pop 在 ≤900px 时是 min(92vw,340px)）
+                placePop(projBtnRef.current, narrow ? Math.min(window.innerWidth - 20, 340) : 272)
               }
               setProjOpen(next)
             }}
+            onMouseEnter={() => hoverProj(true)}
+            onMouseLeave={() => hoverProj(false)}
           >
             <span aria-hidden="true" dangerouslySetInnerHTML={{ __html: iconSvg('zone', 19) }} />
             <span className="ts-title-caret" aria-hidden="true" dangerouslySetInnerHTML={{ __html: iconSvg('chevron', 13) }} />
@@ -1779,12 +2243,18 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
               key={r}
               className="ts-tg ts-tg--region"
               data-desk-region-toggle={r}
-              data-on={hiddenRegions.includes(r) ? undefined : '1'}
-              title={hiddenRegions.includes(r) ? `展开${REGION_LABEL[r]}` : `收起${REGION_LABEL[r]}`}
+              data-on={regionShown(r) ? '1' : undefined}
+              title={
+                regionShown(r)
+                  ? r === 'center'
+                    ? `收起${REGION_LABEL[r]}`
+                    : `关上${REGION_LABEL[r]}抽屉`
+                  : `展开${REGION_LABEL[r]}`
+              }
               onClick={() => toggleRegion(r)}
               dangerouslySetInnerHTML={{
                 // 显示/隐藏**只看图标内部那块填充**（不用蓝色与外框，用户指定）
-                __html: regionIconSvg(r, !hiddenRegions.includes(r), 16),
+                __html: regionIconSvg(r, regionShown(r), 16),
               }}
             />
           ))}
@@ -1804,7 +2274,7 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
               const next = !settingsOpen
               if (next) {
                 setProjOpen(false)
-                placePop(settingsBtnRef.current, 238)
+                placePop(settingsBtnRef.current, narrow ? Math.min(window.innerWidth - 20, 340) : 238)
               }
               setSettingsOpen(next)
             }}
@@ -1812,6 +2282,16 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
           />
         </div>
       </header>
+
+      {/* 窄屏抽屉遮罩：点一下关上（触屏没有 hover，必须给个明确出路） */}
+      {narrow && drawer ? (
+        <div
+          className="ts-drawer-mask"
+          data-desk-drawer-mask=""
+          aria-hidden="true"
+          onClick={() => setDrawer(null)}
+        />
+      ) : null}
 
       <aside className="ts-region" data-region="left" aria-label="主侧栏">
         <div className="ts-region-host" ref={leftHostRef} data-desk-host="left" />
@@ -1924,7 +2404,15 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
               return (
                 <div className="ts-pop-item" key={id} data-desk-pop-row={id}>
                   <span dangerouslySetInnerHTML={{ __html: iconSvg(paneIcon(id), 14) }} />
-                  <span className="ts-pop-name">{kindLabel(id)}</span>
+                  {/* 名字可点 = 跳到这个窗口（手机上一眼只看得下一个窗口，靠这里切换） */}
+                  <button
+                    className="ts-pop-name ts-pop-name--jump"
+                    data-desk-focus={id}
+                    title={narrow ? `跳到「${kindLabel(id)}」（手机端会占满编辑区）` : `跳到「${kindLabel(id)}」`}
+                    onClick={() => focusPane(id)}
+                  >
+                    {kindLabel(id)}
+                  </button>
                   <span className="ts-pop-where">
                     {REGIONS.map((r) => (
                       <button
@@ -1951,29 +2439,38 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
             })}
           </div>
 
-          {/* ② 背景皮肤（点了不关面板：方便连着试几套） */}
+          {/* ② 背景皮肤（分组 + 分类，参考 info_report 的皮肤目录；点了不关面板方便连着试） */}
           <div className="ts-set-block" data-desk-set-block="skin">
+            {/* 极简：只留标题。当前只列出「当前主题模式」对应的那一栏皮（跟随系统自动切），
+                所以不需要任何状态说明文字。 */}
             <div className="ts-set-head"><span className="ts-set-title">背景皮肤</span></div>
-            <div className="ts-set-grid">
-              {[
-                { id: '', label: '无' },
-                { id: 'linear-gradient(135deg,#0b0e14,#141922)', label: '深蓝' },
-                { id: 'linear-gradient(135deg,#0e1a14,#141922)', label: '墨绿' },
-                { id: 'linear-gradient(135deg,#1a0e14,#141922)', label: '暗红' },
-                { id: 'radial-gradient(circle at 30% 20%,#1a2029,#0b0e14)', label: '光晕' },
-              ].map((s2) => (
-                <button
-                  key={s2.label}
-                  className="ts-skin-cell"
-                  data-desk-skin={s2.label}
-                  data-on={skin === s2.id ? '1' : undefined}
-                  style={s2.id ? { background: s2.id } : undefined}
-                  onClick={() => applySkin(s2.id)}
-                >
-                  {s2.label}
-                </button>
-              ))}
-            </div>
+            <button
+              className="ts-skin-cell ts-skin-none"
+              data-desk-skin="无"
+              data-on={skin ? undefined : '1'}
+              onClick={() => applySkin('')}
+            >
+              无皮肤
+            </button>
+            {SKIN_GROUPS.filter((g) => (skinMode === 'light' ? g.group.includes('浅色') : g.group.includes('深色'))).map((g) => (
+              <div className="ts-skin-group" key={g.group}>
+                <span className="ts-skin-glabel">{g.group}</span>
+                <div className="ts-set-grid">
+                  {g.items.map((s2) => (
+                    <button
+                      key={s2.id}
+                      className="ts-skin-cell"
+                      data-desk-skin={s2.label}
+                      data-on={skin === s2.id ? '1' : undefined}
+                      style={{ background: s2.image ?? s2.color ?? undefined }}
+                      onClick={() => applySkin(s2.id)}
+                    >
+                      {s2.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ))}
           </div>
 
           {/* ③ 字体：字号档位 + 字族 */}
@@ -2022,6 +2519,8 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
           className="ts-pop ts-projsw"
           data-desk-projsw-panel=""
           style={popPos ?? { left: 12, top: 48 }}
+          onMouseEnter={() => hoverProj(true)}
+          onMouseLeave={() => hoverProj(false)}
         >
           <div className="ts-set-head">
             <span className="ts-set-title">切换项目</span>

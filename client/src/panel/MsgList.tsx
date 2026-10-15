@@ -297,6 +297,8 @@ interface MsgListProps {
   loadingOlder?: boolean
   /** 请求拉取更早一页（由 MainChat 转发到 session face 的 loadOlder） */
   onLoadOlder?: () => void | Promise<void>
+  /** 滚动回调（MainChat 用来让滚动条「滚动时显形、停下淡出」） */
+  onScroll?: (e: React.UIEvent<HTMLDivElement>) => void
   /**
    * 会话身份键（主对话传 sessionId）。
    *
@@ -360,6 +362,7 @@ export function MsgList({
   hasMore = false,
   loadingOlder = false,
   onLoadOlder,
+  onScroll: onScrollExternal,
   followKey = '',
   view = 'all',
 }: MsgListProps) {
@@ -671,7 +674,8 @@ export function MsgList({
   }, [runSettle])
   useEffect(() => () => { if (settleRafRef.current) cancelAnimationFrame(settleRafRef.current) }, [])
 
-  const onScroll = () => {
+  const onScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    onScrollExternal?.(e)
     const el = ref.current
     if (!el) return
     const sh = el.scrollHeight

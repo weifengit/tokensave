@@ -3738,3 +3738,218 @@ HDesk 删除后 `<ExplorerSettings/>` 失去挂载点（组件还在、没人渲
 | ② 消息留白 | ✓ `padding: 14px 18px 142px`；首条消息左边距 18px（旧 10px） |
 
 `pnpm check` 全绿；全量测试链 **12 项 ALL PASS**；产物 1,326,458 B。
+
+## Step 13-R（2026-10-14）：手机端适配（dsh-remote-anynet 场景）
+
+**症状**（用户在手机上看工作台）：布局一片混乱且无法调整 —— 三栏被压成 196/0/196，
+中间「DSH 主对话」宽度为 0，看不见也点不到；8px 的拖拽把手在触屏上基本拖不动。
+
+**根因**：`.ts-dock` 的列模板是 `minmax(0,220px) minmax(0,1fr) minmax(0,260px)`，
+而 SIDE_MIN=180 / SIDE_MAX=720 —— 393px（iPhone 15 视口）根本放不下。
+远程插件（dsh-remote-anynet）的 mobile presets 只适配**宿主自己的** class
+（`_frame` / `_sidebarCol` / `_centerCol` / markdown…），对工作台外壳一无所知
+（grep 全文件 0 命中 `ts-dock`/`dv-`），所以这块必须由工作台自己适配。
+
+**改法**（断点 900px，与远程插件 presets 的断点一致）：
+- 中间永远整宽：`grid-template-columns: 0 minmax(0,1fr) 0 !important`；
+- 左右两侧栏改成**覆盖式抽屉**（`data-ts-drawer="left|right"` 控制，同时只开一个），
+  点区域三键开关、点遮罩关闭；抽屉开关**不动 hiddenRegions**（手机上的开关不污染桌面布局）；
+- 窄屏隐藏 8px 把手（改用三键开关）；标题行按钮放大到 34×32、状态栏换行成两行、
+  标签页 38px / min-width 40px；各类浮层 `min(92vw, 340px)`；
+- `syncChatSeat` 同时考虑「编辑区被收起」，收起时把宿主输入条藏掉。
+
+**顺带**：远程插件（dsh-remote-anynet lib/client.js）把 viewport meta 从
+`maximum-scale=1.0, user-scalable=no` 改成允许双指缩放 —— 「无法调整」的另一半是放不大。
+
+**真机验证**（agent-browser iPhone 15 仿真 393×852，移动 UA 触发远程插件注入）：
+列模板 `0px 393px 0px`、中间 393px 可见、抽屉 338px（86vw）+ 遮罩可点关；
+桌面 1280px 下仍是 `220px 744px 260px`、`matchMedia` 为 false（不受影响）。
+
+## Step 13-S（2026-10-14）：九条反馈
+
+| # | 反馈 | 修法 | 真机验证 |
+| --- | --- | --- | --- |
+| ①a | 探索者窗口图标与 DSH 主对话一模一样 | `paneIcon(exp:)` 从 `chat` 改成新的 `explorers` 机器人图标 | ✓ 8 个探索者标签各是机器人头 |
+| ①b | 探索者标题行还有背景色 / 整个窗口圆角边框 | `.ts-win` 去边框圆角底色、`.ts-win-head` 去底色只留下边线 | ✓ radius 0 / border 0 / head 透明 |
+| ①c | 探索者一多，谁在跑/被中断/回了消息分不清 | 新增 `explorer-status.ts`：标签图标右上角画角标（蓝=在跑、红=本轮异常结束、绿 N=有新回复）；dockview 会重建标签 DOM，所以建标签时补画 + 1.5s 心跳兜底 | ✓ 6 个标签带绿点「1」 |
+| ② | 项目清单希望悬浮就弹 | `hoverProj(open)`：进入 110ms 开、离开 260ms 关（面板与按钮共用），窄屏不启用、点击照旧 | ✓ 悬停即开、移开即关 |
+| ③ | 右键关闭窗口后页面刷新又显示出来，位置还不对 | 关闭状态按项目持久化（`desk-closed.v1:<projectId>`）+ reconcile 跳过 + 挂载时摘掉；**卸载/移动/热重载不算关闭** | ✓ 关掉不回来，chips 里可重开；已清理被误记的键 |
+| ④ | 项目中心也要能换皮肤 | 项目中心工具条加「🎨 皮肤」，与工作台共用 `skins.ts`（写 :root 变量） | ✓ 21 套 / 4 组，应用后 `--ts-skin-bg` 生效 |
+| ⑤ | 消息与边框太挤 + 只有一个窗口时太宽看着累 | padding 16px 22px + 阅读宽度上限 920px（超出两侧平分留白居中） | ✓ `padding: 16px max(22px, calc((100% - 920px)/2))` |
+| ⑥ | info_report / compare-text 的主对话看不到输入框 | 根因：13-O 的 `syncChatSeat` 把「主对话是后台标签」（`isVisible === false`）也当成「看不见」→ 整条藏掉。改成只在**面板真没了 / 编辑区被收起**时藏 | ✓ 两项目输入条都在（代码位同步收紧） |
+| ⑦ | 皮肤数量和类别（参考 info_report） | 新增 `skins.ts`：纯色 4 / 渐变 7 / 科技 5 / 艺术 5 = 21 套，兼容旧的 background 字符串存储 | ✓ 4 组齐全 |
+| ⑧ | 状态栏对话信息不超过状态栏一半 | `.ts-sb-grow { flex: 0 1 50% }` | ✓ computed `0 1 50%` |
+| ⑨ | 主对话结束了探索者还在跑，怎么全停 | `stopSession()` 走宿主 `sessions.scope(id).get('conversation').cancel()`；协作对话标题行加「全部停止」按钮；主对话一轮结束时**自动停止**仍在跑的探索者（每轮一次，轮次指纹=最后一条 assistant 的时间） | ✓ 按钮在位、点击无异常 |
+
+`pnpm check` 全绿；全量测试链 **12 项 ALL PASS**（desk-dock 87 项）；产物 1,355,880 B。
+
+## Step 13-T（2026-10-14）：浅色模式适配 + 手机端收尾
+
+用户在自己电脑上一直是深色模式，切浅色后暴露：**DSH 主对话里大量文字看不见**。
+
+**根因**：外壳写死了浅色前景（`.ts-dock { color: #e6e8eb }`）且背景**透明** ——
+深色宿主下宿主的深底透上来正好，浅色宿主下就是「白底 + 浅灰字」。
+宿主没有任何 `data-theme` 属性，只在 `:root` 上写 `color-scheme`（实测 light/dark），
+页面底色也跟着变。
+
+**改法**：
+- 新增 `client/src/panel/theme.ts`：读 `:root` 的 computed `color-scheme`，读不到退化成
+  「页面底色亮度」，结果写 `<html data-ts-theme="dark|light">`；用
+  `matchMedia(prefers-color-scheme)` + MutationObserver（html 属性 / head 变化）
+  + 2s 兜底轮询跟随宿主切换。
+- DOCK_CSS 顶部定义主题变量（`--ts-fg/-dim/-mute`、`--ts-surface`、`--ts-surface-solid`、
+  `--ts-line`、`--ts-hover`），浅色主题整体覆盖；`.ts-dock` 的 `color`/`background-color`
+  改走变量（皮肤优先，其次主题表面）。styles.ts 里 7 处硬编码 `#e6e8eb` 也改成变量兜底。
+- **深色皮肤不跟随宿主浅色主题**：`SkinItem.light`（默认 false）+ `applySkin` 写
+  `<html data-ts-skin="dark|light">`，CSS 里 `html[data-ts-skin="dark"]` 把前景强制回浅色，
+  且必须写在浅色覆盖**之后**（同权重靠源码顺序）。实测这个撞车真的会发生：
+  宿主浅色 + 暮色皮时项目名直接消失。
+- styles.ts 里那份重复的浅色覆盖删掉（它会盖掉上面那条深色皮规则）。
+
+**手机端收尾**（13-R 的补完）：手机一次只看一个窗口才看得清，所以
+- 进窄屏自动把「DSH 主对话」最大化（`autoMaxRef` 记住是我们干的，转回宽屏时只还原它）；
+- 设置面板里每行窗口名变成可点（`data-desk-focus`）→ 跳到该窗口，窄屏下顺带最大化。
+
+**真机验证**：`set media light` 后宿主 `color-scheme: light`、`body` 白底，
+`<html data-ts-theme="light">` / `--ts-fg: #1f2328` / `.ts-dock` 深字 + `#f7f8fa` 底（无皮肤时）；
+选深色皮时 `data-ts-skin="dark"` → 前景回到 `#e6e8eb`；桌面 1280px 未被最大化（`maximized:false`）；
+手机 393px 下主对话最大化、cell 全宽 393px。
+
+`pnpm check` 全绿；全量测试链 **12 项 ALL PASS**（desk-dock 91 项）。
+
+## Step 13-U（2026-10-14）：正文宽度可调 · 线条图标 · 浅色内容面 · 空侧栏自收
+
+1. **正文宽度可随时调，且复用宿主官方那套**
+   宿主对话区自带一对宽度把手（`[data-width-handle]`），偏好存在
+   `dsh.conversation.contentWidth`（px），下限 `CONTENT_MIN = 640`、
+   两侧把手与安全区共占 `CONTENT_EDGE_BUDGET = 176`。
+   工作台把宿主那对把手藏了（否则会浮在面板上），所以 13-S 里我写死了 920px 的上限 ——
+   用户要求「可以随时修改，复用官方的那种调节方式」。
+   现在 `MainChat` 里加了一对同款把手（`data-desk-chat-w`）：**同一个键、同一组数字**，
+   拖它就等于拖官方那个，读写互通；拖动期间只改 `--ts-chat-w`，松手才落盘。
+   正文内边距改为 `padding:16px max(22px, calc((100% - var(--ts-chat-w, 920px)) / 2))`。
+2. **项目中心「皮肤」按钮的 🎨 换成线条图标**（与工作台同一套 24 视窗 / 1.6 描边）。
+3. **浅色主题 + 深色皮肤时正文看不清**：宿主自己的正文（大标题 / 表格 / 段落）用的是
+   **浅色主题的深字**，压在深色皮上就没了。规则：外壳继续用皮肤，
+   **内容面板**回到主题表面（`html[data-ts-theme="light"] .ts-dock-pane` → 浅底 + 深字），
+   宿主的字与底重新对上。实测 `rgb(247,248,250)` 底。
+4. **侧栏没内容时自动收起**：新增 `emptyRegion(r)`（该区域一个面板都没有）→
+   `data-empty-left/right` → CSS 把列宽塌到 0 并收掉把手；有窗口被放进来（拖动 /
+   ⋯ 菜单「移到主侧栏」/ chip）属性消失，区域自动展开。
+   ⚠️ 空区域同样**不能写内联 `--ts-side-l/-r`**（内联优先级高于 CSS，写了就白收）。
+
+**真机验证**：两个侧栏都空时 `grid-template-columns: 0px 1224px 0px`；
+把共享黑板 `move(...,'left')` 后 `emptyL:false`、列宽 220px 自动展开；
+正文把手 2 个、`--ts-chat-w: 920px`；皮肤按钮 `hasSvg:true / hasEmoji:false`；
+浅色下 `.ts-dock-pane` 背景 `rgb(247,248,250)`；切回深色 `theme=dark` 前景恢复浅色。
+
+`pnpm check` 全绿；全量测试链 **12 项 ALL PASS**（desk-dock 95 项）。
+
+## Step 13-V（2026-10-14）：皮肤在浅色下可见 · 预览不发白 · 输入条后台标签也有
+
+1. **浅色下换皮肤几乎看不出效果 / 预览一片发白**
+   - 根因一（自己挖的坑）：13-T 加的规则是
+     `html[data-ts-theme="light"] .ts-dock-pane { background: var(--ts-surface) }` ——
+     **无条件**把所有内容面板涂成不透明浅色，皮肤只在缝隙里露一点。
+     现在收窄成 `html[data-ts-theme="light"][data-ts-skin="dark"]`（只在「宿主浅色 + 深色皮」
+     这个真读不清的组合下生效），且用**半透明** `rgba(255,255,255,.88)` ——
+     宿主的深字看得清，皮肤也仍然透得出来。
+   - 根因二：项目预览是**内嵌 iframe**，它自己的文档没声明 `color-scheme` 时会继承宿主页面的；
+     宿主切浅色后，内嵌项目（info_report 这类「深色底 + 透明面」的 UI）拿到浅色画布 →
+     整块「一片发白」。给 `.ts-preview-frame` 固定 `color-scheme: dark`，
+     内嵌项目按自己的深色设计渲染（项目自己声明了 color-scheme 时以项目为准）。
+     → 结论：本项目（tokensave）改这两处；info_report 那侧要彻底不依赖嵌入环境的画布，
+     只需给它的根节点一个不透明底色（或在宿主浅色时也照常渲染）。
+2. **info_report 的 DSH 主对话还是没有输入框**（第二次反馈）
+   - 真正的根因在 `composer-dock.ts`：`const r = cell.getBoundingClientRect();
+     if (r.width <= 0 || r.height <= 0) return` —— 主对话是**后台标签**（被同组别的窗口
+     挡在后面）时内容格是 0×0，这里直接放弃停靠，输入条就一直留在宿主原位置（被工作台盖住）。
+   - 现在 `pickRect()`：内容格没尺寸时退化到**最近的可见祖先**（dockview 的组容器），
+     输入条照样停靠在那块可见区域。实测把内容格 `display:none` 后输入条仍为 649px/left 276px。
+
+`pnpm check` 全绿；全量测试链 **12 项 ALL PASS**（desk-dock 98 项）。
+
+## Step 13-W（2026-10-14）：所有浮动面板统一主题化
+
+用户反馈「很多浮动面板依然没有适配浅色主题」并点了名（皮肤 / 设置 / 项目清单 / 图标右键 /
+回到最新 / 左侧边栏…）。**自查后**发现根因是同一类：这些弹层都写死了**深色卡片**
+（`rgba(24,27,33,.97)` / `rgba(14,16,21,.97)` / `rgba(20,23,29,.94)`），
+浅色主题下就是一排深色块。
+
+做法：把主题调色板**收敛到一处**（`theme.ts` 的 `THEME_CSS`，`installThemeCss()` 幂等注入；
+工作台与项目中心都会调，谁先加载谁注入），分三组变量：
+
+| 组 | 用途 | 谁覆盖它 |
+| --- | --- | --- |
+| `--ts-fg / -dim / -mute / -surface / -line / -hover` | 外壳 | 主题 + **皮肤** |
+| `--ts-t-fg / -dim / -mute` | 纯主题色（不随皮肤） | 只有主题 |
+| `--ts-pop-bg / -bg-solid / -fg / -fg-dim / -fg-mute / -line / -hover / -shadow / -mask` | 弹层 | 只有主题 |
+
+并加了一条**弹层重定向**规则：`.ts-pop / .ts-sess-pop / .ts-expset-pop / .ts-warn-pop /
+.ts-skin-pop / .ts-win-overlay / .ts-jump-latest / .ts-modal / .dv-context-menu[data-ts-hoisted]`
+内部一律把 `--ts-fg*` 指回 `--ts-pop-fg*` —— 否则「宿主浅色主题 + 深色皮肤」时
+弹层是浅底、文字却被皮肤逼成浅色（又一次看不见）。
+
+自查额外抓到两处：**添加项目/确认弹窗**（`.ts-modal`，原来是 `rgba(30,32,38,.98)`）、
+**输入条上方的渐隐**（`.ts-dock-fade`，原来写死宿主深色 `rgba(21,21,23,…)`，
+浅色下聊天底部是一块黑）。
+
+**真机验证**（浅色主题）：设置弹层 `rgba(255,255,255,.99) / rgb(31,35,40)`、
+项目清单同款、历史会话下拉同款、标签右键菜单同款；渐隐渐变 `rgba(247,248,250,.96)…`；
+`--ts-pop-bg` 在 `:root` 上解析为浅色值；`tokensave-theme-css` 注入成功。
+
+`pnpm check` 全绿；全量测试链 **12 项 ALL PASS**（desk-dock 101 项）。
+
+## Step 13-X（2026-10-14）：皮肤必须铺满中间（撤掉面板涂底）
+
+用户反馈：浅色主题下切换皮肤，只有**顶部标题、窗口图标行、状态栏**三块有反应，
+中间一大片是白的。
+
+根因就是 13-V 我加的那条：`html[data-ts-theme="light"][data-ts-skin="dark"] .ts-dock-pane
+{ background: rgba(255,255,255,.88) }` —— 它把**所有内容面板**都垫成浅白，
+皮肤只剩三条边框区域可见。**整块删掉**。
+
+那 13-V 想解决的「宿主深字压深色皮」怎么办？拆开看谁在渲染：
+- 面板里的正文/消息/黑板/协作/收益都是**我们自己**渲染的 → 一律走 `--ts-fg`
+  （深色皮会强制浅字）→ 本来就没问题；
+- 面板里唯一由**宿主**渲染的是输入条座位 → 单独给它一块主题底：
+  `composer-dock.ts` 里 `seat.style.background = 'var(--ts-surface, transparent)'`
+  （深色主题下 `--ts-surface` 就是 transparent，与原来完全等效；浅色下有浅底，
+  宿主的深字才看得清）。
+
+顺带修一处：只有图没有色的皮肤（网格/扫描线/霓虹…）原来没有底色，
+半透明纹理层会透出宿主主题底，浅色下皮肤「变淡」→ `applySkin` 给这类皮肤垫
+深色底 `#0b0e14`。
+
+**真机验证**（浅色主题 + 暮色皮）：`.ts-dock` 底色 `rgb(11,14,20)` + 暮色渐变，
+`.ts-dock-pane` 背景 `rgba(0,0,0,0)`（不再涂白），截图里中间整片都是皮肤。
+
+`pnpm check` 全绿；全量测试链 **12 项 ALL PASS**（desk-dock 99 项）。
+
+## Step 13-Y（2026-10-14）：状态栏改成「悬浮在页面之上」（参考 info_report）
+
+info_report 的做法（`web/app.css` 的 `#statusbar`）：不透明底 + 上边线 + **向上投的阴影**
+（`box-shadow: 0 -6px 18px var(--shadow)`），于是状态栏看起来压在内容之上。
+
+对齐过来：
+- `.ts-statusbar` 从网格行里**摘出来**（`position:absolute; left/right/bottom:0; z-index:45`），
+  网格第三行塌成 `0px`，内容从它底下穿过；
+- 视觉三件套：`background: var(--ts-sb-bg)`（半透明，深/浅主题各一份）+
+  `border-top: 1px solid var(--ts-line)` + `box-shadow: 0 -6px 18px rgba(0,0,0,.18)` +
+  `backdrop-filter: blur(10px)`；
+- 高度由 ResizeObserver 量出写进 `--ts-sb-h`（窄屏会换行成两行，高度是变的），
+  聊天底部留白与输入条位置都读它；手机抽屉/遮罩的底边也让开它。
+
+**踩到的坑（记一笔）**：一开始把 `min-height` 写成 `var(--ts-sb-h, 28px)`，
+而 `--ts-sb-h` 又由状态栏自己的高度写出来 → **自反馈**：任何一次异常测量（实测量到 848px）
+都会被 min-height 锁住，状态栏直接撑满整屏。现在 `min-height: 28px` 写死，
+并且测量值加了 ≤120px 的上限保护。
+
+另外：输入条让开状态栏用的是**重叠量**（`max(0, cellBottom - (innerHeight - sbH))`），
+不是无条件加 `sbH` —— 面板本来就没伸到底时，不该把输入条从自己面板底部顶起来。
+
+**真机验证**（1280×577）：状态栏 `position:absolute / z-index:45 / 高 29px`、
+`--ts-sb-h: 29px`、网格行 `42px 459px 0px`、底部 `bottom:577`（贴底）；
+输入条底边 318 在状态栏顶边 548 之上（`ok:true`）。
+
+`pnpm check` 全绿；全量测试链 **12 项 ALL PASS**（desk-dock 100 项）。

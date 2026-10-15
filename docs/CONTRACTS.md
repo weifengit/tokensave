@@ -556,3 +556,81 @@ tokensave/
   新加面板请沿用这个口径。
 - **消息左右留白**：`.ts-chat-msgs { padding: 14px 18px }`（底部单独由
   `padding-bottom: calc(var(--ts-composer-h, 72px) + 14px)` 给停靠的输入条让位）。
+
+**UI 约定（2026-10-14 Step 13-R / 13-S）**
+
+- **移动端（≤900px，与 dsh-remote-anynet 的 mobile presets 同断点）**：`.ts-dock` 单栏
+  （`0 minmax(0,1fr) 0`），左右两侧栏是**覆盖式抽屉**（`data-ts-drawer`），只在窄屏生效；
+  抽屉开关不写 hiddenRegions。把手在窄屏隐藏，改用区域三键。窗口/面板的标题行一律无底色。
+- **探索者窗口**：图标必须是 `explorers`（≠ 主对话的 `chat`）；`.ts-win` 不画边框圆角与底色。
+  状态角标由 `explorer-status.ts` 计算（run/notice/new/idle），**必须**在
+  `createTabComponent.init` 补画并挂 1.5s 心跳 —— dockview 会自己重建标签 DOM，属性会丢。
+- **「关掉的窗口」只在用户真的动关闭入口时记账**（`closePanel`/右键菜单 → `closedRef` +
+  `desk-closed.v1:<projectId>`）；组件被动 dispose（移动、恢复布局、热重载）**不得**记账，
+  否则整批窗口会在下次进来时消失（本轮真实踩过）。
+- **宿主输入条可见性**：只在「主对话面板不存在」或「编辑区被收起」时藏
+  （`body.ts-desk-nochat`）；**不要**用 `api.isVisible === false` 判断，那会把后台标签当成看不见。
+- **皮肤**：唯一来源 `client/src/panel/skins.ts`（分 4 组，写 `--ts-skin-color` / `--ts-skin-bg`），
+  工作台 `.ts-dock` 与项目中心页都读它；新增皮肤只加目录项，不要另外写死背景。
+- **停止探索者**：走 `stopSession()`（宿主 conversation.cancel），别用 archiveSession 顶替。
+
+**UI 约定（2026-10-14 Step 13-T）**
+
+- **不许再写死前景色**：外壳/面板/弹层一律用主题变量 `--ts-fg`（主）、`--ts-fg-dim`（次级）、
+  `--ts-fg-mute`（提示/路径/时间）；表面用 `--ts-surface`（可透底的常规底色）、
+  `--ts-surface-solid`（必须不透底，如手机抽屉）；描边/悬停用 `--ts-line` / `--ts-hover`。
+  取值分支在 DOCK_CSS：`:root` 是深色默认，`html[data-ts-theme="light"]` 是浅色，
+  `html[data-ts-skin="dark|light"]` 是皮肤强制（**顺序必须在主题之后**）。
+- **主题探测**只认 `:root` 的 computed `color-scheme`（宿主没有 data-theme 属性），
+  退化路径是 body 底色亮度；新增跟随逻辑一律挂 `theme.ts` 的 `startThemeWatch`。
+- **皮肤要声明明暗**（`SkinItem.light`，默认深色）：深色皮必须让外壳保持浅色前景，
+  否则宿主切浅色主题时会出现「深底深字」。新增皮肤只加目录项 + 明暗标记。
+- **窄屏（≤900px）一次只看一个窗口**：`focusPane(id)` 是「跳到某窗口」的唯一入口
+  （设置面板的窗口名可点），进窄屏自动最大化主对话、回宽屏只还原自动最大化的那个。
+
+**UI 约定（2026-10-14 Step 13-U）**
+
+- **正文宽度**唯一来源是宿主的偏好键 `dsh.conversation.contentWidth`（下限 640、
+  两侧预留 176），插件侧只读它并写 `--ts-chat-w`；把手是 `.ts-chat-w`（左右各一）。
+  新增涉及正文宽度的样式一律用 `var(--ts-chat-w, 920px)`，不要再写死像素上限。
+- **图标一律线条**（24 视窗 / 1.6 描边 / currentColor）：项目中心、设置面板等处禁止 emoji。
+- **皮肤只作用于外壳**：宿主浅色主题时 `.ts-dock-pane` 必须回到
+  `var(--ts-surface)` + 深字（宿主正文用的是浅色主题的深字，压在深色皮上会看不见）。
+- **空区域自动收起**：`emptyRegion(r)` → `data-empty-left/right` → 列宽 0；
+  该区域的**内联宽度变量必须同时不写**（否则 CSS 的 0px 被内联盖掉）。
+
+**UI 约定（2026-10-14 Step 13-V）**
+
+- **不要在浅色主题下无条件涂内容底**：只有 `html[data-ts-theme="light"][data-ts-skin="dark"]`
+  才给 `.ts-dock-pane` 垫 `rgba(255,255,255,.88)`（半透明，保证皮肤可见）。
+  无条件涂白 = 换皮肤看不出效果（踩过）。
+- **内嵌 iframe（项目预览）必须自己声明 `color-scheme`**：否则内嵌文档继承宿主页面的主题，
+  宿主切浅色时深色项目会「一片发白」。
+- **输入条停靠目标必须容错**：主对话为后台标签时内容格 0×0，
+  用 `pickRect()` 退化到最近可见祖先；**不要**直接 return（那就是「没有输入框」）。
+
+**UI 约定（2026-10-14 Step 13-W）**
+
+- **主题调色板唯一来源是 `theme.ts` 的 `THEME_CSS`**（`installThemeCss()` 幂等注入）。
+  新增颜色一律用变量，禁止再写死 `rgba(24,27,33,…)` / `rgba(14,16,21,…)` 这类深色卡片底。
+- **三组变量各管一摊，别混**：外壳用 `--ts-fg*`（皮肤可覆盖）、纯主题色用 `--ts-t-fg*`、
+  弹层用 `--ts-pop-*`。**任何浮起来的面板**（弹层/弹窗/右键菜单/浮层/悬浮按钮）都必须
+  吃 `--ts-pop-*`，并且把内部 `--ts-fg*` 重定向到弹层色 —— 否则浅色主题 + 深色皮肤会撞车。
+- 新增浮动面板时：把它加进 `theme.ts` 里那条弹层重定向选择器列表，否则它在浅色下多半是深卡片。
+- **渐隐/遮罩类装饰也要跟主题**（`.ts-dock-fade` 曾写死宿主深色 → 浅色下聊天底部一块黑）。
+
+**UI 约定（2026-10-14 Step 13-X）**
+
+- **皮肤必须铺满内容区**：任何情况下都**不要**给 `.ts-dock-pane` 涂底色
+  （否则换皮肤只有标题行/标签行/状态栏有反应 —— 13-V 踩过又撤掉）。
+- 面板里的正文都是自己渲染的，走 `--ts-fg*` 即可；**唯一由宿主渲染的块**（输入条座位）
+  才需要单独垫 `var(--ts-surface, transparent)`。
+- 只有背景图、没有底色的皮肤，`applySkin` 会自动垫 `#0b0e14`（半透明纹理需要不透明底）。
+
+**UI 约定（2026-10-14 Step 13-Y）**
+
+- **状态栏是悬浮层**：`position:absolute` 贴底、网格第三行 `0px`、内容从底下穿过；
+  视觉 = `--ts-sb-bg` + 上边线 + 向上阴影 + 模糊（对齐 info_report 的 `#statusbar`）。
+- **`--ts-sb-h` 是「量出来的结果」**：只能由 ResizeObserver 写、由留白/输入条读；
+  任何 `min-height: var(--ts-sb-h)` 之类的回读都会造成自反馈（会把状态栏撑满屏）。
+- 悬浮层要不要让开：用**重叠量**判断，别无脑加高度（输入条 `overlap` 的写法照抄）。

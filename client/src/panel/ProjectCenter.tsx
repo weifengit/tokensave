@@ -33,6 +33,12 @@ import type { SessionActivity } from './activity'
 import { fetchProjectInfo } from './api'
 import type { ProjectInfo } from './api'
 import { AddProjectDialog } from './AddProjectDialog'
+
+// 项目中心可能先于工作台挂载（它俩都吃主题变量）：这里也把调色板装上、并跟随宿主主题。
+installThemeCss()
+startThemeWatch()
+// 皮肤目录与工作台共用一份（skins.ts 写 :root 变量，项目中心与 .ts-dock 同时生效）
+import { installThemeCss, startThemeWatch } from './theme'
 import { ConfirmDialog } from './ConfirmDialog'
 
 interface Props {

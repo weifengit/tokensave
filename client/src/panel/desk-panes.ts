@@ -61,7 +61,8 @@ export function paneIcon(id: string): string {
   const parsed = parsePaneId(id)
   if (!parsed) return 'report'
   const { kind } = parsed
-  if (kind.startsWith('exp:')) return 'chat'
+  // 探索者窗口：与 DSH 主对话用**不同图标**（用户反馈两者一模一样，认不出谁是谁）
+  if (kind.startsWith('exp:')) return 'explorers'
   return isKind(kind) ? KIND_ICON[kind] : 'report'
 }
 
