@@ -55,9 +55,8 @@ export const THEME_CSS = `
   /* 悬浮状态栏底色（半透明 + 模糊 + 上投阴影，内容从底下穿过） */
   --ts-sb-bg: rgba(14,16,21,.86);
   --ts-scroll-thumb: rgba(154,164,178,.45);
-  /* 输入条上方渐隐：从「不透明端」到透明的两档 */
-  --ts-fade-from: rgba(21,21,23,.94);
-  --ts-fade-mid: rgba(21,21,23,.55);
+  /* --ts-fade-from / --ts-fade-mid 已删：那条 .ts-dock-fade 渐隐遮罩已移除
+     （它只在聊天区下方糊出一块渐变深色，破坏页面背景一体性）。 */
 }
 html[data-ts-theme="light"] {
   --ts-fg: #1f2328;
@@ -81,8 +80,6 @@ html[data-ts-theme="light"] {
   --ts-pop-mask: rgba(15,23,42,.28);
   --ts-sb-bg: rgba(247,248,250,.92);
   --ts-scroll-thumb: rgba(90,98,112,.38);
-  --ts-fade-from: rgba(247,248,250,.96);
-  --ts-fade-mid: rgba(247,248,250,.6);
 }
 /* 选了深色皮肤 → 外壳前景永远浅色（皮肤是自己的底，不跟随宿主主题）。
    必须写在浅色覆盖**之后**：同权重靠源码顺序定胜负。 */
@@ -105,16 +102,13 @@ html[data-ts-skin="light"] { --ts-fg: #1f2328; --ts-fg-dim: #4b5563; --ts-fg-mut
 html[data-ts-skin] .ts-chat-msgs :is(h1, h2, h3, h4, h5, h6, p, li, td, th, blockquote, dt, dd) {
   color: inherit !important;
 }
-/* 深色皮肤下，输入条上方的渐隐也要用深色端（否则聊天底部糊一块白） */
+/* 深色皮肤：状态栏底色也要用深色端 */
 html[data-ts-skin="dark"] {
-  --ts-fade-from: rgba(11,14,20,.94);
-  --ts-fade-mid: rgba(11,14,20,.55);
   --ts-sb-bg: rgba(14,16,21,.86);
 }
-/* 浅色皮肤下反之 */
+/* 浅色皮肤：状态栏底色用浅色端 */
 html[data-ts-skin="light"] {
-  --ts-fade-from: rgba(250,250,252,.94);
-  --ts-fade-mid: rgba(250,250,252,.55);
+
   --ts-sb-bg: rgba(252,252,253,.9);
 }
 /* 滚动条：深/浅各一套颜色（白条在浅色主题下尤其刺眼） */

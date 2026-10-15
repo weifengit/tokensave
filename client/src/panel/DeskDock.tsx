@@ -61,18 +61,41 @@ import type { ProjectRecord } from './store'
 
 const SNAPSHOT_KEY = (projectId: string) => `tokensave:desk-dock.v2:${projectId}`
 const SAVED_KEY = (projectId: string) => `tokensave:desk-saved.v2:${projectId}`
-const REGIONS_KEY = 'tokensave:desk-regions.v1'
+/** 区域收起状态：**按项目分键**（以前是全局一个键，在 A 项目收起编辑区会把 B 项目
+    也一起收起——用户反馈「其他项目里 DSH 主对话没有输入框」就是一例）。 */
+const REGIONS_KEY = (projectId: string) => `tokensave:desk-regions.v1:${projectId}`
 /* SKIN_KEY 已搬到 skins.ts（改名为 SKIN_KEY，值不变，兼容旧的 background 字符串） */
 /* 布局锁已按用户要求整个删除（功能 + 状态栏显示）；遗留键在 STALE 里清掉。 */
 /** 界面字体与字族（外观设置，全局一份，同皮肤）。 */
 const FONT_KEY = 'tokensave:desk-font.v1'
 const FONT_FAMILY_KEY = 'tokensave:desk-font-family.v1'
-/** 侧栏宽度与收起阈值（同 info_report：SIDE_MIN 180 / SIDE_MAX 720 / 收起 56）。
-    拉出阈值从 18 收到 **12**：用户反馈「隐藏之后再拉出来有点迟钝」——少等 6px 才起步。 */
+/**
+ * 侧栏宽度：SIDE_MIN 是**最小可见宽度**，同时也是「拖到不能」的收起点；SIDE_MAX 是上限。
+ *
+ * 旧实现把显示宽度夹在 SIDE_MIN(180)、却等到 < COLLAPSE_W(56) 才收起：中间 124px
+ * 指针在动而宽度纹丝不动 —— 用户反馈的「卡顿一下、然后一直卡着不动」就是这个死区；
+ * 隐藏态起步还要先拉过 PULL_OUT_W(12) 才有反应，所以「拉出来要等一会儿才出现」。
+ *
+ * 新口径（用户要求：拖动 1:1 跟手 · 到最小即收起 · 拉一点点就出来）：
+ *   · 显示宽度**连续跟随指针**，一路减到 SIDE_MIN 就直接收起（没有死区）；
+ *   · 隐藏态往里动过 PULL_OUT_EPS 就**立刻**以 SIDE_MIN 现身，随后 1:1 跟手；
+ *   · 收起与展开两个转折点都**重锚指针**，反向微动不会「拉一下又弹回」（老坑）。
+ */
 const SIDE_MIN = 180
 const SIDE_MAX = 720
-const COLLAPSE_W = 56
-const PULL_OUT_W = 12
+/**
+ * 隐藏态：往「里」动这么多像素就展开。越小越灵敏 —— 留 3px 只为滤掉手抖。
+ * 实测值：旧版要 12px（用户反馈「拉出来要等一会儿才出现」）。
+ */
+const PULL_OUT_EPS = 3
+/**
+ * 最小可见宽度以下再往内拖这么多 = 真的「拖到不能了」→ 收起。
+ *
+ * 为什么不是「一低于 SIDE_MIN 就收」：展开时以 SIDE_MIN 起步，若把门限就放在 SIDE_MIN，
+ * 展开后手指反向抖 1px 就立刻又收起（info_report 注释里记过的「拉一下又弹回」）。
+ * 8px 只是把两个转折点错开，体感上刚好是「到头了」的那一下停顿，不是旧版那种百来像素死区。
+ */
+const COLLAPSE_HYST = 8
 const SIDE_W_KEY = 'tokensave:desk-side-w.v1'
 /** 早期版本遗留的存储键：挂载时一次性清理，不留孤儿。 */
 const STALE_KEYS = [
@@ -81,6 +104,8 @@ const STALE_KEYS = [
   'tokensave:desk-dock.v1',
   // 布局锁已删（功能 + 状态栏显示）：旧全局键与按项目分键都清掉
   'tokensave:desk-dock-lock.v1',
+  // 区域收起曾用全局键：污染会跨项目传染（收到资源的旧值一律清掉）
+  'tokensave:desk-regions.v1',
 ]
 const STALE_PREFIX = [
   'tokensave:desk-dock.v1:',
@@ -180,26 +205,19 @@ const DOCK_CSS_ID = 'tokensave-desk-dock-css'
 const DOCK_CSS = `
 /* 主题调色板（外壳/皮肤/弹层三组变量）统一在 client/src/panel/theme.ts 的 THEME_CSS 里，
    工作台、项目中心、浮动面板共用一份；这里只留外壳自己的规则。 */
-.ts-dock { position: absolute; inset: 0; display: grid; grid-template-rows: 42px minmax(0,1fr) 0px; grid-template-columns: minmax(0,var(--ts-side-l,220px)) minmax(0,1fr) minmax(0,var(--ts-side-r,260px)); grid-template-areas: "title title title" "left center right" "status status status"; color: var(--ts-fg); font-size:var(--ts-fs, 12.5px); font-family:var(--ts-font, inherit); background-color: var(--ts-skin-color, var(--ts-surface)); background-image: var(--ts-skin-bg, none); }
+.ts-dock { position: absolute; inset: 0; display: grid; grid-template-rows: 42px minmax(0,1fr) auto; grid-template-columns: minmax(0,var(--ts-side-l,220px)) minmax(0,1fr) minmax(0,var(--ts-side-r,260px)); grid-template-areas: "title title title" "left center right" "status status status"; color: var(--ts-fg); font-size:var(--ts-fs, 12.5px); font-family:var(--ts-font, inherit); background-color: var(--ts-skin-color, var(--ts-surface)); background-image: var(--ts-skin-bg, none); }
 /* 皮肤格子里的「无皮肤」+ 分组标题 */
 .ts-skin-none { flex: 1 1 100%; min-width: 0; }
 .ts-skin-group { flex: 1 1 100%; display: flex; flex-direction: column; gap: 4px; margin-top: 2px; }
 .ts-skin-glabel { font-size: calc(var(--ts-fs, 12.5px) * 0.8); color: var(--ts-fg-mute); letter-spacing: .04em; }
 .ts-dock[data-hide-left] { --ts-side-l: 0px; }
 .ts-dock[data-hide-right] { --ts-side-r: 0px; }
-/* 侧栏里一个窗口都没有 → 自动收起（列宽塌到 0，把手也收掉）。
-   有窗口放进来（拖动 / ⋯ 菜单 / chip）时属性消失，区域自动展开回来。 */
-.ts-dock[data-empty-left] { --ts-side-l: 0px; }
-.ts-dock[data-empty-right] { --ts-side-r: 0px; }
-.ts-dock[data-empty-left] .ts-region[data-region="left"],
-.ts-dock[data-empty-right] .ts-region[data-region="right"] { min-width: 0; overflow: hidden; }
-.ts-dock[data-empty-left] .ts-resizer--left,
-.ts-dock[data-empty-right] .ts-resizer--right { display: none; }
 /* 编辑区/面板区（center）也能收起：列宽塌陷到 0 + 区域内隐藏（面板不销毁，展开即回）。 */
 .ts-dock[data-hide-center] { grid-template-columns: minmax(0,var(--ts-side-l,220px)) 0px minmax(0,var(--ts-side-r,260px)); }
 .ts-dock[data-hide-center] .ts-region[data-region="center"] { display: none; }
 /* 一体化：标题行不画分割线（同 info_report，区域之间不靠线条分界）。 */
-.ts-titlebar { grid-area: title; display: flex; align-items: center; gap: 8px; padding: 0 8px; overflow: hidden; }
+/* 标题行**脱离列宽约束**：以前它是 grid 的 title 区（跨三列），侧栏/中区一收起来列宽塌成 0，标题行的宽度也跟着崩，右边那组按钮就被挤到左边去了（用户反馈）。改成与大状态栏同款的绝对定位：横向铺满整个工作台，里面的 [标题 flex:1][按钮 flex:none] 才能永远把按钮顶到右上角。 */
+.ts-titlebar { position: absolute; left: 0; right: 0; top: 0; height: 42px; z-index: 40; display: flex; align-items: center; gap: 8px; padding: 0 8px; overflow: hidden; }
 .ts-title-left { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1; overflow: hidden; }
 /* 项目名左侧：**项目切换按钮**。用户反馈「只画个图标看不出是按钮」→ 改成有底有框的
    胶囊按钮（图标 + 小箭头），悬停/展开时高亮。 */
@@ -239,7 +257,11 @@ const DOCK_CSS = `
 /* ── 侧栏宽度把手（照 info_report 的样式）────────────────────────
    命中区仍是 8px（好抓），但可见的只是一小段中性圆角短杠：平时完全透明，
    鼠标移到边界上才露出来、拖动时变长——不再是「一整条浅色块」（用户反馈很难看）。 */
-.ts-resizer { position: absolute; top: 0; bottom: 0; width: 8px; z-index: 50; cursor: col-resize; touch-action: none; background: 0 0; }
+/* z-index 必须**略高于** dockview 自己的 sash（实测 z-index:99，且横向 sash 恰好压在
+   把手的垂直中点上）：否则鼠标停在蓝色短杠上时，elementFromPoint 命中的是 sash 而不是
+   把手 —— 双击打不开、拖动也抓不住（实测：正中那一带 4px 被覆盖）。
+   只高一点点（100/101）而不是拉满：浮层（.ts-pop 提到 110）还要压在把手之上。 */
+.ts-resizer { position: absolute; top: 0; bottom: 0; width: 8px; z-index: 100; cursor: col-resize; touch-action: none; background: 0 0; }
 .ts-resizer--left { right: 0; }
 .ts-resizer--right { left: 0; }
 .ts-resizer::after {
@@ -263,8 +285,8 @@ const DOCK_CSS = `
 .ts-dock[data-hide-right] .ts-region[data-region="right"] { border-left: 0; }
 body.ts-resizing { cursor: col-resize !important; user-select: none !important; }
 /* 侧栏收起后把手仍留在原位（可从窄缝拉出来）：左区的把手贴右缘、右区的贴左缘 */
-.ts-dock[data-hide-left] .ts-region[data-region="left"] .ts-resizer { right: -5px; z-index: 51; }
-.ts-dock[data-hide-right] .ts-region[data-region="right"] .ts-resizer { left: -5px; z-index: 51; }
+.ts-dock[data-hide-left] .ts-region[data-region="left"] .ts-resizer { right: -5px; z-index: 101; }
+.ts-dock[data-hide-right] .ts-region[data-region="right"] .ts-resizer { left: -5px; z-index: 101; }
 /* ── 右上角「设置」浮层：三块（显示/隐藏窗口 · 皮肤 · 字体） ──────────── */
 /* 宽度按内容定：比旧版窄一截（用户反馈太宽），且不再被 .ts-pop 的 min-width 撑开 */
 .ts-pop.ts-set { min-width: 0; }
@@ -323,9 +345,11 @@ body.ts-resizing { cursor: col-resize !important; user-select: none !important; 
 .ts-statusbar .ts-sb-grow { flex: 0 1 50%; min-width: 0; }
 /* 一体化：状态栏不画上边线；左侧实时提示与右侧会话控件之间留出空白（用户反馈贴太近）。 */
 .ts-statusbar { grid-area: status; display: flex; align-items: center; gap: 10px; padding: 0 10px; font-size:calc(var(--ts-fs, 12.5px) * 0.92); color: var(--ts-fg-dim); overflow: hidden;
-  /* 悬浮在页面之上（同 info_report 的 #statusbar：不透明底 + 上边线 + **向上投的阴影**）：
-     状态栏脱离网格行（那一行高度为 0），内容从它底下穿过；高度由 DeskDock 量出写进 --ts-sb-h。 */
-  position: absolute; left: 0; right: 0; bottom: 0; z-index: 45;
+  /* **真实占一行**（同 info_report 的 grid-template-rows: ... auto）：状态栏就是网格第三行，
+     不是浮在内容之上的覆盖层 —— 旧版把这行塔成 0px 再把它 absolute 贴底，看着是悬浮了，
+     但三个区域（主侧栏 / 编辑区面板区 / 辅助侧栏）的「脚跟」会被它盖住（用户反馈）。
+     悬浮**只体现在视觉**：半透明底 + 上边线 + 向上投的阴影 + 模糊。
+     高度仍写进 --ts-sb-h，但只给窄屏抽屉与遮罩让位用（见 @media 段）。 */
   min-height: 28px;
   background: var(--ts-sb-bg);
   border-top: 1px solid var(--ts-line);
@@ -343,11 +367,10 @@ body.ts-resizing { cursor: col-resize !important; user-select: none !important; 
 .ts-dock-pane { height: 100%; min-height: 0; display: flex; flex-direction: column; }
 .ts-dock-pane > * { flex: 1; min-height: 0; }
 .ts-dock-chatcell { flex: 1; min-height: 0; display: flex; flex-direction: column; position: relative; }
-/* 底部渐变：保留「消息滚到输入条上沿就看不见底下」的视觉，
-   但把它放在聊天格底部（而不是像宿主那样跟着 seat 一起被搬走 → 那块就是黑覆盖）。 */
-/* 输入条上方的渐隐（滚到输入条底下的消息淡出）：底色必须跟着主题走，
-   原来写死成宿主深色 rgba(21,21,23,…)，浅色主题下就是聊天底部一块黑（自查发现）。 */
-.ts-dock-fade { position: absolute; left: 0; right: 0; bottom: 0; height: calc(var(--ts-composer-h, 72px) + 18px); pointer-events: none; z-index: 30; background: linear-gradient(to top, var(--ts-fade-from, rgba(21,21,23,.94)) 0, var(--ts-fade-mid, rgba(21,21,23,.55)) 44%, transparent 100%); }
+/* 聊天格底部曾经有一条渐隐遮罩（.ts-dock-fade）。已删除：消息流自己用
+   padding-bottom 为停靠输入条留了空间，永远不会滑到输入条底下，所以那条该遮罩
+   从未遮住任何东西，只在聊天区下方糊出一块渐变深色，破坏页面背景的一体性
+   （用户反馈）。 */
 .ts-dock-tabico { display: inline-flex; align-items: center; }
 /* 拖动窗口期间：iframe 不吃指针事件。否则鼠标一进 iframe，父文档就再也收不到
    dragover/drop，dockview 的落点浮层在 iframe 上方不显示（预览面板是全插件唯一的 iframe，
@@ -355,7 +378,7 @@ body.ts-resizing { cursor: col-resize !important; user-select: none !important; 
 body.ts-dock-dragging iframe { pointer-events: none !important; }
 .ts-dock-empty { position: absolute; inset: 0; display: grid; place-items: center; color: var(--ts-fg-mute); font-size:calc(var(--ts-fs, 12.5px) * 1.04); }
 .ts-dock-watermark { color: var(--ts-fg-mute); font-size:calc(var(--ts-fs, 12.5px) * 0.96); }
-.ts-pop { position: fixed; z-index: 80; right: auto; min-width: 268px; max-height: 72vh; overflow: auto; border: 1px solid var(--ts-pop-line); border-radius: 10px; background: var(--ts-pop-bg); color: var(--ts-pop-fg); backdrop-filter: blur(8px); box-shadow: var(--ts-pop-shadow); padding: 6px; }
+.ts-pop { position: fixed; z-index: 110; right: auto; min-width: 268px; max-height: 72vh; overflow: auto; border: 1px solid var(--ts-pop-line); border-radius: 10px; background: var(--ts-pop-bg); color: var(--ts-pop-fg); backdrop-filter: blur(8px); box-shadow: var(--ts-pop-shadow); padding: 6px; }
 /* 旧版 ⋯ / 皮肤两个浮层已并入 .ts-set（.ts-pop-* 的通用部分保留） */
 .ts-pop-item { display: flex; align-items: center; gap: 8px; padding: 4px 6px; border-radius: 7px; }
 .ts-pop-item:hover { background: rgba(127,127,127,.12); }
@@ -448,7 +471,7 @@ body.ts-dock-dragging iframe { pointer-events: none !important; }
    把手隐藏（改用三键开关），标题行/状态栏 /标签页尺寸按触屏放大。
    断点 900px 与远程插件的 mobile presets 保持一致。 */
 @media (max-width: 900px) {
-  .ts-dock { grid-template-columns: 0 minmax(0,1fr) 0 !important; grid-template-rows: 46px minmax(0,1fr) 0px; }
+  .ts-dock { grid-template-columns: 0 minmax(0,1fr) 0 !important; grid-template-rows: 46px minmax(0,1fr) auto; }
   .ts-dock .ts-region[data-region="left"],
   .ts-dock .ts-region[data-region="right"] {
     display: none; position: absolute; top: 46px; bottom: var(--ts-sb-h, 28px); width: min(86vw, 380px); z-index: 70;
@@ -492,9 +515,9 @@ function installDockCss(): void {
 }
 
 
-function readHiddenRegions(): Region[] {
+function readHiddenRegions(projectId: string): Region[] {
   try {
-    const raw = window.localStorage.getItem(REGIONS_KEY)
+    const raw = window.localStorage.getItem(REGIONS_KEY(projectId))
     const parsed = raw ? JSON.parse(raw) : null
     if (!Array.isArray(parsed)) return []
     return parsed.filter((x: unknown): x is Region => (REGIONS as readonly string[]).includes(String(x)))
@@ -704,7 +727,7 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
   /** 「全部停止探索者」的运行/结果提示。 */
   const [stopNote, setStopNote] = useState('')
   const [reloadKey, setReloadKey] = useState(0)
-  const [hiddenRegions, setHiddenRegions] = useState<Region[]>(readHiddenRegions)
+  const [hiddenRegions, setHiddenRegions] = useState<Region[]>(() => readHiddenRegions(project.id))
   /** 隐藏区集合的即时镜像：挂载 effect 里的回调（布局变化 / 激活面板变化）要读**最新**值。 */
   const hiddenRef = useRef<Region[]>(hiddenRegions)
   hiddenRef.current = hiddenRegions
@@ -737,11 +760,11 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
   const applyRegions = useCallback((hidden: Region[]) => {
     setHiddenRegions(hidden)
     try {
-      window.localStorage.setItem(REGIONS_KEY, JSON.stringify(hidden))
+      window.localStorage.setItem(REGIONS_KEY(project.id), JSON.stringify(hidden))
     } catch {
       /* 隐私模式：仅本次会话有效 */
     }
-  }, [])
+  }, [project.id])
   /** 两侧栏宽度：写状态 + 落盘。 */
   const applySideW = useCallback((w: { left: number; right: number }) => {
     setSideW(w)
@@ -807,6 +830,15 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
   markDirtyRef.current = () => {
     if (!suppressDirtyRef.current) setLayoutDirty(true)
   }
+
+  /**
+   * 隐藏态双击把手 → 展开。
+   *
+   * 用 ref 而不是 state：bindResizer 是在 pointerdown 里读它的（不能每次双击都重渲染），
+   * openSide 同理经 ref 调用，避开 bindResizer 的依赖数组变更。
+   */
+  const dblClickRef = useRef<null | { side: 'left' | 'right'; at: number; x: number; y: number }>(null)
+  const openSideRef = useRef<null | ((side: 'left' | 'right') => void)>(null)
 
   // —— 状态栏左侧：从主对话消息流提炼一句实时提示 ——
   //   · 未完成：显示最近一条**过程信息**（assistant 的思考/正文开头）；
@@ -964,7 +996,7 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
       setHiddenRegions((h) => {
         const next = h.filter((r) => r !== region)
         try {
-          window.localStorage.setItem(REGIONS_KEY, JSON.stringify(next))
+          window.localStorage.setItem(REGIONS_KEY(project.id), JSON.stringify(next))
         } catch {
           /* 忽略 */
         }
@@ -1353,9 +1385,11 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
      * 代价：当有人把别的窗口拖进主对话那一组时，输入条会浮在它上面（可接受：看得见 > 藏了）。
      */
     const syncChatSeat = () => {
-      const p = apis.center.getPanel(paneId(project.id, 'chat'))
-      const centerHidden = hiddenRef.current.includes('center')
-      const shown = !!p && !centerHidden
+      // 主对话面板可能被拖到任一区（用户会把窗口搬到侧栏），只在 center 里找会误判
+      // 「面板不在了」→ 把宿主输入条整条藏掉（用户反馈：其他项目里 DSH 主对话没有输入框）。
+      const chatId = paneId(project.id, 'chat')
+      const home = REGIONS.find((r) => apis[r].getPanel(chatId))
+      const shown = !!home && !hiddenRef.current.includes(home)
       document.body.classList.toggle('ts-desk-nochat', !shown)
     }
     syncChatSeatRef.current = syncChatSeat
@@ -1603,8 +1637,8 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
   }, [font, fontFamily])
 
   // —— 侧栏宽度拖拽（同 info_report 的 bindSideResizer）——
-  //   拖到 COLLAPSE_W(56) 以下整条收起；收起后从窄缝往里拉过 PULL_OUT_W(18) 重新展开。
-  //   两侧把手都在自己那条边的外侧，所以往里拖才是加宽（delta 按方向取反）。
+  //   宽度 1:1 跟随指针；减到 SIDE_MIN（最小可见宽度）= 「拖到不能」→ 立刻收起；
+  //   隐藏态往里动 PULL_OUT_EPS(3) 就现身。两个转折点都重锚指针（否则反向要重走一整段）。
   /**
    * 侧栏宽度拖拽（同 info_report 的 bindSideResizer 口径）。
    *
@@ -1616,18 +1650,42 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
   const bindResizer = useCallback(
     (side: 'left' | 'right') => {
       return (event: React.PointerEvent<HTMLDivElement>) => {
-        event.preventDefault()
         const el = event.currentTarget
         const root = dockRootRef.current
         if (!root) return
+        /**
+         * 隐藏态**双击** → 直接展开。
+         *
+         * 为什么不用 React 的 onDoubleClick：本处理器对 pointerdown 调了 preventDefault()
+         * （防止拖动选中文字），而 preventDefault 会连鼠标兼容事件一起算掉 —— 实测
+         * pointerdown 触发两次、dblclick **一次都不来**，双击功能等于不存在。
+         * 所以在 pointerdown 里自己按「同一点位 + 300ms 内第二下」判定，不依赖 dblclick。
+         */
+        const wasHidden = hiddenRef.current.includes(side)
+        if (wasHidden) {
+          const now = Date.now()
+          const dbl = dblClickRef.current
+          const hitSame = dbl && dbl.side === side && now - dbl.at < 300 &&
+            Math.abs(dbl.x - event.clientX) <= 4 && Math.abs(dbl.y - event.clientY) <= 4
+          if (hitSame) {
+            dblClickRef.current = null
+            event.preventDefault()
+            openSideRef.current?.(side)
+            return
+          }
+          dblClickRef.current = { side, at: now, x: event.clientX, y: event.clientY }
+        } else {
+          dblClickRef.current = null
+        }
+        event.preventDefault()
         const varName = side === 'left' ? '--ts-side-l' : '--ts-side-r'
         const attr = side === 'left' ? 'data-hide-left' : 'data-hide-right'
         const dir = side === 'left' ? 1 : -1
-        let start = event.clientX
+        /** 指针锚点：每次「收起 ↔ 展开」转折都重锚，宽度 = anchorW + (x - anchorX) * dir。 */
+        let anchorX = event.clientX
         let hidden = hiddenRegions.includes(side)
-        let from = hidden ? 0 : sideW[side]
-        /** 本次拖动的**最终**宽度（落盘用；旧实现写的是起始值，拖完一刷新又回到旧宽度）。 */
-        let to = from
+        let anchorW = hidden ? 0 : sideW[side]
+        let to = anchorW
         /** 直接写 DOM：隐藏时**必须**把内联变量拿掉，否则内联优先级压过 .hide-* 里的 0px。 */
         const apply = () => {
           if (hidden) {
@@ -1643,24 +1701,29 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
         let lastX = event.clientX
         /** 真正算宽度并写 DOM（rAF 里跑，松手时补跑一次——同帧内按下即松手也不丢最后位置）。 */
         const commit = (x: number) => {
-          const delta = (x - start) * dir
+          const delta = (x - anchorX) * dir
           if (hidden) {
-            if (delta < PULL_OUT_W) return
-            // 拉出来必须重新锚定：否则当前宽度就是十几像素，立刻又低于阈值（实测踩过）
+            // 往里（变宽）动过 PULL_OUT_EPS 就**立刻**现身：不再空等 12px，也不再「拉一下又弹回」
+            if (delta < PULL_OUT_EPS) return
             hidden = false
-            from = SIDE_MIN
+            // 以最小可见宽度起步（立刻看得见），随后 1:1 跟手；重锚后反向微动不会马上又收起
+            anchorX = x
+            anchorW = SIDE_MIN
             to = SIDE_MIN
-            start = x
             apply()
             return
           }
-          const w = from + delta
-          if (w < COLLAPSE_W) {
+          // 宽度**连续跟随指针**（不再夹在 SIDE_MIN 上）：一路减到 SIDE_MIN 就已「到头」，
+          // 再向内错开 COLLAPSE_HYST 才真收起——避免展开瞬间反向抖动又立刻弹回。
+          const w = anchorW + delta
+          if (w < SIDE_MIN - COLLAPSE_HYST) {
             hidden = true
+            anchorX = x
+            anchorW = 0
             apply()
             return
           }
-          to = Math.max(SIDE_MIN, Math.min(SIDE_MAX, w))
+          to = Math.min(SIDE_MAX, Math.max(SIDE_MIN, w))
           apply()
         }
         const move = (ev: PointerEvent) => {
@@ -1694,7 +1757,8 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
               ? Array.from(new Set([...hiddenRegions, side]))
               : hiddenRegions.filter((r) => r !== side))
           }
-          applySideW({ ...sideW, [side]: to })
+          // 收起时不要把宽度写小：留着上次可见宽度，双击/拉出时原样恢复
+          applySideW({ ...sideW, [side]: hidden ? sideW[side] : to })
           markDirtyRef.current?.()
         }
         document.body.classList.add('ts-resizing')
@@ -1706,6 +1770,31 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
     },
     [hiddenRegions, sideW, applyRegions, applySideW],
   )
+
+  /**
+   * 隐藏态**双击把手** → 直接展开（用户要求：悬浮变蓝时双击就打开）。
+   *
+   * 只在**隐藏**时生效：可见态双击不动它，免得手快去拖时被误收起；
+   * 恢复到**上次记住的宽度**（没记过用 SIDE_MIN），不写回 0/十几像素。
+   */
+  const openSide = useCallback(
+    (side: 'left' | 'right') => {
+      const root = dockRootRef.current
+      if (!root || !hiddenRef.current.includes(side)) return
+      const varName = side === 'left' ? '--ts-side-l' : '--ts-side-r'
+      const attr = side === 'left' ? 'data-hide-left' : 'data-hide-right'
+      const w = Math.max(SIDE_MIN, Math.min(SIDE_MAX, sideW[side]))
+      // 先把本地状态改掉，再落盘：顺序反了会出现「已展开但宽度还是 0」的一帧
+      applyRegions(hiddenRef.current.filter((r) => r !== side))
+      applySideW({ ...sideW, [side]: w })
+      root.removeAttribute(attr)
+      root.style.setProperty(varName, `${w}px`)
+      markDirtyRef.current?.()
+    },
+    [sideW, applyRegions, applySideW],
+  )
+  // 让 pointerdown 处理器能调到最新版 openSide（避免把它塞进 bindResizer 的依赖数组）
+  openSideRef.current = openSide
 
   // 宽度变化落盘（拖拽中不写盘，松手已处理；这里兜住键盘/程序化调整）
   useEffect(() => {
@@ -1768,7 +1857,7 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
     setHiddenRegions((prev) => {
       const next = prev.includes(region) ? prev.filter((r) => r !== region) : [...prev, region]
       try {
-        window.localStorage.setItem(REGIONS_KEY, JSON.stringify(next))
+        window.localStorage.setItem(REGIONS_KEY(project.id), JSON.stringify(next))
       } catch {
         /* 忽略 */
       }
@@ -1910,11 +1999,6 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
   const openIds = liveIds.filter((id) => allPaneIds.includes(id))
   const closedIds = allPaneIds.filter((id) => !liveIds.includes(id))
   /**
-   * 空区域：一个面板都没有的侧栏（用户要求「没有内容时自动收起来」）。
-   * 只影响**显示宽度**（CSS 塌到 0），不动 hiddenRegions —— 等有窗口被放进来
-   * （拖动 / ⋯ 菜单「移到主侧栏」/ chip 打开）它自己就展开回来。
-   */
-  const emptyRegion = (r: Region) => !liveIds.some((id) => id.startsWith(`${project.id}:`) && regionOf(id) === r)
 
   /**
    * 探索者状态角标：跑 / 刚出问题（notice）/ 有新汇报 / 安静。
@@ -2065,7 +2149,7 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
       setHiddenRegions((h) => {
         const next = h.filter((r) => r !== region)
         try {
-          window.localStorage.setItem(REGIONS_KEY, JSON.stringify(next))
+          window.localStorage.setItem(REGIONS_KEY(project.id), JSON.stringify(next))
         } catch {
           /* 忽略 */
         }
@@ -2135,9 +2219,8 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
         return (
           <div className="ts-dock-chatcell" data-desk-chat-cell={project.id} ref={chatCellRef}>
             <MainChat sessionId={sid} />
-            {/* 底部渐变：消息滚到停靠输入条上沿时被遮住（等价于宿主 composerSeat 的
-                渐变遮罩，但位置正确 —— 贴在聊天格底部，不跟着输入条搬走）。 */}
-            <div className="ts-dock-fade" data-desk-chat-fade="" aria-hidden="true" />
+            {/* 底部渐变遮罩已删（会破坏背景一体性）：消息流自带 padding-bottom，
+                内容不会滑到停靠输入条底下，不需要额外遮罩。 */}
           </div>
         )
       }
@@ -2183,17 +2266,15 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
       data-hide-right={hiddenRegions.includes('right') ? '' : undefined}
       data-hide-center={hiddenRegions.includes('center') ? '' : undefined}
       data-ts-drawer={drawer ?? undefined}
-      data-empty-left={emptyRegion('left') ? '' : undefined}
-      data-empty-right={emptyRegion('right') ? '' : undefined}
       style={{
         // 皮肤不在这里写：由 :root 的 --ts-skin-color / --ts-skin-bg 提供（skins.ts），
         // 这样工作台与项目中心读的是同一份、换皮肤也不用重挂组件。
         // 侧栏宽度可拖拽（同 info_report 的 --side-l / --side-r）。
         // **收起时必须不写这个内联变量**：内联优先级高于 .hide-* 里的 0px，
         // 不清就白收（info_report 的 showSide 里专门注释过这个坑）。
-        // 收起 / 空白时都**不能**写内联变量（内联优先级高于 .hide-* / [data-empty-*] 里的 0px）
-        ...(hiddenRegions.includes('left') || emptyRegion('left') ? {} : { ['--ts-side-l' as any]: `${sideW.left}px` }),
-        ...(hiddenRegions.includes('right') || emptyRegion('right') ? {} : { ['--ts-side-r' as any]: `${sideW.right}px` }),
+        // 收起时**不能**写这个内联变量：内联优先级高于 .hide-* 里的 0px，
+        ...(hiddenRegions.includes('left') ? {} : { ['--ts-side-l' as any]: `${sideW.left}px` }),
+        ...(hiddenRegions.includes('right') ? {} : { ['--ts-side-r' as any]: `${sideW.right}px` }),
       }}
     >
       <header className="ts-titlebar" data-desk-titlebar="">
@@ -2300,7 +2381,8 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
           className="ts-resizer ts-resizer--left"
           data-desk-resizer="left"
           onPointerDown={bindResizer('left')}
-          title="拖动调整主侧栏宽度（拖到很窄即收起，收起后从这里拉出来）"
+          /* 双击展开在 pointerdown 里自判（preventDefault 会吞掉 dblclick），此处不再挂 onDoubleClick */
+          title="拖动调整主侧栏宽度（拖到最小即收起）；收起后可从边界拉出来，或双击直接打开"
         />
       </aside>
       <main className="ts-region" data-region="center" aria-label="编辑区 / 面板区">
@@ -2312,7 +2394,8 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
           className="ts-resizer ts-resizer--right"
           data-desk-resizer="right"
           onPointerDown={bindResizer('right')}
-          title="拖动调整辅助侧栏宽度（往里拖变宽；拖到很窄即收起）"
+          /* 双击展开在 pointerdown 里自判（preventDefault 会吞掉 dblclick），此处不再挂 onDoubleClick */
+          title="拖动调整辅助侧栏宽度（往里拖变宽，拖到最小即收起）；收起后可双击直接打开"
         />
       </aside>
 

@@ -36,6 +36,14 @@ const explorerStatus = readFileSync(join(root, 'client/src/panel/explorer-status
 const sessionsSrc = readFileSync(join(root, 'client/src/panel/sessions.ts'), 'utf8')
 const themeSrc = readFileSync(join(root, 'client/src/panel/theme.ts'), 'utf8')
 
+/**
+ * 「已删除」类断言要看**代码**，不能看注释：解释为何删掉的注释里必然会提到被删的
+ * 标识符，直接对原文断言就会自己把自己判失败（本轮实测踩过）。
+ */
+const stripComments = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+const dockCode = stripComments(dock)
+const themeCode = stripComments(themeSrc)
+
 // —— 1. 面板集合与真组件 ——
 check('固定面板 kind 齐备（纯模块 desk-panes）',
   /KINDS = \['preview', 'board', 'chat', 'talk', 'save'\]/.test(panes))
@@ -92,7 +100,10 @@ check('停靠实现在独立模块 composer-dock.ts（HDesk 删除后仍可用�
   // 宽度只受面板约束：不再引用带 680px 下限的宿主宽度 helper
   !/hostContentWidthPx/.test(composerDock))
 check('停靠卸载即还原宿主输入条原始行内样式',
-  /for \(const k of KEYS\) \(seat\.style as any\)\[k\] = saved\[k\]/.test(composerDock))
+  // 停靠前的行内样式存在**模块级** WeakMap 里：effect 重跑时局部变量拿不到上一次的
+  // saved，enabled→false 那次根本读不到原值（旧写法写回 undefined = 什么都不做）。
+  /const PRE_DOCK_STYLES = new WeakMap<HTMLElement, Record<string, string>>\(\)/.test(composerDock) &&
+  /let saved = PRE_DOCK_STYLES\.get\(seat\)/.test(composerDock))
 check('默认会话只读解析（回退口径）；历史/新建会话按用户点击才导航',
   // 本项目没会话时退回空串（不是宿主那条）——别的项目的会话绝不接进本工作台
   /return latestProjectSession\(ctx, project\.path\)\?\.id \?\? ''/.test(dock) &&
@@ -193,15 +204,16 @@ check('皮肤：目录在 skins.ts（分组 + 分类，参考 info_report）+ �
   ['纯色 · 深色', '渐变 · 深色', '科技 · 深色', '艺术 · 深色', '纯色 · 浅色', '渐变 · 浅色'].every((g) => skinsSrc.includes(`group: '${g}'`)) &&
   (skinsSrc.match(/id: '/g) || []).length >= 25 &&
   /SKIN_KEY_LIGHT = 'tokensave:desk-skin-light\.v1'/.test(skinsSrc) &&
-  /SKIN_ADAPT_KEY = 'tokensave:desk-skin-adapt\.v1'/.test(skinsSrc) &&
-  /export function setAdapt/.test(skinsSrc) &&
+  // 不再有「深浅适配开关」：皮肤永远跟随系统/宿主主题
+  !/SKIN_ADAPT_KEY/.test(skinsSrc) &&
   /mode: 'dark' | 'light'/.test(skinsSrc) &&
   /export function applySkin/.test(skinsSrc) &&
   /--ts-skin-color/.test(skinsSrc) && /--ts-skin-bg/.test(skinsSrc) &&
   /data-desk-set-block="skin"/.test(dock) &&
   /background-color: var\(--ts-skin-color, var\(--ts-surface\)\); background-image: var\(--ts-skin-bg, none\)/.test(dock) &&
   /SKIN_GROUPS\.filter\(\(g\) =>/.test(dock) &&
-  /data-desk-skin-adapt=/.test(dock))
+  // 没有开关：皮肤永远按当前主题取对应那一栏（用户明确要求）
+  !/data-desk-skin-adapt/.test(dock) && !/readAdapt/.test(dock))
 
 // —— 8. 多区外壳（参考 info_report）——
 check('三个 dockview 实例分区：主侧栏 / 编辑区 / 辅助侧栏',
@@ -276,13 +288,20 @@ check('停靠时清掉宿主 composerSeat 的渐变遮罩（否则聊天区下�
   /seat\.style\.backgroundImage = 'none'/.test(composerDockSrc) &&
   // 座位底色跟主题（深色下 --ts-surface=transparent，与原来等效；浅色下有浅底）
   /seat\.style\.background = 'transparent'/.test(composerDockSrc))
-check('保留「滚到输入条上沿看不见底下」：聊天格底部有独立渐变条',
-  /data-desk-chat-fade=""/.test(dock) &&
-  /\.ts-dock-fade \{[^}]*position:\s*absolute/.test(dock) &&
-  /\.ts-dock-fade \{[^}]*height:\s*calc\(var\(--ts-composer-h/.test(dock) &&
-  /\.ts-dock-fade \{[^}]*linear-gradient\(to top/.test(dock))
+check('聊天格底部不再挂渐变遮罩（会破坏背景一体性）',
+  // 删掉原因：消息流自带 padding-bottom（为停靠输入条留位），内容永远不会滑到
+  // 输入条底下，那条遮罩从没遮住任何东西，只在聊天区下方糊出一块渐变深色。
+  !/data-desk-chat-fade/.test(dockCode) &&
+  !/\.ts-dock-fade/.test(dockCode) &&
+  // 主题里的渐隐变量也一并清掉，不留无人用的死变量
+  !/--ts-fade-from/.test(themeCode) && !/--ts-fade-mid/.test(themeCode) &&
+  // 宿主那条跟着输入条搬进来的渐变遮罩仍必须被清掉（那是另一回事）
+  /seat\.style\.backgroundImage = 'none'/.test(composerDockSrc))
 check('卸载时还原 seat 的全部接管样式（含 background）',
-  /for \(const k of KEYS\) \(seat\.style as any\)\[k\] = saved\[k\]/.test(composerDockSrc))
+  // 还原口径：有原值就写回，没有就把我们写过的那项清空（回到宿主样式表）；
+  // 不能像旧实现那样一律写 saved[k]（undefined 对 CSSStyleDeclaration 等于没写）。
+  /for \(const k of KEYS\) \{[\s\S]{0,240}?const v = saved\?\.\[k\]/.test(composerDockSrc) &&
+  /\(seat\.style as any\)\[k\] = ''/.test(composerDockSrc))
 check('历史会话 / 新建会话复用 SessionPicker（放在状态栏）',
   /import \{ SessionPicker \} from '\.\/SessionPicker'/.test(dock) &&
   /<SessionPicker/.test(dock) && /useProjectSessions\(project\.path\)/.test(dock) &&
@@ -305,26 +324,76 @@ check('浮动面板：点页面其它位置 / Esc 自动关闭（设置与项目
   /t\.closest\('\[data-desk-projsw-panel\]'\)/.test(dock) &&
   /t\.closest\('\[data-desk-projswitch\]'\)/.test(dock) &&
   /e\.key === 'Escape'/.test(dock))
-check('侧栏宽度可拖拽（同 info_report 的 bindSideResizer 口径）',
+check('侧栏宽度可拖拽（1:1 跟手，无 SIDE_MIN 死区）',
   /const SIDE_MIN = 180/.test(dock) && /const SIDE_MAX = 720/.test(dock) &&
-  /const COLLAPSE_W = 56/.test(dock) && /const PULL_OUT_W = 12/.test(dock) &&
+  // 旧版：显示宽度夹在 SIDE_MIN、却等 <56 才收 → 中间 124px 指针在动而宽度不动（用户反馈卡顿）
+  /const PULL_OUT_EPS = 3/.test(dock) && /const COLLAPSE_HYST = 8/.test(dock) &&
+  !/const COLLAPSE_W/.test(dock) && !/const PULL_OUT_W/.test(dock) &&
+  // 宽度连续跟随指针（clamp 到 [SIDE_MIN, SIDE_MAX] 只是端点，不再是提前刹住的死区）
+  /to = Math\.min\(SIDE_MAX, Math\.max\(SIDE_MIN, w\)\)/.test(dock) &&
+  !/to = Math\.max\(SIDE_MIN, Math\.min\(SIDE_MAX, w\)\)/.test(dock) &&
   /const bindResizer = useCallback/.test(dock) && /data-desk-resizer=\{side\}|data-desk-resizer="left"/.test(dock))
-check('拖到很窄自动收起；收起后从边框拉出（两件事成对）',
-  /if \(w < COLLAPSE_W\)/.test(dock) && /if \(delta < PULL_OUT_W\) return/.test(dock) &&
-  /from = SIDE_MIN[\s\S]{0,80}start = x/.test(dock))
+check('拖到最小即收起；收起后拉一点点就出来（两个转折点都重锚）',
+  // 展开：往里动 PULL_OUT_EPS(3) 立刻现身；收起：减到 SIDE_MIN 再错开 COLLAPSE_HYST(8)
+  /if \(delta < PULL_OUT_EPS\) return/.test(dock) &&
+  /if \(w < SIDE_MIN - COLLAPSE_HYST\)/.test(dock) &&
+  // 两处都必须重锚指针，否则反向要重走一整段（info_report 记过的「拉一下又弹回」）
+  /anchorX = x[\s\S]{0,60}anchorW = SIDE_MIN/.test(dock) &&
+  /hidden = true[\s\S]{0,80}anchorX = x[\s\S]{0,60}anchorW = 0/.test(dock))
 check('拖动只改 DOM（CSS 变量 + data-hide-*），松手才同步一次 React 状态',
   // 拖动期间不 setState：不然每个 pointermove 都重渲染整棵工作台（用户反馈卡顿）
   /root\.style\.setProperty\(varName, `\$\{to\}px`\)/.test(dock) &&
   /root\.style\.removeProperty\(varName\)/.test(dock) &&
   /root\.setAttribute\(attr, ''\)/.test(dock) &&
   /if \(raf\) return/.test(dock) && /requestAnimationFrame\(\(\) => \{/.test(dock) &&
-  /applySideW\(\{ \.\.\.sideW, \[side\]: to \}\)/.test(dock) &&
+  // 收起时**不能**把宽度写小：否则双击/拉出展开时只剩十几像素，得重拖一遍
+  /applySideW\(\{ \.\.\.sideW, \[side\]: hidden \? sideW\[side\] : to \}\)/.test(dock) &&
+  !/applySideW\(\{ \.\.\.sideW, \[side\]: to \}\)/.test(dock) &&
   !/to = clamped/.test(dock))
+check('隐藏态双击把手直接展开（拉出来一点点也能）',
+  // 只在隐藏时生效：可见态双击不动它，免得手快去拖时被误收起
+  /const openSide = useCallback/.test(dock) &&
+  /if \(!root \|\| !hiddenRef\.current\.includes\(side\)\) return/.test(dock) &&
+  // 恢复到上次记住的宽度（没记过用 SIDE_MIN），而不是写回 0/十几像素
+  /const w = Math\.max\(SIDE_MIN, Math\.min\(SIDE_MAX, sideW\[side\]\)\)/.test(dock) &&
+  // 双击检测必须在 pointerdown 里自判：本处理器调了 preventDefault()，
+  // 而 preventDefault 会连鼠标兼容事件一起算掉 —— 实测 dblclick 一次都不来。
+  /const dblClickRef = useRef<null \| \{ side: 'left' \| 'right'; at: number; x: number; y: number \}>\(null\)/.test(dock) &&
+  /now - dbl\.at < 300/.test(dock) && /Math\.abs\(dbl\.x - event\.clientX\) <= 4/.test(dock) &&
+  /const wasHidden = hiddenRef\.current\.includes\(side\)/.test(dock) &&
+  /const openSideRef = useRef<null \| \(\(side: 'left' \| 'right'\) => void\)>\(null\)/.test(dock) &&
+  /openSideRef\.current = openSide/.test(dock) && /openSideRef\.current\?\.\(side\)/.test(dock) &&
+  // 已改走 pointerdown 自判，组件上不再挂 onDoubleClick（两者共存会重复触发）
+  !/onDoubleClick=\{/.test(dock))
 check('收起/空白时清掉内联宽度（内联优先级高于 .hide-* 的 0px）',
-  /hiddenRegions\.includes\('left'\) \|\| emptyRegion\('left'\) \? \{\} : \{ \['--ts-side-l' as any\]/.test(dock))
-check('收起态把手外移 + 抬 z（压过宿主输入条 35，否则抓手命不中）',
-  /\.ts-resizer \{[^}]*z-index: 50/.test(dock) &&
-  /\.ts-dock\[data-hide-left\][^}]*z-index: 51/.test(dock))
+  // 侧栏不再「无内容自动隐藏」（用户要求改回旧行为：空侧栏也占位、边界可拖开）
+  !/emptyRegion/.test(dock) && !/data-empty-/.test(dock) &&
+  /hiddenRegions\.includes\('left'\) \? \{\} : \{ \['--ts-side-l' as any\]/.test(dock))
+check('区域收起状态按项目分键（不再跨项目传染）',
+  /const REGIONS_KEY = \(projectId: string\) => `tokensave:desk-regions\.v1:\$\{projectId\}`/.test(dock) &&
+  /localStorage\.setItem\(REGIONS_KEY\(project\.id\)/.test(dock) &&
+  /'tokensave:desk-regions\.v1',/.test(dock))
+check('标题行脱离列宽约束（收起编辑区后右上按钮不跑左边）',
+  /\.ts-titlebar \{ position: absolute; left: 0; right: 0; top: 0; height: 42px/.test(dock) &&
+  !/\.ts-titlebar \{ grid-area: title/.test(dock))
+check('正文宽度：往外拖永不变窄（max 不低于当前宽度）',
+  /Math\.max\(CONTENT_MIN, avail - CONTENT_EDGE_BUDGET, startW\)/.test(mainChat) &&
+  // 旧写法只要 max < startW，任何方向的拖动都会把宽度夹小
+  !/const max = Math\.max\(CONTENT_MIN, avail - CONTENT_EDGE_BUDGET\)$/.test(mainChat))
+check('输入条停靠不会因 enabled 切换而永留 position:fixed',
+  /PRE_DOCK_STYLES/.test(composerDock) &&
+  /PRE_DOCK_STYLES\.set\(seat, saved\)/.test(composerDock) &&
+  /PRE_DOCK_STYLES\.delete\(seat\)/.test(composerDock) &&
+  // 退化锚点只认工作台内部的祖先：dockview 摘掉 cell 的那一瞬不能锚到无关盒子
+  /if \(!node\.closest\?\.\('\.ts-dock'\)\) continue/.test(composerDock))
+check('把手 z-index 压过 dockview sash(99) 与宿主输入条(35)，但低于浮层(110)',
+  // 实测：dockview 横向 sash 是 z-index:99，恰好压在把手垂直中点上 —— 原先 50/51
+  // 会留下一条 4px 死带（elementFromPoint 命中 sash），双击/拖动都失效。
+  /\.ts-resizer \{[^}]*z-index: 100/.test(dock) &&
+  /\.ts-dock\[data-hide-left\][^}]*z-index: 101/.test(dock) &&
+  /\.ts-dock\[data-hide-right\][^}]*z-index: 101/.test(dock) &&
+  // 浮层必须仍压在把手之上（否则把手那条 8px 会盖住浮层左缘，点不中）
+  /\.ts-pop \{[^}]*z-index: 110/.test(dock))
 check('历史会话 / 新建会话在**状态栏**（不在标题行）',
   /data-desk-titlebar[\s\S]{0,3000}<SessionPicker/.test(dock) === false &&
   /data-desk-statusbar[\s\S]{0,2500}<SessionPicker/.test(dock))
@@ -414,7 +483,10 @@ check('移动端（≤900px）：三栏 → 单栏 + 抽屉（中间永远整宽
   /className="ts-drawer-mask"/.test(dock) &&
   /window\.matchMedia\('\(max-width: 900px\)'\)/.test(dock))
 check('输入框不因「主对话是后台标签」被藏掉（info_report / compare-text 的 bug）',
-  /const shown = !!p && !centerHidden/.test(dock) && !/isVisible !== false && !centerHidden/.test(dock))
+  // 面板可能被拖到任一区，只在 center 里找会误判成「面板不在了」→ 整条藏掉输入条
+  /const home = REGIONS\.find\(\(r\) => apis\[r\]\.getPanel\(chatId\)\)/.test(dock) &&
+  /const shown = !!home && !hiddenRef\.current\.includes\(home\)/.test(dock) &&
+  !/isVisible !== false && !centerHidden/.test(dock))
 check('主对话留白 + 阅读宽度（宽面板不拉满）',
   /\.ts-chat-msgs \{ flex:1; min-height:0; overflow:auto; overflow-anchor:none; padding:16px max\(22px, calc\(\(100% - var\(--ts-chat-w, 920px\)\) \/ 2\)\)/.test(styles))
 check('状态栏实时信息最多占一半',
@@ -518,17 +590,24 @@ check('项目中心/弹窗里的深色底已清空（不再有写死的深色卡
   /background: var\(--ts-pop-bg\)/.test(dock))
 
 // —— 17. 状态栏悬浮（参考 info_report 的 #statusbar）——
-check('状态栏悬浮在页面之上（脱离网格行 + 上边线 + 向上阴影 + 模糊）',
-  /\.ts-statusbar \{[^}]*position: absolute; left: 0; right: 0; bottom: 0; z-index: 45;/.test(dock) &&
+check('状态栏**真实占一行**（不浮在内容上），但视觉上悬浮（上边线 + 向上阴影 + 模糊）',
+  // 关键：它不是覆盖层。旧版把这行塔成 0px 再 absolute 贴底 → 三个区域的「脚跟」
+  // 被盖住（用户反馈底部已遮挡）。
+  /grid-template-rows: 42px minmax\(0,1fr\) auto;/.test(dock) &&
+  !/grid-template-rows: 42px minmax\(0,1fr\) 0px;/.test(dock) &&
+  !/\.ts-statusbar \{[^}]*position: absolute/.test(dock) &&
+  // 悬浮感只由视觉三件套提供
   /box-shadow: 0 -6px 18px rgba\(0,0,0,\.18\);/.test(dock) &&
   /background: var\(--ts-sb-bg\);/.test(dock) &&
-  // 网格那行塌成 0（内容从状态栏底下穿过）
-  /grid-template-rows: 42px minmax\(0,1fr\) 0px;/.test(dock) &&
-  // 高度由 ResizeObserver 量出来写进 --ts-sb-h（窄屏会换行成两行）
+  /border-top: 1px solid var\(--ts-line\);/.test(dock) &&
+  /backdrop-filter: blur\(10px\) saturate\(1\.1\);/.test(dock) &&
+  // 高度仍量出来写进 --ts-sb-h：现在只给窄屏抽屉/遮罩让位用
   /data-desk-statusbar/.test(dock) &&
   /document\.documentElement\.style\.setProperty\('--ts-sb-h'/.test(dock) &&
   // min-height 不能读自己写出去的变量（自反馈会把状态栏撑到整屏 —— 实测踩过）
   /min-height: 28px;/.test(dock) &&
-  // 底部留白与输入条都要让开状态栏
-  /padding-bottom:calc\(var\(--ts-composer-h, 72px\) \+ var\(--ts-sb-h, 28px\) \+ 14px\)/.test(styles) &&
-  /const overlap = Math\.max\(0, r\.bottom - \(window\.innerHeight - sbH\)\)/.test(composerDock))
+  // 底部留白只需让开输入条，不再叠一个 --ts-sb-h（否则底部多出一块空白）
+  /padding-bottom:calc\(var\(--ts-composer-h, 72px\) \+ 14px\)/.test(styles) &&
+  !/padding-bottom:calc\(var\(--ts-composer-h, 72px\) \+ var\(--ts-sb-h, 28px\)/.test(styles) &&
+  // 输入条也不再为它让位（状态栏已不在自己上方）
+  !/const overlap = Math\.max\(0, r\.bottom - \(window\.innerHeight - sbH\)\)/.test(composerDock))

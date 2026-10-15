@@ -46,6 +46,10 @@ body.ts-center-open [data-conversation-scroll] :has(.ts-cr) {
 /* 工作台打开时隐藏宿主那套全局宽度把手（值写在共享父元素上、一处拖动处处生效，
    且给把手预留 176px 永远铺不满）。工作台默认铺满。 */
 body.ts-hdesk-open [data-width-handle] { display:none !important; }
+/* dockview 版工作台没有再加 ts-hdesk-open 类（那是旧 HDesk 的写法），
+   导致宿主那对 10px 宽、整屏高的宽度把手仍浮在工作台面板上 —— 用户看到的
+   「蓝色条块」一半来自它。用 :has 把「工作台在场」这个条件补上。 */
+body:has(.ts-dock) [data-width-handle] { display:none !important; }
 
 /* —— 项目中心（列表态）：背景覆盖到输入框及其下方区域 ——
    输入条座位 [data-conversation-region="composer"] 与本视图是**兄弟节点**
@@ -693,7 +697,7 @@ body.ts-vsplit-dragging .ts-card { transition:none !important; animation:none !i
 /* #4 输入条 fixed 停在卡片底部，会盖住消息末尾几行：
    底部留白 = 输入条实测高度（--ts-composer-h，由 HDesk 停靠时写入）+ 余量。
    以前写死 72px，输入条多行/换行时就不够，末尾几行被遮住。 */
-.ts-mainchat .ts-chat-msgs { padding-bottom:calc(var(--ts-composer-h, 72px) + var(--ts-sb-h, 28px) + 14px); }
+.ts-mainchat .ts-chat-msgs { padding-bottom:calc(var(--ts-composer-h, 72px) + 14px); }
 /* 主对话消息宽度：**跟自己的面板宽度自适应**，不再吃宿主那套全局宽度。
    历史：原先跟 --ts-chat-content-w（由输入条停靠逻辑写，取自宿主的
    --dsh-chat-user-width，带 680px 下限）并居中——面板变窄时它仍按 680px 算，
@@ -859,11 +863,21 @@ body.ts-vsplit-dragging .ts-card { transition:none !important; animation:none !i
 .ts-chat-msgs { flex:1; min-height:0; overflow:auto; overflow-anchor:none; padding:16px max(22px, calc((100% - var(--ts-chat-w, 920px)) / 2)); display:flex; flex-direction:column; gap:7px; }
 /* 正文宽度把手（同宿主 [data-width-handle] 的手感：贴边细条、悬停高亮、左右对称收放）。
    位置跟着正文列的两条边：left/right = 那半边留白的一半。 */
-.ts-chat-w { position:absolute; top:34px; bottom:0; width:7px; cursor:col-resize; z-index:3; opacity:0; transition:opacity .12s, background .12s; }
-.ts-chat-w--left { left:calc(max(22px, calc((100% - var(--ts-chat-w, 920px)) / 2)) - 4px); }
-.ts-chat-w--right { right:calc(max(22px, calc((100% - var(--ts-chat-w, 920px)) / 2)) - 4px); }
-.ts-mainchat:hover .ts-chat-w { opacity:.5; }
-.ts-chat-w:hover, .ts-chat-w:active { opacity:1; background:rgba(79,142,247,.55); border-radius:3px; }
+/* 宽度把手：命中区 9px，但**只画一条 2px 细线**（不要整块色块）；
+   平时完全透明，鼠标进面板才隐约出现，按上去才亮成主题蓝。 */
+.ts-chat-w { position:absolute; top:34px; bottom:0; width:9px; cursor:col-resize; z-index:3; }
+.ts-chat-w::after {
+  content:''; position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
+  width:2px; height:34px; border-radius:2px; background:transparent;
+  transition:background .12s, height .12s;
+}
+.ts-chat-w--left { left:calc(max(22px, calc((100% - var(--ts-chat-w, 920px)) / 2)) - 5px); }
+.ts-chat-w--right { right:calc(max(22px, calc((100% - var(--ts-chat-w, 920px)) / 2)) - 5px); }
+/* 与侧栏把手同一套语言：细短杠、悬停才显形、按住略加长；**不用蓝色色块**
+   （用户反馈「出现的蓝色条块太丑了」）。 */
+.ts-mainchat:hover .ts-chat-w::after { background:var(--ts-line); }
+.ts-chat-w:hover::after { background:var(--ts-fg-mute); height:52px; }
+.ts-chat-w:active::after { background:var(--ts-fg-dim); height:64px; }
 
 /* —— 左栏：协作对话时间轴 —— */
 .ts-talk { display:flex; flex-direction:column; min-height:104px; overflow:hidden; }

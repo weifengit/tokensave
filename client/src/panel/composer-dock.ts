@@ -17,6 +17,14 @@ import { useLayoutEffect } from 'react'
 
 /** 宿主原生输入条选择器（conversation.composer 常驻座位）。 */
 export const COMPOSER_SEAT = '[data-conversation-region="composer"]'
+/**
+ * 停靠前的原始行内样式缓存（按座位元素记一份）。
+ *
+ * 为什么必须模块级：useLayoutEffect 的每次重跑都拿不到上一次闭包里的 saved，
+ * 而 enabled=true→false 恰恰是**另一次**重跑 —— 局部变量这时还没填过，
+ * 写回 undefined 对 CSSStyleDeclaration 等于没写，输入条就带着 position:fixed 留在原地。
+ */
+const PRE_DOCK_STYLES = new WeakMap<HTMLElement, Record<string, string>>()
 
 /**
  * 把宿主原生输入条停靠进给定容器（工作台的「DSH 主对话」面板）。
@@ -40,8 +48,9 @@ export function useDockNativeComposer(
     // background / backgroundImage 也要接管：宿主的 composerSeat 自带一条
     // 「透明 → 背景色」的渐变遮罩（linear-gradient(transparent 0, rgb(21,21,23) 36px)），
     // 作用是让滚到输入条上沿的消息被淡出。停靠后它跟着输入条一起被搬进工作台，
-    // 就在聊天区下方留下一块**黑色覆盖**（用户反馈）。这里清掉它，
-    // 改由停靠容器底部的 .ts-dock-fade 提供同样的「滚到底看不见底下」效果。
+    // 就在聊天区下方留下一块**黑色覆盖**（用户反馈）。这里清掉它。
+    // （原先为它准备的那条 .ts-dock-fade 替代遮罩也已删除：消息流自带 padding-bottom，
+    //   内容不会滑到输入条底下，那条遮罩只会把聊天区下方糊出一块渐变深色。）
     const KEYS = [
       'position',
       'left',
@@ -53,16 +62,28 @@ export function useDockNativeComposer(
       'background',
       'backgroundImage',
     ] as const
-    const saved: Record<string, string> = {}
+    /** 停靠前的原始行內样式：**模块级**缓（不随 effect 重跑丢失，否则 enabled→false 时根本读不到原值）。 */
+    let saved = PRE_DOCK_STYLES.get(seat)
 
     // 主对话面板收起/关闭时不再停靠：让输入条回到宿主的原位置（避免悬在空格里）
     if (!enabled) {
-      for (const k of KEYS) (seat.style as any)[k] = saved[k]
+      // 交还给宿主：优先恢复**停靠前真实值**；没抓过说明本次根本没停靠，
+      // 清掉我们可能写过的那几项（空字符串 = 移除行内值，回落到宿主样式表）。
+      for (const k of KEYS) {
+        const v = saved?.[k]
+        if (v !== undefined && v !== '') (seat.style as any)[k] = v
+        else (seat.style as any)[k] = ''
+      }
+      PRE_DOCK_STYLES.delete(seat)
       cell.style.removeProperty('--ts-chat-content-w')
       return
     }
     // 停靠前先记下原值（只记一次，避免把已停靠的值当成原值）
-    for (const k of KEYS) saved[k] = (seat.style as any)[k]
+    if (!saved) {
+      saved = {}
+      for (const k of KEYS) saved[k] = (seat.style as any)[k]
+      PRE_DOCK_STYLES.set(seat, saved)
+    }
 
     // 输入条会遮住消息末尾：量出它的高度写回 CSS 变量，
     // 让消息流底部预留同样高度的留白（跟随多行输入动态变化）。
@@ -80,7 +101,11 @@ export function useDockNativeComposer(
     const pickRect = (): DOMRect | null => {
       const own = cell.getBoundingClientRect()
       if (own.width > 0 && own.height > 0) return own
+      // 退化到最近的可见祖先，但**只认工作台内部的祖先**（含 .ts-dock 或它自己）：
+      // 不加这个守卫时，dockview 把 cell 摘出去的瞬间会锚到一个无关盒子上，
+      // 输入条被停到错误位置（甚至停在屏外）。
       for (let node = cell.parentElement, i = 0; node && i < 6; node = node.parentElement, i++) {
+        if (!node.closest?.('.ts-dock')) continue
         const r = node.getBoundingClientRect()
         if (r.width > 0 && r.height > 0) return r
       }
@@ -111,11 +136,9 @@ export function useDockNativeComposer(
         seat.style.width = `${Math.round(contentW)}px`
         seat.style.top = 'auto'
         // 向下锚定：聚焦/多行输入时向上生长，不挤动面板布局
-        // 悬浮状态栏压在页面底部：只有当本面板的底边真的伸到状态栏底下时才把它让开
-        // （无条件加高度会在面板本来就没到底的情况下，把输入条从自己面板底部顶起来）。
-        const sbH = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--ts-sb-h')) || 28
-        const overlap = Math.max(0, r.bottom - (window.innerHeight - sbH))
-        seat.style.bottom = `${Math.round(window.innerHeight - r.bottom + insetY + overlap)}px`
+        // 状态栏现在是**真实网格行**（不再浮在内容之上），三区底边天然落在它上方，
+        // 所以这里不需要再为它让位：把输入条底边对齐到面板底边即可。
+        seat.style.bottom = `${Math.round(window.innerHeight - r.bottom + insetY)}px`
         // 层级：浮层里停靠时要压过面板浮层；普通面板内 35 就够
         seat.style.zIndex = aboveOverlay ? '42' : '35'
         // 清掉宿主那条渐变遮罩（它按「停靠前的位置」算高度，搬进来就是一块黑）
@@ -161,7 +184,12 @@ export function useDockNativeComposer(
       window.removeEventListener('scroll', schedule, true)
       window.clearInterval(timer)
       if (raf) cancelAnimationFrame(raf)
-      for (const k of KEYS) (seat.style as any)[k] = saved[k]
+      for (const k of KEYS) {
+        const v = saved?.[k]
+        if (v !== undefined && v !== '') (seat.style as any)[k] = v
+        else (seat.style as any)[k] = ''
+      }
+      PRE_DOCK_STYLES.delete(seat)
       document.documentElement.style.removeProperty('--ts-composer-h')
       cell.style.removeProperty('--ts-chat-content-w')
     }
