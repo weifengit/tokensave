@@ -86,6 +86,19 @@ try {
   check('聊天格存在（停靠的原生输入条落在它里面）+ 自建输入框样式已删',
     /\.ts-dock-chatcell \{/.test(dockSrc) &&
     /useDockNativeComposer/.test(dockSrc) && !/\.ts-pc-input \{/.test(dockSrc))
+  check('聊天输入框：去掉宿主深底卡，但**保留跟主题一致的外框**',
+    // 宿主卡自带不透明深底 + 0.5px 白描边阴影 → 台面里把背景割成两块（用户要求去掉）；
+    // 但外框必须留（全透明后看不出哪里是输入框 —— 用户反馈），改用主题的淡底 + inset ring。
+    /body:has\(\.ts-dock\) \[data-composer-card\] \{[^}]*background: var\(--ts-hover\) !important/.test(stylesSrc) &&
+    /body:has\(\.ts-dock\) \[data-composer-card\] \{[^}]*box-shadow: inset 0 0 0 1px var\(--ts-line\) !important/.test(stylesSrc) &&
+    // inset ring 而非 border：不改尺寸，宿主自己的圆角原样保留
+    !/body:has\(\.ts-dock\) \[data-composer-card\] \{[^}]*border: /.test(stylesSrc) &&
+    // 作用域锁在「工作台在场」：卡是 fixed 定位的座位、不在 .ts-dock 里，
+    // 切到「对话」tab 时 .ts-dock 消失，这条自动失效 → 原生样式恢复。
+    /body:has\(\.ts-dock\) \[data-composer-card\]/.test(stylesSrc) &&
+    // 文字改跟插件主题走，否则去掉深底后浅色主题下浅字压浅底看不见
+    /--dsw-alias-label-primary: var\(--ts-fg\)/.test(stylesSrc) &&
+    /--dsw-alias-label-secondary: var\(--ts-fg-dim\)/.test(stylesSrc))
   check('dockview 主题透明（视觉对齐 info_report）',
     /\.dv-intel \.dv-dockview, \.dv-intel \.dv-groupview \{ background: transparent/.test(dockSrc))
   check('面板 id 命名空间由纯模块统一提供（DeskDock 不再各写一份）',

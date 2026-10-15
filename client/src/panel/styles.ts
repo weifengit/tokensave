@@ -51,6 +51,27 @@ body.ts-hdesk-open [data-width-handle] { display:none !important; }
    「蓝色条块」一半来自它。用 :has 把「工作台在场」这个条件补上。 */
 body:has(.ts-dock) [data-width-handle] { display:none !important; }
 
+/* —— 工作台里的聊天输入框：**去掉宿主那块不透明底卡，换成跟主题一致的外框** ——
+   宿主那张卡（[data-composer-card]）自带不透明底色 --dsw-specific-input-major +
+   一圈 0.5px 白描边阴影 --dsw-elevation-soft。台面里它下面就是皮肤底，那块深色
+   卡会把背景割成两块（用户要求去掉）；但**外框必须留着** —— 全透明后就看不出
+   哪里是输入框了（用户反馈）。
+   所以改成：底色用 --ts-hover 的淡色、描边用 --ts-line 的内投影（inset ring，
+   不用 border，免得改变布局/圆角），两者都跟主题与皮肤走。
+   作用域用 :has(.ts-dock)：卡是 fixed 定位的座位、**不在 .ts-dock 里**，切到
+   「对话」tab 时 .ts-dock 整个消失 → 这条自动失效，宿主原生样式原样恢复。 */
+body:has(.ts-dock) [data-composer-card] {
+  background: var(--ts-hover) !important;
+  /* inset ring 而不是 border：不改尺寸，宿主自己的 28px 圆角也原样保留 */
+  box-shadow: inset 0 0 0 1px var(--ts-line) !important;
+  /* 文字改跟工作台主题走：宿主那套 label 色系是给「深色底卡」配的，
+     换成淡底后必须用插件的 --ts-fg*，否则浅色主题下浅字压浅底看不见。 */
+  --dsw-alias-label-primary: var(--ts-fg);
+  --dsw-alias-label-secondary: var(--ts-fg-dim);
+  --dsw-alias-label-tertiary: var(--ts-fg-mute);
+  --dsw-alias-label-caption: var(--ts-fg-mute);
+}
+
 /* —— 项目中心（列表态）：背景覆盖到输入框及其下方区域 ——
    输入条座位 [data-conversation-region="composer"] 与本视图是**兄弟节点**
    （同在 [data-conversation-scroll] 内），且它自带不透明渐变底。
