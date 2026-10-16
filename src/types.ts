@@ -1,5 +1,5 @@
-// 接口类型汇总，与 docs/CONTRACTS.md 完全一致。
-// 规则：接口改动必须先改 CONTRACTS.md，再改这里（见 docs/CONTRACTS.md 首页 + docs/MAINTENANCE.md）。
+// 接口类型汇总（契约单一来源；原 docs/CONTRACTS.md 已删，冻结规则见 docs/MAINTENANCE.md）。
+// 规则：接口改动先改本文档（types.ts 即契约本身），再改实现；冻结口径见 docs/MAINTENANCE.md。
 
 // —— 已在各自契约模块中定义的类型，此处仅 re-export 汇总 ——
 // 场景类型（实现在 src/scenario/detector.ts）

@@ -42,14 +42,14 @@ export interface ExplorerCandidate {
   note?: string
 }
 
-/** 免费 provider 路由（与 CONTRACTS 记录一致）；其余归「收费」。 */
+/** 免费 provider 路由（与 parallel-explorer / MAINTENANCE 冻结口径一致）；其余归「收费」。 */
 export const FREE_PROVIDERS: readonly string[] = ['deepseek-web', 'our-free-model', 'opencode-zen']
 
 /**
  * 已知 provider 的模型清单（兜底 + 主用）。
  *
  * 刻意**不**调 `ctx.llm.listModels()`：那是 per-provider 的异步探测，可能打到网络
- * 端点，会让设置面板的读取变慢甚至挂住；这里用与 CONTRACTS 一致的已知清单，
+ * 端点，会让设置面板的读取变慢甚至挂住；这里用与 parallel-explorer 一致的已知清单，
  * 快且确定。新增 provider / 模型时同步维护本表即可。
  */
 export const KNOWN_MODELS: Record<string, string[]> = {

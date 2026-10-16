@@ -24,7 +24,7 @@
 - `/Users/sonoma/code/info_report/packages/dsh-intel-plugin/web/workbench.js`（参考：dockOptions / createIconTab / createPaneRenderer / togglePanelArea / wireCrossDockDnd / pruneEmptyGroups）
 - `/Users/sonoma/code/info_report/packages/dsh-intel-plugin/web/icons.js`（线条图标集）
 - `/Users/sonoma/code/info_report/packages/dsh-intel-plugin/web/app.css`（皮肤令牌 + `--dv-*` 变量覆盖，重点 18-40 行与 2281-2320 行）
-- `docs/CONTRACTS.md`（工作台/槽契约节）
+- （原 `docs/CONTRACTS.md` 已删；工作台/槽契约现以代码注释为准：`client/src/index.ts` 槽位注册段）
 
 ## 硬约束（读宿主源码已核实，不要试图绕过）
 
@@ -141,7 +141,7 @@ iframe / 播放器状态因此不丢。本步移植这条到项目切换：切�
 - 重写 `scripts/check-desk-ux.mjs` 中作废的网格断言；新增 dockview 面板注册/快照往返的
   纯函数测试；`package.json` 的 `test` 链同步。
 - `pnpm check` + 全量测试链 + 真机目检（拖拽 / 最大化 / 刷新恢复 / 双项目切换）。
-- `docs/PROGRESS.md` 追加 Step 13 条目；`docs/CONTRACTS.md` 同步布局契约与 projectId 分键口径。
+- ~~`docs/PROGRESS.md` 追加 Step 13 条目；`docs/CONTRACTS.md` 同步布局契约~~（两文档均已删除，进度/契约以 CHANGELOG + 代码注释为准）。
 
 ## 验收
 

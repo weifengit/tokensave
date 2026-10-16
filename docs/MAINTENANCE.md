@@ -48,10 +48,23 @@
 | `scripts/check-*.mjs` | 自检断言（纯文本，不需要浏览器） |
 | `scripts/build-client.mjs` | esbuild 打包客户端 → dist/client.js |
 | `scripts/release.mjs` | 版本递增 + CHANGELOG + tag |
-| `docs/CONTRACTS.md` | 宿主接口契约 + 接口冻结记录（改动接口先改此文件再改实现） |
+| `src/types.ts` / 各模块头注释 | 接口契约的唯一权威源（原 docs/CONTRACTS.md 已于 2026-10-16 删除，内容均为代码镜像或已过时） |
 
 > 开发进度不再单独维护 PROGRESS.md：版本与变更以 `CHANGELOG.md` + git 历史为准。
 > 架构/功能介绍见仓库根 `README.md`；`docs/prompts/step-13-dockview.md` 是 dockview 方案笔记（保留）。
+
+## 接口冻结与环境提醒（原 docs/CONTRACTS.md 收纳，2026-10-16）
+
+- **tokensave_delegate 输入/输出 schema 已冻结**（与 src/types.ts 的 DelegateInput/Output 一致：
+  task_description 必填 / file_path 可选 / explorer_count 默认 3；输出 brief+scenario 双必填），不得单方面修改；
+  接口类改动先改 types.ts + 本文档，再改实现（旧规则「先改 CONTRACTS.md」作废）。
+- **EXPLORER_PRESETS 三槽经用户确认冻结**（当前值见 src/orchestration/parallel-explorer.ts）；
+  用户可在工作台探索者设置里改选择，但预设本体改动需再次经用户确认。
+- 仍有效的环境提醒：dsh-llm-call-inspector 激活失败（LLM Calls 视图不可用）；
+  dsh-call-session@0.1.6 消息投毒（v4 拒 source.kind='plugin'，tokensave 已改 createUserMessage 直投绕过，不再依赖其消息路径）；
+  opencode-zen 免费档凭据（OPENCODE_API_KEY）未配置。
+- 黑板契约的语义对齐清单（TTL/工作区隔离/FIFO/保留主题拦截等）以 src/blackboard/store.ts
+  头注释为唯一权威源；旧 CONTRACTS.md 中与之不同的表述均属过时。
 
 ## 排错备忘（历史踩坑）
 
