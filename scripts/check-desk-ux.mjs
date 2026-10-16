@@ -99,6 +99,15 @@ try {
     // 文字改跟插件主题走，否则去掉深底后浅色主题下浅字压浅底看不见
     /--dsw-alias-label-primary: var\(--ts-fg\)/.test(stylesSrc) &&
     /--dsw-alias-label-secondary: var\(--ts-fg-dim\)/.test(stylesSrc))
+  check('输入框内 + 按钮跟随主题（去掉宿主实心圆盘底，保留图标与悬停）',
+    // 宿主「添加文件或调用指令」按钮自带实心圆盘底（--dsw-specific-selector，
+    // 深 #353638 / 浅 #f5f6f7），在淡底卡上很跳；这里改透明、图标色跟 --ts-fg。
+    // 选择器用稳定 aria 属性（hash class 随宿主版本变）；悬停用前景混色自己造灰，
+    // 不覆盖被十几个 token 共用的 --dsw-alias-interactive-bg-hover-solid。
+    /body:has\(\.ts-dock\) \[data-composer-card\] button\[aria-haspopup="listbox"\] \{[^}]*background: transparent !important/.test(stylesSrc) &&
+    /body:has\(\.ts-dock\) \[data-composer-card\] button\[aria-haspopup="listbox"\] \{[^}]*color: var\(--ts-fg\) !important/.test(stylesSrc) &&
+    /button\[aria-haspopup="listbox"\]:hover:not\(:disabled\) \{[^}]*color-mix\(in srgb, var\(--ts-fg\) 14%, transparent\)/.test(stylesSrc) &&
+    !/--dsw-alias-interactive-bg-hover-solid:/.test(stylesSrc))
   check('dockview 主题透明（视觉对齐 info_report）',
     /\.dv-intel \.dv-dockview, \.dv-intel \.dv-groupview \{ background: transparent/.test(dockSrc))
   check('面板 id 命名空间由纯模块统一提供（DeskDock 不再各写一份）',

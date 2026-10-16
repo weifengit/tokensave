@@ -50,9 +50,9 @@ export const SOUND_OPTIONS: ReadonlyArray<{ id: SoundId; label: string }> = [
 /** 时长选项（顺序即下拉顺序） */
 export const DURATION_OPTIONS: ReadonlyArray<{ id: SoundDuration; label: string }> = [
   { id: 'once', label: '一声响' },
-  { id: 'minute', label: '一分钟' },
+  { id: 'minute', label: '一分响' },
   { id: 'forever', label: '一直响' },
-  { id: 'custom', label: '自定义（分钟）' },
+  { id: 'custom', label: '随心响' },
 ]
 
 const LS_KEY = 'tokensave:sound.v1'

@@ -50,7 +50,7 @@ import { useExplorerBadges } from './explorer-status'
 import { ExplorerSettings } from './ExplorerSettings'
 import { SessionPicker } from './SessionPicker'
 import { loadProjects, rememberOpenedProject } from './store'
-import { useProjectsActivity } from './activity'
+import { useProjectsActivity, useProjectLastActivity } from './activity'
 import {
   SKIN_GROUPS, readSkinId, chooseSkin, applySkin as applySkinVars, bootSkin, currentThemeMode,
 } from './skins'
@@ -1984,6 +1984,18 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
 
   /** 项目清单：只在面板打开时重读一次（用户可能刚在项目中心加/删项目）。 */
   const projectList = useMemo(() => (projOpen ? loadProjects() : []), [projOpen])
+  /** 每个项目最近一次对话活动时间：切换列表按它倒序排（越新越靠前）。 */
+  const projectLastActive = useProjectLastActivity(projectList)
+  /**
+   * 切换列表排序：按「最近对话更新时间」倒序（用户要求）。
+   * 时间取宿主会话目录（lastPromptAt / updatedAt，与活跃点同口径）；
+   * 没有任何对话的项目回退到项目自身 updatedAt，再回退 createdAt。
+   */
+  const sortedProjectList = useMemo(() => {
+    const at = (p: ProjectRecord): number =>
+      projectLastActive[p.id] || p.updatedAt || p.createdAt || 0
+    return [...projectList].sort((a, b) => at(b) - at(a))
+  }, [projectList, projectLastActive])
   /** 每个项目里「进行中 / 待确认」的对话（数据源与项目中心卡片上的 ①②③ 同源）。 */
   const projectActivity = useProjectsActivity(projectList)
 
@@ -2610,7 +2622,7 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
             <span className="ts-set-hint">{projectList.length} 个 · 点一行进它的工作台</span>
           </div>
           <div className="ts-projsw-list">
-            {projectList.map((p) => {
+            {sortedProjectList.map((p) => {
               const acts = projectActivity[p.id] || []
               const running = acts.filter((a) => a.state === 'active').length
               const pending = acts.filter((a) => a.state === 'pending').length

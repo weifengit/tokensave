@@ -178,3 +178,67 @@ export function useProjectsActivity(projects: ProjectRecord[]): Record<string, S
 
   return byProject
 }
+
+/**
+ * 每个项目最近一次对话活动时间（Unix ms）：该项目下**全部**对话的 lastPromptAt/updatedAt 最大值。
+ *
+ * 与 useProjectsActivity（只看「活跃」对话）不同，这里扫全部会话列表——
+ * 「切换项目」列表按它排序：对话更新越近的项目排越前（用户要求）。
+ * 数据源与 readProjectSessions 同一份宿主快照，订阅 + 4s 兜底轮询，思路同 useProjectsActivity。
+ */
+export function useProjectLastActivity(projects: ProjectRecord[]): Record<string, number> {
+  const [byProject, setByProject] = useState<Record<string, number>>({})
+  const key = projects.map((p) => `${p.id}:${p.path}`).join('|')
+
+  useEffect(() => {
+    const ctx: any = getClientContext()
+    if (!ctx || projects.length === 0) {
+      setByProject({})
+      return
+    }
+    const read = () => {
+      const next: Record<string, number> = {}
+      for (const p of projects) {
+        let best = 0
+        try {
+          for (const s of readProjectSessions(ctx, p.path)) {
+            const at = lastPromptMs(ctx, s.id, s.updatedAt)
+            if (at > best) best = at
+          }
+        } catch (e) {
+          console.warn('[tokensave] failed to read project conversation time', e)
+        }
+        next[p.id] = best
+      }
+      setByProject(next)
+    }
+    read()
+    const unsubs: Array<() => void> = []
+    for (const src of [
+      readService<any>(ctx, 'sessions')?.list,
+      readService<any>(ctx, 'uiSession')?.sessionStatus,
+    ]) {
+      if (src && typeof src.subscribe === 'function') {
+        try {
+          unsubs.push(src.subscribe(read))
+        } catch {
+          /* if the source is not subscribable, degrade to polling */
+        }
+      }
+    }
+    const timer = window.setInterval(read, 4_000)
+    return () => {
+      for (const u of unsubs) {
+        try {
+          u()
+        } catch {
+          /* noop */
+        }
+      }
+      window.clearInterval(timer)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key])
+
+  return byProject
+}

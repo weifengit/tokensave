@@ -35,6 +35,7 @@ const crCenter = readFileSync(join(root, 'client/src/panel/ProjectCenter.tsx'), 
 const explorerStatus = readFileSync(join(root, 'client/src/panel/explorer-status.ts'), 'utf8')
 const sessionsSrc = readFileSync(join(root, 'client/src/panel/sessions.ts'), 'utf8')
 const themeSrc = readFileSync(join(root, 'client/src/panel/theme.ts'), 'utf8')
+const activitySrc = readFileSync(join(root, 'client/src/panel/activity.ts'), 'utf8')
 
 /**
  * 「已删除」类断言要看**代码**，不能看注释：解释为何删掉的注释里必然会提到被删的
@@ -276,6 +277,15 @@ check('项目切换面板：列出全部项目 + 标注哪些项目有进行中�
   /ts-projsw-tag run">● 运行中/.test(dock) &&
   /\{!running && !pending \? <span className="ts-projsw-tag idle">无进行中对话/.test(dock) &&
   /if \(!current\) enterProjectWorkbench\(p\.id\)/.test(dock))
+check('项目切换列表：按最近对话更新时间倒序（越新越靠前）',
+  // 时间取宿主会话目录（与活跃点同口径），不是项目自身 updatedAt——用户要的是「对话更新越近的项目越靠前」
+  /const projectLastActive = useProjectLastActivity\(projectList\)/.test(dock) &&
+  /const sortedProjectList = useMemo\(\(\) => \{/.test(dock) &&
+  /projectLastActive\[p\.id\] \|\| p\.updatedAt \|\| p\.createdAt \|\| 0/.test(dock) &&
+  /\[\.\.\.projectList\]\.sort\(\(a, b\) => at\(b\) - at\(a\)\)/.test(dock) &&
+  // 渲染循环走排序后的列表（未排序的 projectList 只用于计数展示）
+  /\{sortedProjectList\.map\(\(p\) => \{/.test(dock) &&
+  /useProjectLastActivity/.test(activitySrc))
 check('状态栏承载：实时提示 · 布局(保存) · 恢复 · 会话控件',
   /data-desk-live=""/.test(dock) &&
   /data-desk-layout=""/.test(dock) && /data-desk-layout-default=""/.test(dock) &&

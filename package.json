@@ -22,6 +22,7 @@
   },
   "scripts": {
     "check": "tsc --noEmit",
+    "release": "node scripts/release.mjs",
     "build:client": "node scripts/build-client.mjs",
     "test:continue": "node scripts/check-continue-policy.mjs && node scripts/check-auto-continue-flow.mjs",
     "test:ui": "node scripts/check-panel-ui.mjs",
@@ -34,7 +35,8 @@
     "test:composer-focus": "node scripts/check-composer-focus.mjs",
     "test:desk": "node scripts/check-desk-ux.mjs",
     "test:desk-dock": "node scripts/check-desk-dock.mjs",
-    "test": "pnpm check && pnpm test:continue && pnpm test:width && pnpm test:hover && pnpm test:sound && pnpm test:todo && pnpm test:sidebar && pnpm test:composer-focus && pnpm test:dockview && pnpm test:desk && pnpm test:desk-dock && pnpm test:ui"
+    "test:chat-scroll": "node scripts/check-chat-scroll.mjs",
+    "test": "pnpm check && pnpm test:continue && pnpm test:width && pnpm test:hover && pnpm test:sound && pnpm test:todo && pnpm test:sidebar && pnpm test:composer-focus && pnpm test:dockview && pnpm test:desk && pnpm test:desk-dock && pnpm test:chat-scroll && pnpm test:ui"
   },
   "dependencies": {
     "@deepseek-ai/dsh-brand": "0.2.0-rc.2",

@@ -72,6 +72,32 @@ body:has(.ts-dock) [data-composer-card] {
   --dsw-alias-label-caption: var(--ts-fg-mute);
 }
 
+/* 同一条作用域里还有一个「没适配」的控件：宿主那个
+   **「＋ 添加文件或调用指令」按钮**。它自带一个不透明圆盘底
+   （.uV2eYG_add{background:var(--dsw-specific-selector)} → 深色皮 #353638、
+   浅色皮 #f5f6f7），悬停再叠一层 --dsw-alias-interactive-bg-hover-solid。
+   卡改成淡底之后，这块实心圆在卡上格外跳，跟同排那几个「幽灵」控件
+   （权限 / 模型 / 录音都是 background:transparent）也不是一个语言 —— 用户反馈
+   「添加文件或调用指令按钮没有适配界面更改」。这里把它拉回同一族：
+   **去掉实心底**（图标本身就是可辨识的「＋」，且它的 color 走
+   --dsw-alias-label-primary → 已被上面重定向到 --ts-fg），只保留
+   跟主题走的柔和悬停底，可点性不丢。
+   选择器用宿主稳定的 aria 属性（本卡里 aria-haspopup="listbox" 只有它一个），
+   不写 hash 类名 uV2eYG_add（hash 随宿主版本变）。
+   ⚠️ 别改成覆盖 --dsw-alias-interactive-bg-hover-solid：那个 token 被十几个
+   宿主组件共用（sidebar-nav / markdown-citation / bg-layer-3…），一处覆盖处处变色。 */
+body:has(.ts-dock) [data-composer-card] button[aria-haspopup="listbox"] {
+  background: transparent !important;
+  /* 图标色钉在插件前景上：宿主给的是 label-primary，卡上已重定向，这里明写
+     一层兜底 —— 宿主哪天改走别的 label token，浅色主题下也不会再压不亮。 */
+  color: var(--ts-fg) !important;
+}
+body:has(.ts-dock) [data-composer-card] button[aria-haspopup="listbox"]:hover:not(:disabled) {
+  /* 悬停给一层淡底做反馈：用前景色混出灰度（而不是复用被十几处共用的
+     --dsw-alias-interactive-bg-hover-solid），同一张卡上仍看得出悬停生效。 */
+  background: color-mix(in srgb, var(--ts-fg) 14%, transparent) !important;
+}
+
 /* —— 项目中心（列表态）：背景覆盖到输入框及其下方区域 ——
    输入条座位 [data-conversation-region="composer"] 与本视图是**兄弟节点**
    （同在 [data-conversation-scroll] 内），且它自带不透明渐变底。

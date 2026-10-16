@@ -378,8 +378,16 @@ export function MsgList({
   // 一旦手动往上滚，就不再自动调整，直到他自己滚回底部。
   const pinnedRef = useRef(true)
   const [pinned, setPinned] = useState(true)
-  /** 回翻前的滚动锚点：内容变高后用它把视口钉回原处 */
-  const anchorRef = useRef<{ height: number; top: number } | null>(null)
+  /** 回翻前的滚动锚点：把用户正看着的那一轮节点当「活锚」，顶部生长期间逐帧平移视口保持它原地不动 */
+  // node = 点击时首可见的那一轮节点（仅作初始定位）；之后每帧按 key 重解析节点——
+  // 索引 key 会按位复用，只有 key 跟内容；
+  // nodeTop = 该节点相对容器顶应保持的偏移（即用户此刻的屏幕位置）；
+  // until = 截止时间；startedAt = 布置锚点的时刻（判断其后是否出现用户输入）。
+  // 刻意**不**用「scrollTop 与上一帧我们写的值不同」判用户滚动：多批到达期间
+  // 浏览器自己会钳制/调整 scrollTop，会被误判成用户滚动而提前终止循环；
+  // 改看 userIntentAtRef——只有锚点开始后出现**真实**用户输入（滚轮/触控/按键/按下）才终止。
+  const anchorRef = useRef<{ key: string; node: Element; nodeTop: number; startedAt: number; until: number } | null>(null)
+  const anchorRafRef = useRef(0)
   /** 刚做过视口锤定的时间戳：程序化改 scrollTop 会触发 scroll 事件，
       需短时间内忽略它，避免连锁把整段历史一口气拉完 */
   const restoredAtRef = useRef(0)
@@ -408,6 +416,12 @@ export function MsgList({
   }, [followKey])
 
   // 卸载前记下位置，供重挂时恢复（组件重挂是「跳回更早」的直接成因）。
+  //
+  // ⚠️ 但不能**只**靠它：这是 passive effect 的 cleanup，React 会等 DOM 节点
+  // 移除之后才跑，那时 ref.current 已经是 null → rememberScroll 直接 return，
+  // 账本其实什么都没写（实测 Map.set 一次未发生）。
+  // 所以真正的保命线是「用户一滚动就当场记账」（见 onScroll 里的各处
+  // rememberScroll），这里只当最后一道兼容。
   useEffect(() => rememberScroll, [rememberScroll])
 
   /** 待恢复的滚动位置：重挂时内容往往还没到位，先存着，等内容来了再套用。 */
@@ -459,6 +473,7 @@ export function MsgList({
     restoredAtRef.current = Date.now()
   })
 
+
   const turns = useMemo(() => {
     const out: StreamMsg[][] = []
     for (const m of messages) {
@@ -494,10 +509,83 @@ export function MsgList({
         || t.proc.length > 0 || !!t.answer || !!t.notice),
     [parsed, view],
   )
+  /**
+   * Stable identifier for a turn: time of the turn's **tail** message + fingerprint of the head of the content. Used as the React key and the anchor's data-turn-key.
+   * Why the index can't be used as the key: on rewind, older content is inserted at the **top**, and with an index key the DOM nodes get
+   * reused positionally (the #0 node always shows "the first turn of the window", with its content changing turn by turn),
+   * so the anchor node "changes content" and the correction amount gets computed against the wrong node. The key must follow the content, not the position.
+   */
+  const visibleKeys = useMemo(
+    () =>
+      visible.map((t) => {
+        // Take the **tail** message of the turn: on rewind, older content is only inserted at the head of the turn, the tail never moves;
+        // taking the head would cause the key of the boundary turn to change the moment the window expands to include its true beginning (measured pitfall).
+        const last = t.answer ?? t.proc[t.proc.length - 1] ?? t.injects[t.injects.length - 1] ?? t.users[t.users.length - 1]
+        if (!last) return 'e'
+        let h = 0
+        const s = (last.content || '').slice(0, 64)
+        for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0
+        return `${last.time ?? 0}:${(h >>> 0).toString(36)}`
+      }),
+    [visible],
+  )
   /** DOM 里还有被窗口裁掉的更早轮（无需请求宿主，直接放大窗口即可） */
   const hasHiddenInDom = hiddenTurns > 0
   const canLoadOlder = hasHiddenInDom || (hasMore && !!onLoadOlder)
 
+
+  /**
+   * 布置回翻的「活锚」：把用户正看着的那一轮节点锁住，顶部生长期间逐帧平移视口保持它原地不动。
+   *
+   * 为什么用「活节点」而不是像素差：宿主 loadOlder 是**多批**到达的（先扩窗口、
+   * 再逐批补投影），一次性像素锚会在第一批就被消费掉，后续批次照样把视口顶到
+   * 新段顶部——正是用户报的「跳到 B 的顶部、像没点按钮」。节点锚不一样：无论
+   * 顶部插进来多少批，用户看着的那个节点对象不变，每帧把它的偏移拉回 nodeTop，
+   * 下方内容就永远不动。
+   *
+   * 退出条件：① 用户自己滚了（scrollTop 与上一帧我们写的值不同）；
+   * ② 锚节点离开 DOM（切会话 / 窗口重置）；③ 连续 12 帧无位移（本批落定）；
+   * ④ 4s 截止。期间程序化写入都带锤定时间戳，onScroll 不会把它当成
+   * 「用户滚到顶」而连锁拉历史。
+   */
+  const startOlderAnchor = useCallback(() => {
+    const el = ref.current
+    if (!el) return
+    const r = el.getBoundingClientRect()
+    const turns = Array.from(el.querySelectorAll('[data-turn-key]'))
+    let node: Element | null = null
+    for (const t of turns) {
+      const tr = t.getBoundingClientRect()
+      if (tr.bottom > r.top + 8) { node = t; break }
+    }
+    if (!node) return
+    // nodeTop = 该节点相对容器顶应保持的偏移（即用户此刻的屏幕位置）
+    const nodeTop = node.getBoundingClientRect().top - r.top
+    anchorRef.current = { key: node.getAttribute('data-turn-key') || '', node, nodeTop, startedAt: Date.now(), until: Date.now() + 4000 }
+    restoredAtRef.current = Date.now()
+    if (anchorRafRef.current) cancelAnimationFrame(anchorRafRef.current)
+    const step = () => {
+      anchorRafRef.current = 0
+      const a = anchorRef.current
+      const box = ref.current
+      if (!a || !box) return
+      if (Date.now() > a.until) { anchorRef.current = null; return }
+      // Re-resolve the anchor node by key every frame: the index key gets reused positionally, only the key follows the content
+      const cur = a.key ? box.querySelector(`[data-turn-key="${a.key}"]`) : a.node
+      if (!cur || !box.contains(cur)) { anchorRef.current = null; return }
+      // The user actually moved (wheel/touch/key/press): immediately hand the viewport back to them
+      if (userIntentAtRef.current > a.startedAt) { anchorRef.current = null; return }
+      const cr = box.getBoundingClientRect()
+      const want = cur.getBoundingClientRect().top - cr.top
+      const d = want - a.nodeTop
+      if (Math.abs(d) > 1) {
+        box.scrollTop = box.scrollTop + d
+        restoredAtRef.current = Date.now()
+      }
+      anchorRafRef.current = requestAnimationFrame(step)
+    }
+    anchorRafRef.current = requestAnimationFrame(step)
+  }, [])
 
   /**
    * 回翻一页更早的历史（瀑布式）。
@@ -513,12 +601,12 @@ export function MsgList({
     // 锤定刚发生不久：本次 scroll 是程序写的，不当作「用户滚到顶」
     if (Date.now() - restoredAtRef.current < 150) return
     if (hasHiddenInDom) {
-      anchorRef.current = { height: el.scrollHeight, top: el.scrollTop }
+      startOlderAnchor()
       setWindowTurns((v) => v + TURNS_PER_PAGE)
       return
     }
     if (!hasMore || loadingOlder || !onLoadOlder) return
-    anchorRef.current = { height: el.scrollHeight, top: el.scrollTop }
+    startOlderAnchor()
     void onLoadOlder()
   }, [hasHiddenInDom, hasMore, loadingOlder, onLoadOlder])
 
@@ -672,7 +760,10 @@ export function MsgList({
     settleUntilRef.current = performance.now() + 1500
     if (!settleRafRef.current) settleRafRef.current = requestAnimationFrame(runSettle)
   }, [runSettle])
-  useEffect(() => () => { if (settleRafRef.current) cancelAnimationFrame(settleRafRef.current) }, [])
+  useEffect(() => () => {
+    if (settleRafRef.current) cancelAnimationFrame(settleRafRef.current)
+    if (anchorRafRef.current) cancelAnimationFrame(anchorRafRef.current)
+  }, [])
 
   const onScroll = (e: React.UIEvent<HTMLDivElement>) => {
     onScrollExternal?.(e)
@@ -723,7 +814,13 @@ export function MsgList({
       return
     }
 
-    if (!atBottom) return
+    if (!atBottom) {
+      // 还在中间（没到底）：只要是**真实用户滚动**（滚轮/触控/键盘/拖滚动条），
+      // 当前位置就是用户此刻看到的位置 —— 无论向上还是向下，都重写一笔。
+      // 这样「切走再切回」才是原样恢复，而不是回放更早的一笔旧账。
+      if (freshIntent) rememberScroll()
+      return
+    }
 
     // 到了底部：只有「用户自己向下走回底部」才恢复跟随。
     //
@@ -731,7 +828,12 @@ export function MsgList({
     //
     // 解锁条件是「累计向下走够了」（downPxRef，与滚轮同一阈值），
     // 而不是任意一次 1px 抖动——后者会与重新贴底形成每帧翻转。
-    if (upwardRef.current && downPxRef.current < UNLATCH_DOWN_PX) return
+    if (upwardRef.current && downPxRef.current < UNLATCH_DOWN_PX) {
+      // 快到底但闩锁还没解开：这时的位置就是用户眼前的位置，照样记一笔。
+      // 否则若是稍后切走，恢复会用上一笔旧账（可能是更早的中间位）。
+      rememberScroll()
+      return
+    }
 
     upwardRef.current = false
     downPxRef.current = 0
@@ -739,6 +841,15 @@ export function MsgList({
       pinnedRef.current = true
       setPinned(true)
     }
+    // ⭐ 关键：到底之后必须**立刻重写备忘**（bottom=true）。
+    //
+    // 原实现只在「用户往上滚」时记账，回到最底部却从不再记 —— 于是账本里
+    // 永远留着上一次上滚时的 {bottom:false, top:中间值}。切走再切回（工作台
+    // 面板会重挂）就按这笔陈账恢复到中间，正是用户报的「定位到中间某处」。
+    //
+    // 这里取 pinnedRef 而不是重算几何：闩锁/跟随状态是「用户到底了吗」的
+    // 真值，布局抖动（输入条异步改高）不会把它误判成中途。
+    rememberScroll()
   }
   const jumpToBottom = () => {
     scrollToBottom()
@@ -767,16 +878,6 @@ export function MsgList({
     scheduleSettle()
   })
 
-  // 回翻后恢复视口：新增内容在**顶部**，因此把 scrollTop 加上「长高的那部分」，
-  // 用户眼前的旧内容原地不动（典型瀑布流锚定）。无锚点时 no-op。
-  useEffect(() => {
-    const a = anchorRef.current
-    const el = ref.current
-    if (!a || !el) return
-    anchorRef.current = null
-    restoredAtRef.current = Date.now()
-    el.scrollTop = el.scrollHeight - a.height + a.top
-  })
 
   // 切换会话时重置轮数窗口（新会话从头开始；位置由上面 followKey 的 layout effect 接管，
   // 那里已经处理了「贴底 / 恢复原处」，所以这里不再碰 scrollTop——否则会把恢复覆盖掉）。
@@ -805,7 +906,7 @@ export function MsgList({
         </div>
       )}
       {visible.map((t, ti) => (
-        <div className="ts-turn" key={ti}>
+        <div className="ts-turn" key={visibleKeys[ti] ?? ti} data-turn-key={visibleKeys[ti]}>
           {t.users.map((m, i) => (
             <div className="ts-msg-block ts-msg-block-user" key={`u${i}`}>
               <div className="ts-msg-user">{m.content}</div>
