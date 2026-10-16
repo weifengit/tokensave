@@ -38,32 +38,23 @@ DSH 主会话 → tokensave_delegate
 - 浮窗可观测（dsh-float-window >= 0.2）
 - 不绑定 worktable
 
-## Step 列表
+## 文档地图（维护期）
 
-| Step | 文件                 | 产出物            | 状态 |
-| :--- | :------------------- | :---------------- | :--- |
-| 00   | step-00-framework.md | 目录骨架 + 空实现 | ✅   |
-| 01   | step-01-env.md       | 环境验证通过      | ✅   |
-| 02   | step-02-scaffold.md  | 插件可加载        | ✅   |
-| 03   | step-03-prompt.md    | 系统提示词注入    | ✅   |
-| 04   | step-04-scenario.md  | 场景识别函数      | ✅   |
-| 05   | step-05-tool.md      | 工具注册成功      | ✅   |
-| 06   | step-06-parallel.md  | 并行探索可用      | ✅   |
-| 07   | step-07-board.md     | 黑板读写可用      | ✅   |
-| 08   | step-08-routing.md   | 模型路由配置      | ✅   |
-| 09   | step-09-edit.md      | 编辑工具集成      | ✅   |
-| 10   | step-10-workflow.md  | 编排引擎完整      | ✅   |
-| 11   | step-11-float-ui.md  | 浮窗显示探索者    | ⬜   |
-| 12   | step-12-package.md   | 打包安装成功      | ⬜   |
+| 文件 | 用途 |
+| :--- | :--- |
+| `MAINTENANCE.md` | 维护铁律：改断言、重建产物、收尾发版、commit 规范、排错备忘 |
+| `CONTRACTS.md` | 宿主接口契约实测记录（接口改动先改这里再改实现） |
+| `PROGRESS.md` | 进度概览 + 接口冻结 + 已知问题 + 发布说明（逐步实录已删，勿再追加长篇） |
+| `prompts/step-13-dockview.md` | dockview 布局方案的参考笔记（代码注释有引用，保留） |
 
-## 使用规则（每次 vibecoding 前必读）
+> 历史 step-00~12 任务提示词是一次性开发档案，已于 2026-10-16 删除（全文见 git 历史）。
 
-1. 每次只让智能体读一个 step 文件 + CONTRACTS.md
-2. 每步完成后必须更新 PROGRESS.md
-3. 接口改动必须先改 CONTRACTS.md，再改实现
-4. 不要跳过 Step 00，框架不稳后面必崩
-5. 开场白模板："按 docs/prompts/step-XX.md 实现，先读 CONTRACTS.md
-   确认接口，完成后更新 PROGRESS.md。不要读其他 step 文件。"
+## 使用规则（改代码前必读）
+
+1. 先读 `MAINTENANCE.md`（铁律 + 目录速查），接口相关再读 `CONTRACTS.md`。
+2. 不要通读 `PROGRESS.md` 全文，只查「接口冻结记录」与「已知问题」两段。
+3. 接口改动必须先改 CONTRACTS.md，再改实现。
+4. 客户端改动后必须 `pnpm build:client`；收尾必跑 `pnpm release <档位>`。
 
 ## 依赖插件清单
 
