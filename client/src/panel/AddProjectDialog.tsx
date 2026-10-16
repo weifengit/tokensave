@@ -15,10 +15,38 @@
  * 这些都走后端写路由 POST /plugins/dsh-tokensave/mkdir（只允许单层目录名、不覆盖）。
  */
 import React, { useCallback, useEffect, useState } from 'react'
-import { fetchDirectory, createFolder, renameFolder, cloneRepo, fetchCloneStatus } from './api'
-import type { FsEntry, CloneStatus } from './api'
+import { fetchDirectory, createFolder, renameFolder, cloneRepo, fetchCloneStatus, fetchRepos } from './api'
+import type { FsEntry, CloneStatus, RepoItem } from './api'
 import { addProject } from './store'
 import type { ProjectRecord } from './store'
+
+// —— 线条图标（与工作台其余部分同一套：24×24 / stroke 1.6 / currentColor / 圆头圆角）——
+//
+// 为什么不用 emoji：本工作台的图标一律是线条，emoji 在深浅主题下颜色不可控、
+// 大小与基线与文字对不齐，且各系统渲染差异大（用户已明确过这条风格）。
+const ICON_BODIES: Record<string, string> = {
+  // 文件夹：本地已有目录
+  folder: '<path d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2.5h7a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/>',
+  // 分支/仓：GitHub 克隆（用 git 的“分支”语义，比商标图形中性且同风格）
+  branch: '<circle cx="7" cy="6" r="2.2"/><circle cx="7" cy="18" r="2.2"/><circle cx="17" cy="10" r="2.2"/><path d="M7 8.2v7.6"/><path d="M17 12.2c0 2.2-2 3.1-4 3.4-1.6.2-3 .3-4 .3"/>',
+  // 放大镜：清单搜索
+  search: '<circle cx="11" cy="11" r="6"/><path d="M15.5 15.5 20 20"/>',
+  // 锁：私有仓
+  lock: '<rect x="5" y="10.5" width="14" height="9" rx="2.2"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/>',
+  // 叉：清空搜索
+  close: '<path d="M7 7l10 10"/><path d="M17 7 7 17"/>',
+}
+
+/** 与工作台其他图标同构的 SVG 字符串（尺寸可调，颜色继承 currentColor）。 */
+function iconSvg(name: keyof typeof ICON_BODIES | string, size = 14): string {
+  const body = (ICON_BODIES as Record<string, string>)[name] || ICON_BODIES.folder
+  return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${body}</svg>`
+}
+
+/** 内联渲染图标（React 用；dangerouslySetInnerHTML 是因为图标就是一段固定 SVG）。 */
+function Icon({ name, size = 14 }: { name: string; size?: number }) {
+  return <span className="ts-ico" dangerouslySetInnerHTML={{ __html: iconSvg(name, size) }} />
+}
 
 interface Props {
   onClose: () => void
@@ -90,6 +118,13 @@ export function AddProjectDialog({ onClose, onCreated }: Props) {
   const [cloneStarting, setCloneStarting] = useState(false)
   /** 克隆完成后得到的目录（已写进 cloneStatus.path，单独存一份用于确认）。 */
   const clonePending = Boolean(cloneTaskId) && cloneStatus?.state === 'running'
+  // —— 仓库清单（从自己的 GitHub 仓里直接选，不用手敲）——
+  const [repoList, setRepoList] = useState<RepoItem[]>([])
+  const [repoListError, setRepoListError] = useState('')
+  const [repoListLoading, setRepoListLoading] = useState(false)
+  const [repoQuery, setRepoQuery] = useState('')
+  /** 清单是否展开（默认收起，点「选择仓库」再拉清单）。 */
+  const [repoPickerOpen, setRepoPickerOpen] = useState(false)
 
   const load = useCallback(async (path?: string) => {
     setLoading(true)
@@ -168,6 +203,46 @@ export function AddProjectDialog({ onClose, onCreated }: Props) {
       setCloneStarting(false)
     }
   }
+
+  /**
+   * 展开仓库清单并拉取（懒加载：不点就不打网络）。
+   *
+   * 拉到非空清单时直接打开选择器；失败则把原因显示出来，
+   * 用户仍可手敲地址（这条路不能被断）。
+   */
+  const openRepoPicker = async () => {
+    if (repoPickerOpen) { setRepoPickerOpen(false); return }
+    setRepoPickerOpen(true)
+    if (repoList.length > 0 || repoListLoading) return // 已有缓存，不重复拉
+    setRepoListLoading(true)
+    setRepoListError('')
+    try {
+      const payload = await fetchRepos()
+      setRepoList(payload.items)
+      setRepoListError(payload.error)
+    } finally {
+      setRepoListLoading(false)
+    }
+  }
+
+  /** 选中清单里的某个仓：填地址 + 用仓名做文件夹名（仍可手改）。 */
+  const pickRepo = (repo: RepoItem) => {
+    setRepoUrl(repo.url)
+    const short = repo.fullName.split('/').pop() || repo.fullName
+    setCloneName((prev) => prev.trim() || short)
+    setName((prev) => prev.trim() || short)
+    setRepoPickerOpen(false)
+  }
+
+  /** 清单按关键词过滤（owner/name/描述/语言 都参与匹配）。 */
+  const filteredRepos = repoQuery.trim()
+    ? repoList.filter((r) => {
+        const q = repoQuery.trim().toLowerCase()
+        return r.fullName.toLowerCase().includes(q)
+          || r.description.toLowerCase().includes(q)
+          || r.language.toLowerCase().includes(q)
+      })
+    : repoList
 
   /**
    * 轮询克隆进度。
@@ -278,7 +353,7 @@ export function AddProjectDialog({ onClose, onCreated }: Props) {
     <div className="ts-modal-mask" onClick={(e) => { if (e.target === e.currentTarget) onClose() }}>
       <div className="ts-modal ts-modal-addproj">
         <div className="ts-modal-head">
-          <span>➕ 添加项目</span>
+          <span className="ts-modal-title"><Icon name="folder" size={15} /> 添加项目</span>
           <button className="ts-icon-btn" onClick={onClose} title="关闭">✕</button>
         </div>
         <div className="ts-modal-body">
@@ -289,13 +364,13 @@ export function AddProjectDialog({ onClose, onCreated }: Props) {
               onClick={() => setSource('local')}
               disabled={clonePending}
               title="选择一个已有的本地目录作为项目"
-            >📁 本地已有目录</button>
+            ><Icon name="folder" /> 本地已有目录</button>
             <button
               className={`ts-srcbtn${source === 'clone' ? ' ts-srcbtn-on' : ''}`}
               onClick={() => setSource('clone')}
               disabled={clonePending}
               title="从 GitHub 克隆一个仓库，克隆完直接作为项目"
-            >🐙 从 GitHub 克隆</button>
+            ><Icon name="branch" /> 从 GitHub 克隆</button>
           </div>
           {/* 选择项目文件夹 */}
           <div>
@@ -429,7 +504,61 @@ export function AddProjectDialog({ onClose, onCreated }: Props) {
           {/* 从 GitHub 克隆：仓库地址 + 目标文件夹名 + 进度 */}
           {source === 'clone' && (
             <div className="ts-clone">
-              <label className="ts-field-label">仓库地址</label>
+              <div className="ts-clone-head">
+                <label className="ts-field-label">仓库地址</label>
+                <button
+                  className="ts-btn ts-btn-sm"
+                  onClick={() => void openRepoPicker()}
+                  disabled={clonePending}
+                  title="从你 GitHub 账号下已有的仓库中选一个"
+                ><Icon name="branch" /> {repoPickerOpen ? '收起仓库清单' : '选择我的仓库'}</button>
+              </div>
+
+              {/* 仓库清单（懒加载）：搜索 + 点选，点一下就把地址填上 */}
+              {repoPickerOpen && (
+                <div className="ts-repolist">
+                  <div className="ts-repo-search">
+                    <Icon name="search" />
+                    <input
+                      className="ts-repo-search-input"
+                      value={repoQuery}
+                      autoFocus
+                      placeholder="筛选仓库（名称 / 描述 / 语言）"
+                      onChange={(e) => setRepoQuery(e.target.value)}
+                    />
+                    {repoQuery && (
+                      <button className="ts-repo-clear" onClick={() => setRepoQuery('')} title="清空">
+                        <Icon name="close" size={12} />
+                      </button>
+                    )}
+                  </div>
+                  <div className="ts-repo-items">
+                    {repoListLoading && <div className="ts-hint">正在读取你的仓库…</div>}
+                    {!repoListLoading && repoListError && (
+                      <div className="ts-hint">⚠️ {repoListError}</div>
+                    )}
+                    {!repoListLoading && !repoListError && repoList.length === 0 && (
+                      <div className="ts-hint">没有读到仓库</div>
+                    )}
+                    {!repoListLoading && repoList.length > 0 && filteredRepos.length === 0 && (
+                      <div className="ts-hint">没有匹配「{repoQuery}」的仓库</div>
+                    )}
+                    {filteredRepos.map((r) => (
+                      <button
+                        key={r.fullName}
+                        className="ts-repo-item"
+                        onClick={() => pickRepo(r)}
+                        title={r.url}
+                      >
+                        <span className="ts-repo-name">{r.fullName}</span>
+                        {r.isPrivate && <span className="ts-repo-badge" title="私有仓库"><Icon name="lock" size={11} /></span>}
+                        {r.language && <span className="ts-repo-lang">{r.language}</span>}
+                        {r.description && <span className="ts-repo-desc">{r.description}</span>}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
               <input
                 className="ts-input"
                 value={repoUrl}

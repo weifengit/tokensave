@@ -104,7 +104,11 @@ check('写通道自行鉴权（不套 makeGuard，否则非 GET 全 405）',
 
 check('clone 路由已登记进 writeRoutes 与启动日志',
   /\[CLONE_ROUTE_PATH, cloneStartGuard\],/.test(route) &&
-  /\$\{CLONE_ROUTE_PATH\}`\)/.test(route))
+  // 启动日志现在一行列全部路由（末尾还有 REPOS），故只查“日志里出现过”
+  (() => {
+    const logLine = route.split('\n').find((l) => l.includes('路由已挂载')) || ''
+    return logLine.includes('${CLONE_ROUTE_PATH}') && logLine.includes('${REPOS_ROUTE_PATH}')
+  })())
 
 check('输出按 \\r 与 \\n 双分隔符切（git 进度行用 \\r 刷新）',
   /text\.split\(\/\[\\r\\n\]\+\/\)/.test(route))
@@ -125,9 +129,10 @@ check('非 2xx 一律抛错（不静默吞掉校验失败/409）',
 
 console.log('— 客户端：弹窗 —')
 
-check('两态来源切换（local / clone）',
+check('两态来源切换（local / clone），且按钮用线条图标',
   /const \[source, setSource\] = useState<'local' \| 'clone'>\('local'\)/.test(dialog) &&
-  /📁 本地已有目录/.test(dialog) && /🐙 从 GitHub 克隆/.test(dialog))
+  dialog.includes('<Icon name="folder" /> 本地已有目录') &&
+  dialog.includes('<Icon name="branch" /> 从 GitHub 克隆'))
 
 check('克隆父目录跟目录浏览器走（用 cwd 而非 selectedPath）',
   /useEffect\(\(\) => \{ setCloneParent\(cwd \|\| null\) \}, \[cwd\]\)/.test(dialog))
@@ -155,6 +160,69 @@ check('本地专属控件（新建/重命名/选择当前文件夹）只在 loca
 check('仓库名推导与服务端同规则（去 .git / 取末段）',
   dialog.includes('cleaned.split(/[/:]/)') &&
   /return tail\.replace\(\/\\\.git\$\/i, ''\)/.test(dialog))
+
+console.log('— 仓库清单（从自己的 GitHub 仓里选）—')
+
+check('后端新增 GET /repos（gh repo list，带缓存）',
+  route.includes("export const REPOS_ROUTE_PATH = '/plugins/dsh-tokensave/repos'") &&
+  /execFileSync\('gh', \[/.test(route) &&
+  route.includes("'repo', 'list', '--limit'") &&
+  /REPOS_CACHE_TTL_MS = 60_000/.test(route))
+
+check('/repos 是只读接口（进 readRoutes，不套写通道）',
+  /\[REPOS_ROUTE_PATH, \(req, res\) => handleRepos\(ctx, req, res\)\]/.test(route) &&
+  /export function handleRepos\(_ctx: Context, _req: any, res: any\): void/.test(route))
+
+check('gh 失败给可读原因而非当空清单（界面仍可手输）',
+  route.includes('本机 gh 未登录') &&
+  route.includes('本机未安装 gh') &&
+  // 清单接口本身绝不能把「拿不到」变成抛错/500
+  /writeJson\(res, 200, \{ items, error, count: items\.length \}\)/.test(route))
+
+check('清单按最近推送排序（刚动过的仓排前面）',
+  /items\.sort\(\(a, b\) => \(b\.pushedAt \|\| ''\)\.localeCompare\(a\.pushedAt \|\| ''\)\)/.test(route))
+
+check('api.ts 导出 fetchRepos / RepoItem，且失败不抛（返回 error 字段）',
+  /export async function fetchRepos\(\): Promise<ReposPayload>/.test(api) &&
+  /export interface RepoItem \{/.test(api) &&
+  /return \{ items: \[\], error: '列举仓库失败（无法连接服务端）', count: 0 \}/.test(api))
+
+check('弹窗：清单懒加载（不点不打网络）+ 搜索过滤 + 点选填充',
+  /const openRepoPicker = async \(\) => \{/.test(dialog) &&
+  dialog.includes('已有缓存，不重复拉') &&
+  /const pickRepo = \(repo: RepoItem\) => \{/.test(dialog) &&
+  /r\.fullName\.toLowerCase\(\)\.includes\(q\)/.test(dialog) &&
+  /setRepoUrl\(repo\.url\)/.test(dialog))
+
+check('清单展示私有/语言/描述（一眼能分辨选哪个）',
+  dialog.includes('r.isPrivate &&') && dialog.includes('ts-repo-lang') &&
+  dialog.includes('ts-repo-desc') && dialog.includes('ts-repo-name'))
+
+check('清单拉不到时保留手输入口（不隐藏地址框）',
+  // 地址框与选择按钮是同级的独立元素，不随清单开关而消失
+  /className="ts-input"[\s\S]{0,200}value=\{repoUrl\}/.test(dialog) &&
+  dialog.includes('收起仓库清单') && dialog.includes('选择我的仓库'))
+
+console.log('— 图标风格（线条，不用 emoji）—')
+
+check('新增线条图标集（24×24 / stroke 1.6 / currentColor）',
+  /const ICON_BODIES: Record<string, string> = \{/.test(dialog) &&
+  /stroke-width="1\.6"/.test(dialog) &&
+  /stroke="currentColor"/.test(dialog) &&
+  /stroke-linecap="round"/.test(dialog))
+
+check('来源按钮与标题用线条图标，已无 emoji',
+  dialog.includes('<Icon name="folder" /> 本地已有目录') &&
+  dialog.includes('<Icon name="branch" /> 从 GitHub 克隆') &&
+  /<Icon name="folder" size=\{15\} \/> 添加项目/.test(dialog) &&
+  // emoji 不得回到这两个按钮/标题上
+  !/📁 本地已有目录/.test(dialog) &&
+  !/🐙 从 GitHub 克隆/.test(dialog) &&
+  !/➕ 添加项目/.test(dialog))
+
+check('图标容器类有样式（基线对齐，svg 不撑高行）',
+  /\.ts-ico \{ display:inline-flex/.test(styles) &&
+  /\.ts-ico svg \{ display:block/.test(styles))
 
 console.log('— 样式 —')
 

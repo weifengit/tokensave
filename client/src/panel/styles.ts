@@ -673,6 +673,29 @@ body.ts-vsplit-dragging .ts-card { transition:none !important; animation:none !i
 .ts-clone-meta .ts-btn { margin-left:auto; flex:0 0 auto; }
 /* git 输出尾行：等宽 + 暗色，只展示最近几行（完整日志不往弹窗里塞） */
 .ts-clone-log { font-family:ui-monospace, SFMono-Regular, Menlo, monospace; font-size:calc(var(--ts-fs, 12.5px) * 0.86); opacity:.6; white-space:pre-wrap; word-break:break-all; max-height:52px; overflow:hidden; }
+/* 线条图标容器：与文字基线对齐（svg 默认 inline 会多出基线间隙） */
+.ts-ico { display:inline-flex; align-items:center; justify-content:center; vertical-align:middle; margin-right:4px; }
+.ts-ico svg { display:block; }
+.ts-modal-title { display:inline-flex; align-items:center; }
+.ts-clone-head { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+.ts-clone-head .ts-field-label { margin:0; }
+/* 仓库清单：固定高度内滚动，与目录浏览器同一口径（少内容也不塔） */
+.ts-repolist { display:flex; flex-direction:column; gap:6px; border:1px solid var(--ts-line); border-radius:8px; overflow:hidden; }
+.ts-repo-search { display:flex; align-items:center; gap:6px; padding:6px 10px; border-bottom:1px solid var(--ts-line); }
+.ts-repo-search .ts-ico { margin:0; opacity:.55; flex:0 0 auto; }
+.ts-repo-search-input { flex:1 1 auto; border:none; background:transparent; color:inherit; outline:none; font-size:calc(var(--ts-fs, 12.5px) * 1.0); }
+.ts-repo-clear { display:inline-flex; align-items:center; border:none; background:transparent; color:inherit; cursor:pointer; opacity:.6; padding:2px; flex:0 0 auto; }
+.ts-repo-clear:hover { opacity:1; }
+.ts-repo-items { height:190px; overflow:auto; }
+.ts-repo-item { display:flex; align-items:center; gap:8px; padding:6px 12px; cursor:pointer; border:none; background:transparent; color:inherit; width:100%; text-align:left; font-size:calc(var(--ts-fs, 12.5px) * 1.0); }
+.ts-repo-item:hover { background:rgba(127,127,127,.15); }
+.ts-repo-name { font-weight:600; flex:0 0 auto; }
+/* 私有仓标记：只给个小锁，不占位（公开仓没有这个） */
+.ts-repo-badge { display:inline-flex; align-items:center; opacity:.6; flex:0 0 auto; }
+.ts-repo-badge .ts-ico { margin:0; }
+.ts-repo-lang { flex:0 0 auto; opacity:.65; font-size:calc(var(--ts-fs, 12.5px) * 0.88); }
+/* 描述占剩余宽度：过长只截一行，不让行高变高（清单要能一眼扫） */
+.ts-repo-desc { flex:1 1 auto; min-width:0; opacity:.5; font-size:calc(var(--ts-fs, 12.5px) * 0.88); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; text-align:right; }
 /* —— H 型工作台：左 / 中 / 右三列（固定 1.5 : 7 : 1.5），无中横线 —— */
 /* 轨道一律用 minmax(0, …fr)：裸 fr 的自动最小值是 min-content，一旦卡片里有长不可断
    内容（工具输出、长代码、长标题），列就会被撑到内容宽度，整个网格超出容器；

@@ -879,6 +879,87 @@ export function handleCloneStatus(req: any, res: any): void {
   })
 }
 
+// —— 我的 GitHub 仓库清单（「从 GitHub 克隆」里直接选，不用手敲地址）————
+//
+// 用 `gh repo list`（已登录态）拉当前账号可见的仓（含私有）；结果缓存 60s：
+//   - gh 要联网，面板一打开就拉会阻塞；缓存后开关弹窗不再打网络；
+//   - 拉不到（gh 未登录 / 网络不通）返回空清单 + 可读原因，界面回退到手输地址。
+//
+// 注意：这里只**读**清单，不做任何写入；地址由用户选定后交给 POST /clone 校验。
+
+export const REPOS_ROUTE_PATH = '/plugins/dsh-tokensave/repos'
+
+/** 仓库清单条目（给「添加项目」的选择器）。 */
+interface RepoItem {
+  /** owner/name，展示与去重用。 */
+  fullName: string
+  /** https 克隆地址（选它就走 token，私有仓也能拉）。 */
+  url: string
+  description: string
+  isPrivate: boolean
+  isFork: boolean
+  /** 主要语言（无则空串）。 */
+  language: string
+  /** 最近推送时间（ISO，用于排序；无则空串）。 */
+  pushedAt: string
+}
+
+let reposCache: { at: number; items: RepoItem[]; error: string } | null = null
+const REPOS_CACHE_TTL_MS = 60_000
+const REPOS_LIMIT = 200
+
+/**
+ * 拉仓库清单。
+ *
+ * `gh repo list --json` 的字段名要与下面的映射对得上；gh 未安装/未登录时
+ * execFileSync 会抛，统一转成可读错误（界面据此提示，而不是当成空清单）。
+ */
+function loadRepos(): { items: RepoItem[]; error: string } {
+  const now = Date.now()
+  if (reposCache && now - reposCache.at < REPOS_CACHE_TTL_MS) {
+    return { items: reposCache.items, error: reposCache.error }
+  }
+  let items: RepoItem[] = []
+  let error = ''
+  try {
+    const out = execFileSync('gh', [
+      'repo', 'list', '--limit', String(REPOS_LIMIT),
+      '--json', 'nameWithOwner,description,isPrivate,isFork,pushedAt,primaryLanguage,url',
+    ], { encoding: 'utf8', timeout: 15_000, stdio: ['ignore', 'pipe', 'pipe'] })
+    const parsed = JSON.parse(out || '[]')
+    if (Array.isArray(parsed)) {
+      items = parsed.map((r: any): RepoItem => ({
+        fullName: String(r?.nameWithOwner || ''),
+        // 用 gh 给的 https url（它已经是不带 .git 的规范形式，git 接受）。
+        url: String(r?.url || ''),
+        description: String(r?.description || ''),
+        isPrivate: Boolean(r?.isPrivate),
+        isFork: Boolean(r?.isFork),
+        language: String(r?.primaryLanguage?.name || ''),
+        pushedAt: String(r?.pushedAt || ''),
+      })).filter((r: RepoItem) => r.fullName && r.url)
+    }
+  } catch (e: any) {
+    // 区分「没装 gh」「没登录」「网络失败」——都归给可读文案，界面照常可用。
+    const raw = String(e?.stderr || e?.message || '')
+    if (/not logged|authentication|gh auth login/i.test(raw)) error = '本机 gh 未登录，无法列出仓库（仍可手动填地址）'
+    else if (e?.code === 'ENOENT') error = '本机未安装 gh，无法列出仓库（仍可手动填地址）'
+    else if (e?.killed || /timed? ?out/i.test(raw)) error = '列举仓库超时，请稍后重试（仍可手动填地址）'
+    else error = '列举仓库失败，请检查网络或 gh 登录态（仍可手动填地址）'
+    console.warn('[dsh-tokensave] gh repo list failed:', raw.slice(0, 300))
+  }
+  // 最近推送优先：刚动过的仓最可能就是你要克隆的。
+  items.sort((a, b) => (b.pushedAt || '').localeCompare(a.pushedAt || ''))
+  reposCache = { at: now, items, error }
+  return { items, error }
+}
+
+/** 仓库清单（GET-only；带缓存，前端可直接当搜索源用）。 */
+export function handleRepos(_ctx: Context, _req: any, res: any): void {
+  const { items, error } = loadRepos()
+  writeJson(res, 200, { items, error, count: items.length })
+}
+
 
 // —— 项目信息：文件修改时间（真实 mtime）+ 开发服务器地址 —————
 //
@@ -1514,6 +1595,7 @@ export function mountTokensaveWebRoutes(ctx: Context): void {
       [FS_ROUTE_PATH, (req, res) => handleFs(req, res)],
       [EXPLORERS_ROUTE_PATH, (req, res) => handleExplorers(ctx, req, res)],
       [PROJECT_INFO_ROUTE_PATH, (req, res) => { void handleProjectInfo(req, res) }],
+      [REPOS_ROUTE_PATH, (req, res) => handleRepos(ctx, req, res)],
     ]
     // 写通道：**不能**再套 makeGuard——它把所有非 GET 请求 405 掉，会让
     // POST /scope（项目作用域发布）与 POST /projects（注册表写入）永远不可达。
@@ -1543,7 +1625,7 @@ export function mountTokensaveWebRoutes(ctx: Context): void {
     }
     registerAll(readRoutes, true)
     registerAll(writeRoutes, false)
-    console.log(`[dsh-tokensave] 路由已挂载: ${BOARD_ROUTE_PATH}, ${FS_ROUTE_PATH}, ${EXPLORERS_ROUTE_PATH}, ${PROJECT_INFO_ROUTE_PATH}, ${PROJECTS_ROUTE_PATH}, ${EXPLORER_SETTINGS_ROUTE_PATH}, ${CLONE_ROUTE_PATH}`)
+    console.log(`[dsh-tokensave] 路由已挂载: ${BOARD_ROUTE_PATH}, ${FS_ROUTE_PATH}, ${EXPLORERS_ROUTE_PATH}, ${PROJECT_INFO_ROUTE_PATH}, ${PROJECTS_ROUTE_PATH}, ${EXPLORER_SETTINGS_ROUTE_PATH}, ${CLONE_ROUTE_PATH}, ${REPOS_ROUTE_PATH}`)
     const registration = {
       server,
       dispose: () => {

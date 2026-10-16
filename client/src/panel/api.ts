@@ -4,6 +4,7 @@
  *  - /plugins/dsh-tokensave/board        黑板条目（按工作区）
  *  - /plugins/dsh-tokensave/explorers    探索者快照（直读 agents，不依赖第三方）
  *  - /plugins/dsh-tokensave/clone       从 GitHub 克隆仓（POST 启动 / GET 查进度）
+ *  - /plugins/dsh-tokensave/repos        我的 GitHub 仓库清单（克隆时选）
  *  - /plugins/dsh-tokensave/project-info 项目文件最后修改时间 + 开发服务器地址
  */
 import type { ProjectRecord } from './store'
@@ -295,6 +296,54 @@ export async function fetchCloneStatus(taskId: string): Promise<CloneStatus> {
     message: String(data?.message || ''),
     path: String(data?.path || ''),
     lines: Array.isArray(data?.lines) ? data.lines.map(String) : [],
+  }
+}
+
+// —— 我的 GitHub 仓库清单（克隆时直接选，不用手敲地址）————————
+
+/** 仓库清单条目（与服务端 RepoItem 对应）。 */
+export interface RepoItem {
+  fullName: string
+  url: string
+  description: string
+  isPrivate: boolean
+  isFork: boolean
+  language: string
+  pushedAt: string
+}
+
+export interface ReposPayload {
+  items: RepoItem[]
+  /** 拉取失败的可读原因（空串 = 成功）；界面据此提示并保留手输入口。 */
+  error: string
+  count: number
+}
+
+/**
+ * 拉当前账号可见的仓库清单（走本机 gh 登录态，含私有仓）。
+ *
+ * 失败**不抛**而是把原因放在 error 里：清单拿不到不该阻断克隆
+ * （用户仍可手输地址），界面只是少了一个便捷入口。
+ */
+export async function fetchRepos(): Promise<ReposPayload> {
+  try {
+    const res = await fetch('/plugins/dsh-tokensave/repos')
+    const data: any = await res.json().catch(() => ({}))
+    if (!res.ok) return { items: [], error: `列举仓库失败（HTTP ${res.status}）`, count: 0 }
+    const items: RepoItem[] = Array.isArray(data?.items)
+      ? data.items.map((r: any) => ({
+          fullName: String(r?.fullName || ''),
+          url: String(r?.url || ''),
+          description: String(r?.description || ''),
+          isPrivate: Boolean(r?.isPrivate),
+          isFork: Boolean(r?.isFork),
+          language: String(r?.language || ''),
+          pushedAt: String(r?.pushedAt || ''),
+        })).filter((r: RepoItem) => r.fullName && r.url)
+      : []
+    return { items, error: String(data?.error || ''), count: items.length }
+  } catch {
+    return { items: [], error: '列举仓库失败（无法连接服务端）', count: 0 }
   }
 }
 
