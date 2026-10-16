@@ -3,6 +3,28 @@
 > 本文件由 `scripts/release.mjs` 自动维护：每次发版把 git 提交按
 > 「新增/修复/改进/文档」分组追加到顶部。人工补充用 --notes。
 
+## v0.2.0 — 2026-10-16
+
+### 新增
+- 新增：项目中心支持从 GitHub 克隆项目（公开/私有仓、实时进度）
+
+### 修复
+- chore: 删除 PROGRESS.md 与 docs/README.md，冻结记录收纳进 CONTRACTS 并修正引用
+
+### 文档
+- 删除无用文档
+- chore: 删除 docs/CONTRACTS.md，冻结规则与环境提醒收纳进 MAINTENANCE，契约以代码注释为唯一权威源
+- chore: 清理开发残留文件与过期文档（.ab2/.abhome CDP 沙箱、.DS_Store、tests 空目录、孤儿自检脚本、step-00~12 提示词、PROGRESS 逐步实录瘦身）
+
+### 其他
+- chore: 从版本库剔除误提交的 .ab2 Chrome 缓存二进制
+
+### 备注
+- 项目中心的「添加项目」新增从 GitHub 克隆：支持公开与私有仓库（走本机 gh 登录态，凭据经 URL 限定的环境变量注入、不进 argv 也不落盘），实时显示克隆阶段与进度，克隆完成即可加入项目
+
+> 本文件由 `scripts/release.mjs` 自动维护：每次发版把 git 提交按
+> 「新增/修复/改进/文档」分组追加到顶部。人工补充用 --notes。
+
 ## v0.1.0 — 2026-10-16
 
 ### 新增
