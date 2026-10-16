@@ -1,5 +1,17 @@
 # 接口契约（实现前必读，改动需先改此文件）
 
+> 2026-10-16 收纳：原 `docs/PROGRESS.md` / `docs/README.md` 已删除，其「接口冻结记录」归入本节，
+> 开发进度改由 CHANGELOG.md + git 历史为准。
+
+## 接口冻结记录
+- 2026-10-06 Step 05 冻结 tokensave_delegate 输入/输出 schema（与本文上方定义逐字一致：
+  task_description 必填 / file_path 可选 / explorer_count 默认 3；输出 brief+scenario 双必填），后续不得修改。
+- 2026-10-06 Step 06 / 10-06 Step 09 冻结 EXPLORER_PRESETS 三槽（当前值见「探索者预设」节；
+  用户可在探索者设置里改选择，但预设本体改动需经用户确认）。
+- 仍有效的环境提醒：dsh-llm-call-inspector 激活失败（LLM Calls 视图不可用）；
+  dsh-call-session@0.1.6 对第三方调用方仍投毒（v4 拒 source.kind='plugin'，tokensave 已宿主侧绕过）；
+  opencode-zen 免费档凭据（OPENCODE_API_KEY）未配置。
+
 ## 工具：tokensave_delegate
 
 ### 输入 schema
