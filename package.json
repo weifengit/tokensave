@@ -36,7 +36,8 @@
     "test:desk": "node scripts/check-desk-ux.mjs",
     "test:desk-dock": "node scripts/check-desk-dock.mjs",
     "test:chat-scroll": "node scripts/check-chat-scroll.mjs",
-    "test": "pnpm check && pnpm test:continue && pnpm test:width && pnpm test:hover && pnpm test:sound && pnpm test:todo && pnpm test:sidebar && pnpm test:composer-focus && pnpm test:dockview && pnpm test:desk && pnpm test:desk-dock && pnpm test:chat-scroll && pnpm test:ui"
+    "test:clone": "node scripts/check-clone-project.mjs",
+    "test": "pnpm check && pnpm test:continue && pnpm test:width && pnpm test:hover && pnpm test:sound && pnpm test:todo && pnpm test:sidebar && pnpm test:composer-focus && pnpm test:dockview && pnpm test:desk && pnpm test:desk-dock && pnpm test:chat-scroll && pnpm test:clone && pnpm test:ui"
   },
   "dependencies": {
     "@deepseek-ai/dsh-brand": "0.2.0-rc.2",

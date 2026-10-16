@@ -3,6 +3,7 @@
  *  - /plugins/dsh-tokensave/fs           目录浏览（选择项目文件夹）
  *  - /plugins/dsh-tokensave/board        黑板条目（按工作区）
  *  - /plugins/dsh-tokensave/explorers    探索者快照（直读 agents，不依赖第三方）
+ *  - /plugins/dsh-tokensave/clone       从 GitHub 克隆仓（POST 启动 / GET 查进度）
  *  - /plugins/dsh-tokensave/project-info 项目文件最后修改时间 + 开发服务器地址
  */
 import type { ProjectRecord } from './store'
@@ -237,6 +238,64 @@ export function createFolder(parent: string, name: string): Promise<FolderResult
 /** 把 parent 下的 from 重命名为 name（同目录内改名）。 */
 export function renameFolder(parent: string, from: string, name: string): Promise<FolderResult> {
   return postMkdir({ parent, from, name })
+}
+
+// —— 从 GitHub 克隆（「添加项目」里直接拉一个仓库下来）————————
+//
+// 后端拆成两个端点：POST /clone 启动（长任务，立即返回 taskId），
+// GET /clone-status?taskId= 查进度。客户端拿 taskId 轮询到 done/error 为止。
+
+/** 克隆任务的状态（与服务端 CloneTask 对应）。 */
+export type CloneState = 'running' | 'done' | 'error' | 'cancelled'
+
+export interface CloneStatus {
+  taskId: string
+  state: CloneState
+  /** 人话阶段名：正在准备 / 服务端打包 / 接收对象 / 解析差异 / 检出文件 */
+  phase: string
+  percent: number
+  /** 失败时的错误信息（成功为空）。 */
+  message: string
+  /** 克隆完成后的项目目录（绝对路径）。 */
+  path: string
+  /** 本次新增的 git 输出行（增量，已由服务端取走）。 */
+  lines: string[]
+}
+
+/** 启动克隆；返回 taskId 与目标目录。失败（校验不过 / 目录非空）抛错。 */
+export async function cloneRepo(
+  parent: string,
+  url: string,
+  name?: string
+): Promise<{ taskId: string; path: string; name: string }> {
+  const res = await fetch('/plugins/dsh-tokensave/clone', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ parent, url, name: name || undefined }),
+  })
+  const data: any = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(String(data?.error || `克隆启动失败（HTTP ${res.status}）`))
+  return {
+    taskId: String(data?.taskId || ''),
+    path: String(data?.path || ''),
+    name: String(data?.name || ''),
+  }
+}
+
+/** 查一次克隆进度（404 表示任务已过期/不存在，抛错由调用方处理）。 */
+export async function fetchCloneStatus(taskId: string): Promise<CloneStatus> {
+  const res = await fetch(`/plugins/dsh-tokensave/clone-status?taskId=${encodeURIComponent(taskId)}`)
+  const data: any = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(String(data?.error || `查询克隆进度失败（HTTP ${res.status}）`))
+  return {
+    taskId: String(data?.taskId || taskId),
+    state: (data?.state || 'running') as CloneState,
+    phase: String(data?.phase || ''),
+    percent: Number(data?.percent ?? 0),
+    message: String(data?.message || ''),
+    path: String(data?.path || ''),
+    lines: Array.isArray(data?.lines) ? data.lines.map(String) : [],
+  }
 }
 
 // —— 探索者设置（默认 / 免费 / 收费 三组开关）——————————————

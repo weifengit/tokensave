@@ -11,6 +11,7 @@
  */
 import fs from 'node:fs'
 import net from 'node:net'
+import { spawn, execFileSync, type ChildProcess } from 'node:child_process'
 import path from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import {
@@ -27,6 +28,8 @@ export const SCOPE_ROUTE_PATH = '/plugins/dsh-tokensave/scope'
 export const PROJECT_INFO_ROUTE_PATH = '/plugins/dsh-tokensave/project-info'
 export const MKDIR_ROUTE_PATH = '/plugins/dsh-tokensave/mkdir'
 export const EXPLORER_SETTINGS_ROUTE_PATH = '/plugins/dsh-tokensave/explorer-settings'
+export const CLONE_ROUTE_PATH = '/plugins/dsh-tokensave/clone'
+export const CLONE_STATUS_ROUTE_PATH = '/plugins/dsh-tokensave/clone-status'
 
 // —— 当前「打开的工作台项目」（探索者归属的真相）————————————
 //
@@ -568,6 +571,314 @@ export function handleMkdir(req: any, res: any): void {
     }
   })
 }
+
+// —— 从 GitHub 克隆项目（「添加项目」里直接拉一个仓库下来）————
+//
+// 与 mkdir 同为写通道（各自鉴权 + 方法判定），但它要跑一个可能数十秒的子进程，
+// 所以拆成「启动」与「查进度」两个端点，避免长连接挂在 HTTP 上：
+//   POST /clone         { parent, url, name? }  → { taskId }，子进程忘后台跑
+//   GET  /clone-status  ?taskId=xxx              → { state, percent, phase, ... }
+//
+// 安全约定（都是硬要求，不要图省事改写）：
+//   1. **参数数组传参、绝不经 shell**（spawn 第二参是数组）；URL 另做白名单校验；
+//   2. URL 必须带 `--` 分隔符之前的位置——git 会把它当选项；我们只放行
+//      https://、 http://、 git@host:path 三种形态，且拒绝 - 开头的字符串；
+//   3. **凭据不进 argv**：私有仓的 token 经 GIT_CONFIG_COUNT/KEY/VALUE 环境变量
+//      注入 http.extraheader，ps 看不到、也不会写进 .git/config；
+//   4. 目标目录必须**不存在或为空**（避免把已有项目打工），且用 --depth=1 浅克隆；
+//   5. 超时（默认 10 分钟）与取消都要杀掉**整个进程组**（git 会 fork remote-https）；
+//   6. 任务状态只在内存（进程重启后丢弃，客户端轮询也自然结束）。
+
+/** 克隆进度（内存态，客户端轮询）。 */
+interface CloneTask {
+  id: string
+  state: 'running' | 'done' | 'error' | 'cancelled'
+  phase: string
+  percent: number
+  message: string
+  dir: string
+  startedAt: number
+  endedAt: number | null
+  child: ChildProcess | null
+  /** 已收但尚未被轮询走的输出行（客户每次 GET 取完即清）。 */
+  pending: string[]
+}
+
+const cloneTasks = new Map<string, CloneTask>()
+/** 只保留最近几个已完成任务，避免长时间运行后内存无限增长。 */
+const CLONE_TASK_KEEP = 20
+const CLONE_TIMEOUT_MS = 10 * 60_000
+
+/**
+ * 允许的仓库地址形态。
+ *   - https://host/path  或  http://host/path
+ *   - git@host:path（SSH 形态，要求 host 里有 . 且 path 非空）
+ * 一律拒绝以 '-' 开头的字符串（否则会被 git 当成选项）。
+ */
+function normalizeCloneUrl(raw: unknown): { url: string; display: string } | { error: string } {
+  const url = String(raw ?? '').trim()
+  if (!url) return { error: '仓库地址不能为空' }
+  if (url.length > 2048) return { error: '仓库地址太长' }
+  if (url.startsWith('-')) return { error: '仓库地址不合法' }
+  if (/^https?:\/\/[^\s/]+\/.+/.test(url)) return { url, display: url }
+  if (/^git@[^\s/:]+:\S+$/.test(url)) return { url, display: url }
+  return { error: '只支持 https:// 或 git@host:path 形式的仓库地址' }
+}
+
+/** 从仓库地址推导默认目录名（去 .git 后缀、取最后一段）。 */
+function deriveRepoName(url: string): string {
+  const cleaned = url.replace(/[#?].*$/, '').replace(/\/+$/, '')
+  const tail = cleaned.split(/[/:]/).filter(Boolean).pop() || 'repo'
+  return tail.replace(/\.git$/i, '') || 'repo'
+}
+
+/**
+ * 取一份 GitHub token 用于私有仓（不进 argv）。
+ * 优先环境变量（用户可在 shell 里导出），否则读 `gh auth token`。
+ * 拿不到就当公开仓处理（克隆失败时用户会看到 git 的鉴权报错）。
+ */
+function githubToken(): string {
+  for (const key of ['GITHUB_TOKEN', 'GH_TOKEN', 'TOKENS_SAVE_GITHUB_TOKEN']) {
+    const v = String(process.env[key] || '').trim()
+    if (v) return v
+  }
+  try {
+    const out = execFileSync('gh', ['auth', 'token'], { encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'] })
+    return String(out || '').trim()
+  } catch {
+    return ''
+  }
+}
+
+/**
+ * 把 git 的输出行翻译成人话 + 进度百分比。
+ * 只认识几个关键阶段，其余原样返回（git 输出本身就是很好的进度信息）。
+ */
+function translateGitLine(line: string): { phase: string; percent: number } | null {
+  const percentMatch = /(\d+)%/.exec(line)
+  const pct = percentMatch ? Math.min(100, Number(percentMatch[1])) : -1
+  if (/^Cloning into/.test(line)) return { phase: '正在准备', percent: 0 }
+  if (/remote: (Counting|Compressing|Enumerating)/.test(line)) return { phase: '服务端打包', percent: pct }
+  if (/^remote: Total/.test(line)) return { phase: '服务端打包', percent: 100 }
+  if (/Receiving objects/.test(line)) return { phase: '接收对象', percent: pct }
+  if (/Resolving deltas/.test(line)) return { phase: '解析差异', percent: pct }
+  if (/Updating files/.test(line)) return { phase: '检出文件', percent: pct }
+  if (/Cloning into/.test(line)) return { phase: '开始克隆', percent: 0 }
+  return null
+}
+
+/** 完成后回收：把状态留存（供客户端最后一次轮询）但与子进程解绑。 */
+function retireCloneTask(task: CloneTask): void {
+  task.child = null
+  const finished = [...cloneTasks.values()].filter((t) => t.state !== 'running')
+  if (finished.length <= CLONE_TASK_KEEP) return
+  finished
+    .sort((a, b) => (a.endedAt || 0) - (b.endedAt || 0))
+    .slice(0, finished.length - CLONE_TASK_KEEP)
+    .forEach((t) => cloneTasks.delete(t.id))
+}
+
+/** 把一个任务标记为失败/取消，并把子进程杀干净（含 fork 出去的 remote-https）。 */
+function failCloneTask(task: CloneTask, message: string, state: 'error' | 'cancelled' = 'error'): void {
+  if (task.state !== 'running') return
+  task.state = state
+  task.message = message
+  task.endedAt = Date.now()
+  try {
+    if (task.child?.pid) process.kill(-task.child.pid, 'SIGTERM')
+  } catch {
+    try { task.child?.kill('SIGTERM') } catch { /* 已退出 */ }
+  }
+  retireCloneTask(task)
+}
+
+export function handleClone(req: any, res: any): void {
+  if (typeof req.on !== 'function') {
+    writeJson(res, 501, { error: 'request stream unavailable' })
+    return
+  }
+  let body = ''
+  req.on('data', (c: any) => { body += String(c) })
+  req.on('end', () => {
+    let parsed: any = null
+    try {
+      parsed = body ? JSON.parse(body) : {}
+    } catch {
+      writeJson(res, 400, { error: 'invalid json' })
+      return
+    }
+    const parentRaw = String(parsed?.parent ?? '').trim()
+    if (!parentRaw || !path.isAbsolute(parentRaw)) {
+      writeJson(res, 400, { error: '父目录必须是绝对路径' })
+      return
+    }
+    const parent = path.resolve(parentRaw)
+    try {
+      if (!fs.statSync(parent).isDirectory()) {
+        writeJson(res, 400, { error: '父路径不是目录' })
+        return
+      }
+    } catch {
+      writeJson(res, 404, { error: '父目录不存在' })
+      return
+    }
+    const normalized = normalizeCloneUrl(parsed?.url)
+    if ('error' in normalized) {
+      writeJson(res, 400, { error: normalized.error })
+      return
+    }
+    const name = String(parsed?.name ?? '').trim() || deriveRepoName(normalized.url)
+    if (name === '' || name === '.' || name === '..' || !FOLDER_NAME_RE.test(name)) {
+      writeJson(res, 400, { error: '目标文件夹名不合法' })
+      return
+    }
+    const target = path.join(parent, name)
+    // 目标必须不存在或为空：不把已有项目目录当场覆盖掉。
+    if (fs.existsSync(target)) {
+      let empty = false
+      try { empty = fs.statSync(target).isDirectory() && fs.readdirSync(target).length === 0 } catch { empty = false }
+      if (!empty) {
+        writeJson(res, 409, { error: `目标目录已存在且不为空：${target}` })
+        return
+      }
+    }
+    // 已有任务在跑就拒绝，避免两个 clone 抢同一个目录。
+    for (const t of cloneTasks.values()) {
+      if (t.state === 'running' && t.dir === target) {
+        writeJson(res, 409, { error: '该目录已有克隆任务在进行中' })
+        return
+      }
+    }
+
+    const taskId = `clone-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+    // token 只给 GitHub 的 https 地址：① 它是 GitHub 凭据，发别处没用且是泄露；
+    // ② ssh 形态（git@）走本机 key，不经 HTTP 头。
+    const token = /^https:\/\/(www\.)?github\.com\//i.test(normalized.url) ? githubToken() : ''
+    const env: NodeJS.ProcessEnv = { ...process.env, GIT_TERMINAL_PROMPT: '0' }
+    if (token) {
+      // 走环境变量而不是 argv：ps 看不到 token，也不会落到 .git/config。
+      //
+      // ⚠ KEY 必须带 URL 限定（http.<url>.extraheader）：裸的 http.extraheader 是
+      // **不分 host** 的，会把 token 发给任何我们请求的站点——克隆一个非 GitHub 的
+      // 地址（http:// 也在白名单里）就等于把 GitHub token 送给它。已实测：裸写法对
+      // example.com 也发 Authorization，加 URL 限定后只对 github.com 发。
+      //
+      // 限定到 origin（scheme://host）而不是整条仓库 URL：git 的 URL 匹配是前缀式，
+      // 用 origin 可接受 github.com 上的重定向与 /info/refs 子路径。
+      env.GIT_CONFIG_COUNT = '1'
+      env.GIT_CONFIG_KEY_0 = `http.${new URL(normalized.url).origin}/.extraheader`
+      env.GIT_CONFIG_VALUE_0 = `Authorization: Basic ${Buffer.from(`x-access-token:${token}`).toString('base64')}`
+    }
+    const args = ['clone', '--depth', '1', '--progress', '--', normalized.url, target]
+    let child: ChildProcess
+    try {
+      child = spawn('git', args, { env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] })
+    } catch (error: any) {
+      console.error('[dsh-tokensave] clone spawn failed:', error)
+      writeJson(res, 500, { error: '无法启动 git（请确认已安装）' })
+      return
+    }
+
+    const task: CloneTask = {
+      id: taskId,
+      state: 'running',
+      phase: '正在准备',
+      percent: 0,
+      message: '',
+      dir: target,
+      startedAt: Date.now(),
+      endedAt: null,
+      child,
+      pending: [],
+    }
+    cloneTasks.set(taskId, task)
+
+    const onLine = (chunk: unknown) => {
+      const text = String(chunk)
+      // git 的进度行以 \r 刷新、错误以 \n 分行，两种分隔符都要切。
+      for (const rawLine of text.split(/[\r\n]+/)) {
+        const line = rawLine.replace(/\s+$/, '')
+        if (!line) continue
+        const translated = translateGitLine(line)
+        if (translated) {
+          task.phase = translated.phase
+          if (translated.percent >= 0) task.percent = translated.percent
+        }
+        task.pending.push(line)
+        if (task.pending.length > 200) task.pending.shift()
+      }
+    }
+    child.stdout?.on('data', onLine)
+    child.stderr?.on('data', onLine)
+
+    const timer = setTimeout(() => failCloneTask(task, '克隆超时（超过 10 分钟）'), CLONE_TIMEOUT_MS)
+    if (typeof timer.unref === 'function') timer.unref()
+
+    child.on('error', (error: any) => {
+      clearTimeout(timer)
+      const message = error?.code === 'ENOENT' ? '找不到 git 命令' : (error?.message || '克隆失败')
+      failCloneTask(task, message)
+    })
+    child.on('close', (code: number | null) => {
+      clearTimeout(timer)
+      if (task.state !== 'running') return
+      if (code === 0) {
+        task.state = 'done'
+        task.phase = '完成'
+        task.percent = 100
+        task.message = ''
+        console.log(`[dsh-tokensave] 仓已克隆: ${normalized.display} → ${target}`)
+      } else {
+        const tail = task.pending.slice(-5).join(' / ')
+        failCloneTask(task, `克隆失败（git 退出码 ${code ?? '未知'}）${tail ? `：${tail}` : ''}`)
+      }
+      task.endedAt = task.endedAt ?? Date.now()
+      retireCloneTask(task)
+    })
+
+    console.log(`[dsh-tokensave] 开始克隆: ${normalized.display} → ${target}（任务 ${taskId}）`)
+    writeJson(res, 200, { taskId, path: normalizeWorkspace(target), name, url: normalized.display })
+  })
+}
+
+/** 查进度（GET ?taskId=xxx）；不带 taskId 则返回当前所有任务（便于诊断）。 */
+export function handleCloneStatus(req: any, res: any): void {
+  let taskId = ''
+  try {
+    const url = new URL(String(req?.url || ''), 'http://localhost')
+    taskId = String(url.searchParams.get('taskId') || '').trim()
+  } catch {
+    taskId = ''
+  }
+  if (!taskId) {
+    const all = [...cloneTasks.values()].map((t) => ({
+      id: t.id, state: t.state, phase: t.phase, percent: t.percent, message: t.message, dir: t.dir,
+    }))
+    writeJson(res, 200, { tasks: all })
+    return
+  }
+  const task = cloneTasks.get(taskId)
+  if (!task) {
+    writeJson(res, 404, { error: '任务不存在（可能已过期）' })
+    return
+  }
+  // 取走本次新增的输出行（客户端只展示增量，不重复刷屏）。
+  const lines = task.pending.slice()
+  task.pending.length = 0
+  writeJson(res, 200, {
+    taskId: task.id,
+    state: task.state,
+    phase: task.phase,
+    percent: task.percent,
+    message: task.message,
+    dir: task.dir,
+    path: normalizeWorkspace(task.dir),
+    lines,
+    startedAt: task.startedAt,
+    endedAt: task.endedAt,
+  })
+}
+
 
 // —— 项目信息：文件修改时间（真实 mtime）+ 开发服务器地址 —————
 //
@@ -1172,6 +1483,30 @@ export function mountTokensaveWebRoutes(ctx: Context): void {
     handleExplorerSettingsWrite(ctx, req, res)
   }
 
+  // 从 GitHub 克隆：POST /clone 启动（长任务，立即返回 taskId），GET /clone-status 查进度。
+  // 与 mkdir 同形：自行鉴权 + 方法判定（不套 makeGuard，否则非 GET 全 405）。
+  // 两条路径各用各的 guard——否则 GET /clone 也能查进度、POST /clone-status 竟能起克隆。
+  const authed = (req: any, res: any): boolean => {
+    const rejection = rejectionFor(ctx, req)
+    if (rejection !== undefined) {
+      writeJson(res, rejection, {
+        error: rejection === 503 ? 'authentication unavailable' : 'unauthorized'
+      })
+      return false
+    }
+    return true
+  }
+  const cloneStartGuard = (req: any, res: any) => {
+    if (!authed(req, res)) return
+    if (req.method !== 'POST') return methodNotAllowed(res)
+    handleClone(req, res)
+  }
+  const cloneStatusGuard = (req: any, res: any) => {
+    if (!authed(req, res)) return
+    if (req.method !== 'GET') return methodNotAllowed(res)
+    handleCloneStatus(req, res)
+  }
+
   const mount = (server: any): { server: any; dispose: () => void } => {
     // 只读观测面：统一走 GET-only 闸门（makeGuard）。
     const readRoutes: Array<[string, (req: any, res: any) => void]> = [
@@ -1188,6 +1523,8 @@ export function mountTokensaveWebRoutes(ctx: Context): void {
       [PROJECTS_ROUTE_PATH, projectsGuard],
       [MKDIR_ROUTE_PATH, mkdirGuard],
       [EXPLORER_SETTINGS_ROUTE_PATH, explorerSettingsGuard],
+      [CLONE_ROUTE_PATH, cloneStartGuard],
+      [CLONE_STATUS_ROUTE_PATH, cloneStatusGuard],
     ]
     const offs: Array<(() => void) | undefined> = []
     const registerAll = (
@@ -1206,7 +1543,7 @@ export function mountTokensaveWebRoutes(ctx: Context): void {
     }
     registerAll(readRoutes, true)
     registerAll(writeRoutes, false)
-    console.log(`[dsh-tokensave] 路由已挂载: ${BOARD_ROUTE_PATH}, ${FS_ROUTE_PATH}, ${EXPLORERS_ROUTE_PATH}, ${PROJECT_INFO_ROUTE_PATH}, ${PROJECTS_ROUTE_PATH}, ${EXPLORER_SETTINGS_ROUTE_PATH}`)
+    console.log(`[dsh-tokensave] 路由已挂载: ${BOARD_ROUTE_PATH}, ${FS_ROUTE_PATH}, ${EXPLORERS_ROUTE_PATH}, ${PROJECT_INFO_ROUTE_PATH}, ${PROJECTS_ROUTE_PATH}, ${EXPLORER_SETTINGS_ROUTE_PATH}, ${CLONE_ROUTE_PATH}`)
     const registration = {
       server,
       dispose: () => {

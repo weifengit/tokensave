@@ -654,6 +654,25 @@ body.ts-vsplit-dragging .ts-card { transition:none !important; animation:none !i
 .ts-newfolder-input { max-width:240px; padding:4px 8px; font-size:var(--ts-fs, 12.5px); }
 .ts-newfolder-hint { font-size:calc(var(--ts-fs, 12.5px) * 0.88); opacity:.55; max-width:280px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .ts-newfolder-err { font-size:calc(var(--ts-fs, 12.5px) * 0.92); color:#fca5a5; }
+/* 「添加项目」来源切换：本地已有目录 / 从 GitHub 克隆（两态互斥） */
+.ts-srcpick { display:flex; gap:8px; }
+.ts-srcbtn { flex:1 1 0; padding:8px 12px; cursor:pointer; border-radius:8px; border:1px solid var(--ts-line); background:transparent; color:inherit; font-size:calc(var(--ts-fs, 12.5px) * 1.04); opacity:.7; }
+.ts-srcbtn:hover:not(:disabled) { opacity:1; background:var(--ts-hover); }
+.ts-srcbtn:disabled { cursor:not-allowed; opacity:.45; }
+/* 选中态：描边 + 淡底（与项目卡片的选中口径一致），不用整块实底色 */
+.ts-srcbtn-on { opacity:1; border-color:rgba(96,165,250,.7); background:rgba(96,165,250,.16); }
+/* 克隆面板：仓库地址 / 目标文件夹名 / 进度（目录浏览器下方的克隆专属区） */
+.ts-clone { display:flex; flex-direction:column; gap:8px; margin-top:8px; }
+.ts-clone-row { display:flex; align-items:center; gap:8px; }
+.ts-clone .ts-newfolder-hint { max-width:none; white-space:normal; }
+.ts-clone-progress { display:flex; flex-direction:column; gap:6px; }
+.ts-clone-bar { height:6px; border-radius:99px; overflow:hidden; background:rgba(127,127,127,.25); }
+.ts-clone-fill { height:100%; border-radius:99px; background:rgba(96,165,250,.85); transition:width .25s ease; }
+.ts-clone-fill-err { background:rgba(248,113,113,.85); }
+.ts-clone-meta { display:flex; align-items:center; gap:8px; font-size:calc(var(--ts-fs, 12.5px) * 0.92); word-break:break-all; }
+.ts-clone-meta .ts-btn { margin-left:auto; flex:0 0 auto; }
+/* git 输出尾行：等宽 + 暗色，只展示最近几行（完整日志不往弹窗里塞） */
+.ts-clone-log { font-family:ui-monospace, SFMono-Regular, Menlo, monospace; font-size:calc(var(--ts-fs, 12.5px) * 0.86); opacity:.6; white-space:pre-wrap; word-break:break-all; max-height:52px; overflow:hidden; }
 /* —— H 型工作台：左 / 中 / 右三列（固定 1.5 : 7 : 1.5），无中横线 —— */
 /* 轨道一律用 minmax(0, …fr)：裸 fr 的自动最小值是 min-content，一旦卡片里有长不可断
    内容（工具输出、长代码、长标题），列就会被撑到内容宽度，整个网格超出容器；
