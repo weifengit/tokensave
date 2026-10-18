@@ -36,6 +36,13 @@ export interface StreamMsg {
   /** 注入来源（event.data.source.kind），用于给人话标签 */
   injectKind?: string
   /**
+   * 该消息在宿主**收件箱队列**里（会话忙时发的消息先进 queue，
+   * 下一轮开始才成为 durable user/message）。依据 agent/inbox/spliced
+   * 事件折叠出来（用户反馈：忙时发的第二条 / 自动继续的「继续」看不见——
+   * 宿主原生「对话」有 QueueDock 显示队列，我们的消息流以前直接丢了这个事件）。
+   */
+  queued?: boolean
+  /**
    * 本轮的**异常结局**（`turn/end` 的 reason / `agent/error`）。
    *
    * 有值 = 这一轮不是正常结束（故障中断 / 输出被截断 / 异常中止）。
@@ -112,8 +119,15 @@ interface Channel {
   metrics: SessionMetrics
   metricSubs: Set<MetricsListener>
   close?: Unsub
-  /** 本会话的 retain 绑定（openStream 成功后写入；历史分页需要它的 session face） */
   binding?: any
+  /**
+   * 底层流状态：openStream 只在首次订阅时跑一次，新建会话刚创建时 binding
+   * 尚未物化、retain 三源可能全失败——以前失败后通道永久停在空列表，
+   * 后续发出去的消息（含自动继续的「继续」）永远看不见（用户反馈）。
+   * failed 时由订阅入口/延时重试重新拉起。
+   */
+  streamState?: 'connecting' | 'open' | 'failed'
+  retryTimer?: ReturnType<typeof setTimeout>
 }
 
 const channels = new Map<string, Channel>()
@@ -217,6 +231,32 @@ function injectionOf(ev: any): { injected: boolean; kind?: string } {
   return { injected: true, kind }
 }
 
+/**
+ * 队列消息（agent/inbox/spliced 的 inserted 项）→ StreamMsg。
+ * 形状与 user/message 的 data 基本一致（content 块数组 + source + role）。
+ */
+function queuedMsgOf(m: any, time?: number): StreamMsg | null {
+  if (!m || typeof m !== 'object') return null
+  const text = visibleTextOf(m)
+  if (!text) return null
+  return { role: 'user', content: text, time, type: 'agent/inbox/spliced', queued: true }
+}
+
+/**
+ * 把一条 `agent/inbox/spliced` 应用到队列数组（splice 语义与事件同名同参：
+ * target=next-turn 的队列在 start 处删 removedCount 条、插入 inserted）。
+ * 队列消息被消费时宿主先写 spliced(removedCount) 再写 durable user/message，
+ * 全量重放天然不重复。
+ */
+function applySplice(queue: StreamMsg[], data: any, time?: number): void {
+  if (!data || data.target !== 'next-turn') return
+  const start = typeof data.start === 'number' ? data.start : 0
+  const removed = typeof data.removedCount === 'number' ? data.removedCount : 0
+  const inserted = Array.isArray(data.inserted) ? data.inserted : []
+  const items = inserted.map((m: any) => queuedMsgOf(m, time)).filter(Boolean) as StreamMsg[]
+  queue.splice(start, removed, ...items)
+}
+
 
 /**
  * 一轮为何异常结束（归一化后的可读说明）。
@@ -289,6 +329,7 @@ function noticeFromEvent(ev: any): TurnNotice | null {
 export function messagesFromWindow(snap: any): StreamMsg[] {
   const entries: any[] = Array.isArray(snap?.entries) ? snap.entries : []
   const out: StreamMsg[] = []
+  const queue: StreamMsg[] = []
   let live: StreamMsg | null = null
   let liveAttempt = ''
   let liveSlot = ''
@@ -318,6 +359,12 @@ export function messagesFromWindow(snap: any): StreamMsg[] {
     }
     const ev = e?.event
     if (!ev || typeof ev.type !== 'string') continue
+    if (ev.type === 'agent/inbox/spliced') {
+      // 忙时发的消息先进收件箱队列（还不是 user/message）——折叠进队列尾部，
+      // 否则主对话卡里「发出去了却看不见」（宿主 QueueDock 有、我们以前丢了）
+      applySplice(queue, ev.data, typeof ev.time === 'number' ? ev.time : undefined)
+      continue
+    }
     if (ev.type === 'system/message' || ev.type === 'tool/call') continue
     // durable assistant 消息可能同时带 reasoning 与 text 块：
     // 拆成两条（思考在前），呈现上才能分别折叠/展开（见 MsgList）。
@@ -360,7 +407,8 @@ export function messagesFromWindow(snap: any): StreamMsg[] {
       ...inj.injected ? { injected: true, injectKind: inj.kind } : {},
     })
   }
-  return out
+  // 队列消息永远排在流末尾（它们还没被任何轮次消费）
+  return out.concat(queue)
 }
 
 /** 空指标（订阅初值，避免消费方读到 undefined 字段） */
@@ -453,6 +501,16 @@ function publish(ch: Channel): void {
 function emitEvent(ch: Channel, x: any): void {
   const ev = x && typeof x === 'object' && x.event ? x.event : x
   if (!ev || typeof ev.type !== 'string') return
+  if (ev.type === 'agent/inbox/spliced') {
+    // 增量路径没有可重放的窗口，队列状态在通道上就地维护：
+    // 队列消息恒在流末尾，先摘出来 splice 完再拼回去
+    const base = ch.msgs.filter((m) => !m.queued)
+    const queue = ch.msgs.filter((m) => m.queued)
+    applySplice(queue, ev.data, typeof ev.time === 'number' ? ev.time : undefined)
+    ch.msgs = base.concat(queue)
+    publish(ch)
+    return
+  }
   if (ev.type === 'system/message' || ev.type === 'tool/call') return
   // 逐事件订阅路径同样要带上异常结局（与 messagesFromWindow 保持同口径）
   if (ev.type === 'turn/end' || ev.type === 'agent/error') {
@@ -496,6 +554,9 @@ export function subscribeSession(sessionId: string, onMsgs: Listener): Unsub {
     channels.set(sessionId, ch)
     void openStream(sessionId, ch)
   }
+  // 之前失败过的通道（新会话 binding 未物化时首开必败）：重新订阅即再拉一把，
+  // 并挂上目录变化重试钩子（openStream 的失败路径也调它，双保险）。
+  if (ch.streamState === 'failed') { hookListRetry(); retryOpenStream(sessionId, ch) }
   const target = ch
   target.subs.add(onMsgs)
   try {
@@ -519,6 +580,7 @@ export function subscribeSessionMetrics(sessionId: string, onMetrics: MetricsLis
     channels.set(sessionId, ch)
     void openStream(sessionId, ch)
   }
+  if (ch.streamState === 'failed') { hookListRetry(); retryOpenStream(sessionId, ch) }
   const target = ch
   target.metricSubs.add(onMetrics)
   try {
@@ -610,6 +672,7 @@ export function subscribeHistoryState(
 }
 
 async function openStream(sessionId: string, ch: Channel): Promise<void> {
+  ch.streamState = 'connecting'
   const ctx = clientCtx as any
   // 服务一律经 ctx.get()（reflect 层，不经 inject 闸门）取得：
   // 本插件只声明了 inject={slots:true}，直接读 ctx.sessions 会被 cordis 代理
@@ -618,6 +681,7 @@ async function openStream(sessionId: string, ch: Channel): Promise<void> {
   const sessions = readService(ctx, 'sessions')
   if (!sessions) {
     console.warn('[tokensave] client ctx.sessions 不可用，浮窗进入等待态')
+    markStreamFailed(sessionId, ch)
     return
   }
 
@@ -652,6 +716,7 @@ async function openStream(sessionId: string, ch: Channel): Promise<void> {
             }
           }
           emit()
+          ch.streamState = 'open'
           console.log(`[tokensave] 会话流已连接（retain/${source} → eventSource 快照）`)
           return
         }
@@ -677,6 +742,7 @@ async function openStream(sessionId: string, ch: Channel): Promise<void> {
     if (s && typeof s.subscribe === 'function') {
       const u = s.subscribe((x: any) => emitEvent(ch, x?.event ?? x))
       ch.close = () => u?.()
+      ch.streamState = 'open'
       console.log('[tokensave] 会话流已连接（session.subscribe）')
       return
     }
@@ -685,4 +751,52 @@ async function openStream(sessionId: string, ch: Channel): Promise<void> {
   }
 
   console.warn(`[tokensave] 未能为 ${sessionId} 打开会话流，浮窗显示等待态`)
+  markStreamFailed(sessionId, ch)
+}
+
+/** 流打开失败后的退避重试间隔（新会话 binding 物化通常远快于此）。 */
+const STREAM_RETRY_MS = 1500
+
+/**
+ * 流打开失败 → 登记重试，而不是永久停在空列表。
+ *
+ * 场景（用户反馈「新会话第一句发出去看不到」）：刚创建的会话 binding 尚未物化，
+ * 首次 openStream 的 retain 三源全失败；以前失败后没人再拉起这条通道，
+ * 之后发出去的消息（含自动继续的「继续」）虽已落盘，主对话卡永远读不到。
+ * 重试两条腿：① 退避定时器；② 会话目录任意变化（list.subscribe）——新会话
+ * 完成首轮时目录必动，比傻等更快。
+ */
+function markStreamFailed(sessionId: string, ch: Channel): void {
+  ch.streamState = 'failed'
+  if (ch.retryTimer) return
+  ch.retryTimer = setTimeout(() => {
+    ch.retryTimer = undefined
+    retryOpenStream(sessionId, ch)
+  }, STREAM_RETRY_MS)
+}
+
+/** 重试一把：只在还有人订阅、且仍未打开时真正重跑 openStream。 */
+function retryOpenStream(sessionId: string, ch: Channel): void {
+  if (ch.streamState === 'open' || ch.streamState === 'connecting') return
+  if (ch.subs.size === 0 && ch.metricSubs.size === 0) return
+  void openStream(sessionId, ch)
+}
+
+/** 会话目录变化时，把全部 failed 通道再拉一把（一次性挂监听）。 */
+let listRetryHooked = false
+function hookListRetry(): void {
+  if (listRetryHooked) return
+  const ctx = clientCtx as any
+  const list = readService<any>(ctx, 'sessions')?.list
+  if (!list || typeof list.subscribe !== 'function') return
+  listRetryHooked = true
+  try {
+    list.subscribe(() => {
+      for (const [id, ch] of channels) {
+        if (ch.streamState === 'failed') retryOpenStream(id, ch)
+      }
+    })
+  } catch {
+    listRetryHooked = false
+  }
 }

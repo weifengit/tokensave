@@ -246,6 +246,8 @@ function ProcessGroup({ items }: { items: StreamMsg[] }) {
 
 interface Turn {
   users: StreamMsg[]
+  /** 收件箱队列里的消息（排队等下一轮），渲染为带「排队中」标的弱化气泡 */
+  queued: StreamMsg[]
   proc: StreamMsg[]
   answer: StreamMsg | null
   /** 宿主自动注入的上下文（非用户所发），单独折叠成一行，不进用户气泡 */
@@ -264,8 +266,13 @@ function splitTurn(turn: StreamMsg[]): Turn {
   const users: StreamMsg[] = []
   const injects: StreamMsg[] = []
   const rest: StreamMsg[] = []
+  const queued: StreamMsg[] = []
   let notice: StreamMsg | null = null
   for (const m of turn) {
+    // 队列消息（忙时发的、还没成为 durable user/message）单独收口：
+    // 它不开轮、不算「该轮的提问」，只挂在流末尾带「排队中」标（用户反馈：
+    // 会话忙时发的第二条 / 自动继续的「继续」以前整个看不见）
+    if (m.queued) { queued.push(m); continue }
     // 异常结局单独收口：它既不是用户消息，也不该被埋进「过程」折叠里——
     // 用户必须一眼看到「这轮挂了」（以前 turn/end 被丢弃，工作台看不出来）。
     if (m.notice) { notice = m; continue }
@@ -285,7 +292,7 @@ function splitTurn(turn: StreamMsg[]): Turn {
     }
   }
   const proc = rest.filter((m) => m !== answer)
-  return { users, injects, proc, answer, notice }
+  return { users, injects, proc, answer, notice, queued }
 }
 
 interface MsgListProps {
@@ -479,7 +486,8 @@ export function MsgList({
     for (const m of messages) {
       // 注入消息不开新轮：它紧跟在用户消息之后到达，若按 user 切轮，
       // 一轮「提问 + 注入 + 回答」会被拆成两轮（提问孤零零、回答没了提问）。
-      if ((m.role === 'user' && !m.injected) || out.length === 0) out.push([])
+      // 排队消息（queued）同理不开轮：它恒在流末尾，挂在最后一轮的排队区。
+      if ((m.role === 'user' && !m.injected && !m.queued) || out.length === 0) out.push([])
       out[out.length - 1].push(m)
     }
     return out
@@ -499,6 +507,7 @@ export function MsgList({
     () => parsed
       .map((t) => ({
         users: view === 'agent' ? [] : t.users,
+        queued: view === 'agent' ? [] : t.queued,
         // 上下文注入既不是「我」发的、也不是模型说的（宿主自动带进来），只在全部视图里出现
         injects: view === 'all' ? t.injects : [],
         proc: view === 'user' ? [] : t.proc,
@@ -506,7 +515,7 @@ export function MsgList({
         notice: view === 'user' ? null : t.notice,
       }))
       .filter((t) => t.users.length > 0 || t.injects.length > 0
-        || t.proc.length > 0 || !!t.answer || !!t.notice),
+        || t.proc.length > 0 || !!t.answer || !!t.notice || t.queued.length > 0),
     [parsed, view],
   )
   /**
@@ -924,6 +933,15 @@ export function MsgList({
             </div>
           )}
           {t.notice && <TurnNoticeRow notice={t.notice.notice!} />}
+          {t.queued.map((m, i) => (
+            <div className="ts-msg-block ts-msg-block-user" key={`q${i}`} data-turn-queued="">
+              <div className="ts-msg-user ts-msg-queued">
+                {m.content}
+                <span className="ts-queued-tag" title="会话正忙：这条消息在宿主收件箱队列里，下一轮开始时送达模型（与原生对话的队列面板同源）">排队中</span>
+              </div>
+              <MsgTime time={m.time} />
+            </div>
+          ))}
         </div>
       ))}
       {/* 用户滚上去看细节时给一个“回到最新”入口（不自动抢滚动）。

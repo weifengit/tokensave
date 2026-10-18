@@ -839,6 +839,10 @@ body.ts-vsplit-dragging .ts-card { transition:none !important; animation:none !i
 .ts-win-overlay .ts-win-head { background:rgba(255,255,255,.07); }
 .ts-win-overlay .ts-win-head:hover { background:rgba(255,255,255,.13); }
 .ts-msg-user { align-self:flex-end; background:rgba(96,165,250,.22); border:1px solid rgba(96,165,250,.4); border-radius:8px 8px 2px 8px; padding:5px 9px; max-width:88%; white-space:pre-wrap; word-break:break-word; }
+/* 排队中的消息（宿主收件箱队列，下一轮才成为正式 user/message）：
+   虚线描边 + 弱化底色，与已送达的气泡一眼分开 */
+.ts-msg-queued { opacity:.72; border-style:dashed; border-color:rgba(96,165,250,.45); background:rgba(96,165,250,.10); }
+.ts-queued-tag { display:inline-block; margin-left:8px; padding:0 6px; border-radius:7px; font-size:calc(var(--ts-fs, 12.5px) * .78); color:var(--ts-fg-mute); border:1px solid var(--ts-line); background:var(--ts-hover); vertical-align:1px; white-space:nowrap; }
 /* 回复区块：右边缘与用户气泡的右边缘对齐（用户气泡靠右、右边缘贴容器右端，
    因此回复块改为拉伸满宽，不再留右侧那一小块空白） */
 .ts-msg-assistant { align-self:stretch; background:rgba(127,127,127,.14); border-radius:8px 8px 8px 2px; padding:5px 9px; max-width:none; white-space:pre-wrap; word-break:break-word; }
