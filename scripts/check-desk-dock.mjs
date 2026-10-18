@@ -93,7 +93,7 @@ check('dockview 实例按**项目**重挂（依赖 [project.id] → 换项目载
   /\}, \[project\.id\]\)/.test(dock) || /\}, \[project\.id\]\)/.test(dock))
 check('宿主原生输入条停靠进「DSH 主对话」面板（不自建输入框）',
   /import \{ useDockNativeComposer \} from '\.\/composer-dock'/.test(dock) &&
-  /useDockNativeComposer\(chatCellRef, liveIds\.includes\(chatPaneId\), false,/.test(dock) &&
+  /useDockNativeComposer\(\s*\n\s*chatCellRef,\s*\n\s*liveIds\.includes\(chatPaneId\),\s*\n\s*false,/.test(dock) &&
   !/ProjectComposer/.test(dock))
 check('停靠实现在独立模块 composer-dock.ts（HDesk 删除后仍可用）',
   /export const COMPOSER_SEAT = '\[data-conversation-region="composer"\]'/.test(composerDock) &&
@@ -396,6 +396,30 @@ check('输入条停靠不会因 enabled 切换而永留 position:fixed',
   /PRE_DOCK_STYLES\.delete\(seat\)/.test(composerDock) &&
   // 退化锚点只认工作台内部的祖先：dockview 摘掉 cell 的那一瞬不能锚到无关盒子
   /if \(!node\.closest\?\.\('\.ts-dock'\)\) continue/.test(composerDock))
+check('输入条随面板隐藏/被盖而藏（不再 fixed 高层级常浮在最上）',
+  // 两道判定：祖先链 visibility/display + 停靠点 elementFromPoint 命中测试
+  /const cellShown = \(cell: HTMLElement\)/.test(composerDock) &&
+  /cs\.visibility === 'hidden' \|\| cs\.visibility === 'collapse'/.test(composerDock) &&
+  /if \(cs\.display === 'none'\) return false/.test(composerDock) &&
+  /const cellFront = \(cell: HTMLElement, r: DOMRect\)/.test(composerDock) &&
+  /document\.elementFromPoint\(x, y\)/.test(composerDock) &&
+  /cell\.contains\(hit\)/.test(composerDock) &&
+  // 不满足即藏、满足即恢复；visibility 也在 KEYS 接管清单里（卸载还原）
+  /if \(!cellShown\(cell\)\) continue/.test(composerDock) &&
+  /if \(!r \|\| !cellFront\(cell, r\)\) continue/.test(composerDock) &&
+  /seat\.style\.visibility = ''/.test(composerDock) &&
+  /'visibility',/.test(composerDock))
+check('面板被 dockview 重挂后输入条跟到新坐标（ref 失效按选择器回查活节点）',
+  /const candidates = \(\): HTMLElement\[\]/.test(composerDock) &&
+  // 先验 isConnected：被摘除的旧节点 rect 冻结在旧坐标，不能继续用它锚位
+  /if \(c && c\.isConnected\) out\.push\(c\)/.test(composerDock) &&
+  // 同 id 可能有多个活副本（面板被提升进 overlay）：全部候选逐个过门
+  /document\.querySelectorAll<HTMLElement>\(cellSelector\)/.test(composerDock) &&
+  /if \(cellSelector\)/.test(composerDock) &&
+  // 身份变化时观察器重挂到新节点（否则 ResizeObserver 盯着旧节点白挂）
+  /if \(cell !== observed\) attach\(cell\)/.test(composerDock) &&
+  // 调用点传入了与 chatCellRef 同元素的稳定选择器
+  /\.ts-dock-chatcell\[data-desk-chat-cell=/.test(dock))
 check('把手 z-index 压过 dockview sash(99) 与宿主输入条(35)，但低于浮层(110)',
   // 实测：dockview 横向 sash 是 z-index:99，恰好压在把手垂直中点上 —— 原先 50/51
   // 会留下一条 4px 死带（elementFromPoint 命中 sash），双击/拖动都失效。
@@ -576,9 +600,9 @@ check('正文宽度随时可调，且复用宿主官方那份偏好',
 check('项目预览 iframe 固定 color-scheme（宿主浅色时内嵌项目不再一片发白）',
   /\.ts-preview-frame \{ color-scheme: dark; \}/.test(styles))
 check('输入条停靠：内容格没尺寸时退化到最近可见祖先（后台标签也有输入框）',
-  /const pickRect = \(\): DOMRect \| null =>/.test(composerDock) &&
+  /const pickRect = \(cell: HTMLElement\): DOMRect \| null =>/.test(composerDock) &&
   /for \(let node = cell\.parentElement, i = 0; node && i < 6; node = node\.parentElement, i\+\+\)/.test(composerDock) &&
-  /const r = pickRect\(\)/.test(composerDock))
+  /const r = pickRect\(cell\)/.test(composerDock))
 
 // —— 16. 浮动面板统一主题化（浅色主题下不再是一堆深色卡片）——
 check('弹层调色板集中一处（theme.ts），外壳/皮肤/弹层三组变量分开',

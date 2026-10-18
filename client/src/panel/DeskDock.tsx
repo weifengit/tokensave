@@ -1592,7 +1592,15 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
 
   // —— 输入条停靠进「DSH 主对话」面板 ——
   const chatPaneId = paneId(project.id, 'chat')
-  useDockNativeComposer(chatCellRef, liveIds.includes(chatPaneId), false, [liveIds.join(','), reloadKey])
+  // 第 5 参：dockview 命令式重挂面板后 ref 可能指向已摘除的旧节点（输入条留在旧坐标），
+  // 用稳定属性选择器回查活节点（与 chatCellRef 同一元素）。
+  useDockNativeComposer(
+    chatCellRef,
+    liveIds.includes(chatPaneId),
+    false,
+    [liveIds.join(','), reloadKey],
+    `.ts-dock-chatcell[data-desk-chat-cell="${project.id}"]`,
+  )
 
   // —— 点页面其它位置自动关闭浮动面板（设置 / 项目切换）——同 info_report 的 closePopMenu 行为
   useEffect(() => {
