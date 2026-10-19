@@ -6,6 +6,7 @@
  *  - /plugins/dsh-tokensave/clone       从 GitHub 克隆仓（POST 启动 / GET 查进度）
  *  - /plugins/dsh-tokensave/repos        我的 GitHub 仓库清单（克隆时选）
  *  - /plugins/dsh-tokensave/project-info 项目文件最后修改时间 + 开发服务器地址
+ *  - /plugins/dsh-tokensave/project-delete 删除项目源代码（移除弹窗的可选项）
  */
 import type { ProjectRecord } from './store'
 
@@ -158,10 +159,20 @@ export async function publishProjectScope(workspace: string): Promise<void> {
 // （经 dsh-remote-mobile 网关以局域网 / Tailscale IP 访问）读不到——同一服务、
 // 不同来源 → 空列表。故宿主侧提供文件落库的注册表路由，所有来源读写同一份数据。
 
+/** 服务端「移除墓碑」条目（与 store.RemovedTombstone 同构）。 */
+export interface ServerRemovedEntry {
+  id: string
+  path: string
+  name: string
+  at: number
+}
+
 export interface ProjectsPayload {
   /** 服务端是否已有注册表（false = 首次运行，客户端应以本地缓存播种） */
   initialized: boolean
   projects: ProjectRecord[]
+  /** 服务端移除墓碑：已移除项目的 id + 路径，客户端据此在本机也拦住复活链 */
+  removed: ServerRemovedEntry[]
 }
 
 /** 读服务端项目注册表。 */
@@ -172,6 +183,14 @@ export async function fetchProjects(): Promise<ProjectsPayload> {
   return {
     initialized: data.initialized === true,
     projects: Array.isArray(data.projects) ? (data.projects as ProjectRecord[]) : [],
+    removed: (Array.isArray(data.removed) ? data.removed : [])
+      .map((t: any) => ({
+        id: String(t?.id || ''),
+        path: String(t?.path || ''),
+        name: String(t?.name || ''),
+        at: Number(t?.at) || 0,
+      }))
+      .filter((t: ServerRemovedEntry) => t.id || t.path),
   }
 }
 
@@ -184,16 +203,18 @@ export async function fetchProjects(): Promise<ProjectsPayload> {
  *
  * @param projects - 本机看到的项目列表（新增 + 修改 + 保留）
  * @param removed - 显式删除的项目 id（真正的删除必须走这里）
+ * @param extra - removedPaths：按路径记移除墓碑；restorePaths：清除路径墓碑（恢复）
  */
 export async function publishProjects(
   projects: ProjectRecord[],
   removed: string[] = [],
+  extra: { removedPaths?: string[]; restorePaths?: string[] } = {},
 ): Promise<boolean> {
   try {
     const res = await fetch('/plugins/dsh-tokensave/projects', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ projects, removed }),
+      body: JSON.stringify({ projects, removed, ...extra }),
     })
     if (!res.ok) {
       console.warn(`[tokensave] 项目注册表保存失败（HTTP ${res.status}）`)
@@ -204,6 +225,22 @@ export async function publishProjects(
     console.warn('[tokensave] 项目注册表保存失败', e)
     return false
   }
+}
+
+// —— 删除项目源代码（移除确认弹窗里的可选项）————————————————
+//
+// 服务端 POST /project-delete 做严格校验后才整棵删除：绝对路径、必须是目录、
+// 拒绝符号链接、拒绝根目录与 HOME / ~/.dsh / cwd 等受保护路径。目录已不存在
+// 时返回 gone=true（删除目标已达成），调用方可照常走移除流程。
+export async function deleteProjectSource(path: string): Promise<{ ok: boolean; gone: boolean }> {
+  const res = await fetch('/plugins/dsh-tokensave/project-delete', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ path }),
+  })
+  const data: any = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(String(data?.error || `删除源代码失败（HTTP ${res.status}）`))
+  return { ok: data?.ok !== false, gone: data?.gone === true }
 }
 
 // —— 新建 / 重命名文件夹（「添加项目」里直接开一个新项目目录）—————

@@ -3,6 +3,7 @@
  *  - /plugins/dsh-tokensave/board  按工作区过滤的黑板条目（中文标签）
  *  - /plugins/dsh-tokensave/fs     目录浏览（供「添加项目」选择项目文件夹）
  *  - /plugins/dsh-tokensave/mkdir  新建 / 重命名文件夹（供「添加项目」直接开新项目目录）
+ *  - /plugins/dsh-tokensave/project-delete 删除项目源代码（移除弹窗可选项；危险写通道）
  *
  * 宿主 WebServer 注册的是 Node 风格 handler(req, res)；原始路由不继承
  * Connection 鉴权栅栏，因此每个请求先过 connection.requestRejection（与
@@ -10,6 +11,7 @@
  * 读接口只读（GET-only）；/scope、/projects、/mkdir 是写通道，各自鉴权 + 方法判定。
  */
 import fs from 'node:fs'
+import os from 'node:os'
 import net from 'node:net'
 import { spawn, execFileSync, type ChildProcess } from 'node:child_process'
 import path from 'node:path'
@@ -30,6 +32,7 @@ export const MKDIR_ROUTE_PATH = '/plugins/dsh-tokensave/mkdir'
 export const EXPLORER_SETTINGS_ROUTE_PATH = '/plugins/dsh-tokensave/explorer-settings'
 export const CLONE_ROUTE_PATH = '/plugins/dsh-tokensave/clone'
 export const CLONE_STATUS_ROUTE_PATH = '/plugins/dsh-tokensave/clone-status'
+export const PROJECT_DELETE_ROUTE_PATH = '/plugins/dsh-tokensave/project-delete'
 
 // —— 当前「打开的工作台项目」（探索者归属的真相）————————————
 //
@@ -1240,6 +1243,81 @@ function projectsFilePath(): string {
   return path.join(dshHomeDir(), 'tokensave', 'projects.json')
 }
 
+// —— 移除墓碑（防复活）—————————————————————————————————
+//
+// 「移除项目」必须是**持久**的：项目注册表是并集合并（保护残缺缓存不冲库），
+// 但副作用是任何拿着旧快照的来源回推一次，被移除的项目就会复活；客户端还有
+// 自动登记（新会话 → ensureProjectForWorkspace）与 localStorage 水合两条复活链。
+// 因此移除时在 projects.removed.json 里记一条墓碑（id + 归一路径），所有合并 /
+// 登记路径一律尊重它；用户手动重新「添加项目」由客户端发 restorePaths 清除。
+const REMOVED_FILE_VERSION = 1
+/** 墓碑条目上限：按时间保留最新 N 条，防止无限增长。 */
+const REMOVED_KEEP = 500
+
+interface RemovedEntry {
+  id: string
+  path: string
+  name: string
+  at: number
+}
+
+function removedFilePath(): string {
+  return path.join(dshHomeDir(), 'tokensave', 'projects.removed.json')
+}
+
+function sanitizeRemovedEntry(raw: any): RemovedEntry | null {
+  const id = typeof raw?.id === 'string' ? raw.id.trim() : ''
+  const p = normalizeWorkspace(typeof raw?.path === 'string' ? raw.path : '')
+  if (!id && !p) return null
+  return {
+    id,
+    path: p,
+    name: typeof raw?.name === 'string' ? raw.name : '',
+    at: Number(raw?.at) || Date.now(),
+  }
+}
+
+function readRemovedFile(): RemovedEntry[] {
+  try {
+    const data = JSON.parse(fs.readFileSync(removedFilePath(), 'utf8'))
+    const list = Array.isArray(data?.removed) ? data.removed : []
+    return list.map(sanitizeRemovedEntry).filter(Boolean) as RemovedEntry[]
+  } catch {
+    return []
+  }
+}
+
+function writeRemovedFile(list: RemovedEntry[]): void {
+  const file = removedFilePath()
+  fs.mkdirSync(path.dirname(file), { recursive: true })
+  const kept = list
+    .slice()
+    .sort((a, b) => b.at - a.at)
+    .slice(0, REMOVED_KEEP)
+  const tmp = `${file}.tmp-${process.pid}`
+  fs.writeFileSync(
+    tmp,
+    JSON.stringify({ version: REMOVED_FILE_VERSION, updatedAt: Date.now(), removed: kept }, null, 2),
+    'utf8'
+  )
+  fs.renameSync(tmp, file) // 原子替换：读方永远看到完整 JSON
+}
+
+/** 墓碑是否命中一条项目记录（id 或归一路径任一相等即命中）。 */
+function tombstoneHits(entry: RemovedEntry, p: StoredProject): boolean {
+  if (entry.id && entry.id === p.id) return true
+  if (entry.path && entry.path === p.path) return true
+  return false
+}
+
+/** 解析请求体里的字符串数组字段（缺省/类型不对一律空数组）。 */
+function stringList(raw: unknown): string[] {
+  return (Array.isArray(raw) ? raw : [])
+    .filter((x: any) => typeof x === 'string')
+    .map((x: string) => x.trim())
+    .filter(Boolean)
+}
+
 /**
  * 注册表备份目录与保留份数。
  *
@@ -1345,26 +1423,33 @@ function sameProjects(a: StoredProject[], b: StoredProject[]): boolean {
  * 探测脚本），一次同步就能把服务端清成它那一份。现在改为：
  *   - 服务端已有的项目，只要提交里没**显式删除**，一律保留；
  *   - 提交里的新项目照常新增；
- *   - 同一路径以提交的版本为准（用户刚改的名字/介绍生效）。
+ *   - 同一路径以提交的版本为准（用户刚改的名字/介绍生效）；
+ *   - 命中「移除墓碑」的条目一律拒收——旧快照 / 自动登记都无法把
+ *     已移除的项目加回来（这正是移除要「固化」的语义）。
  *
  * @param current - 服务端现有列表
  * @param incoming - 客户端提交的列表
  * @param removed - 客户端显式删除的 id 列表（真正的删除必须走这里）
+ * @param tombstones - 移除墓碑（id + 归一路径；命中的条目直接丢弃）
  */
 function mergeProjects(
   current: StoredProject[],
   incoming: StoredProject[],
   removed: Set<string>,
+  tombstones: RemovedEntry[] = [],
 ): StoredProject[] {
+  const blocked = (p: StoredProject) => tombstones.some((t) => tombstoneHits(t, p))
   const byPath = new Map<string, StoredProject>()
-  // 先放服务端现有（删除名单里的排除）
+  // 先放服务端现有（删除名单 / 墓碑命中的排除）
   for (const p of current) {
     if (removed.has(p.id)) continue
+    if (blocked(p)) continue
     byPath.set(p.path, p)
   }
-  // 再用提交的覆盖 / 新增（同 id 或同路径都算同一条）
+  // 再用提交的覆盖 / 新增（同 id 或同路径都算同一条）；墓碑命中的一律拒收。
   for (const p of incoming) {
     if (removed.has(p.id)) continue
+    if (blocked(p)) continue
     byPath.set(p.path, p)
   }
   return [...byPath.values()]
@@ -1394,7 +1479,8 @@ function writeProjectsFile(projects: StoredProject[]): StoredProject[] {
 
 function handleProjectsRead(res: any): void {
   const state = readProjectsFile()
-  writeJson(res, 200, { timestamp: Date.now(), ...state })
+  // 墓碑一并下发：客户端据此在本机也拦住「旧缓存 / 自动登记」的复活链
+  writeJson(res, 200, { timestamp: Date.now(), ...state, removed: readRemovedFile() })
 }
 
 function handleProjectsWrite(req: any, res: any): void {
@@ -1418,15 +1504,48 @@ function handleProjectsWrite(req: any, res: any): void {
       // 显式删除名单：真正的删除只能走这里，且必须点名 id。
       // 没有它就无法区分「用户删了项目」与「这个来源的缓存本来就不全」——
       // 后者以前会被当成前者，于是把整张注册表覆盖成残缺的一份。
-      const removed = new Set<string>(
-        Array.isArray(parsed.removed)
-          ? parsed.removed.filter((x: any) => typeof x === 'string').map((x: string) => x.trim()).filter(Boolean)
-          : [],
-      )
+      const removedIds = stringList(parsed.removed)
+      const removed = new Set<string>(removedIds)
+      // 按路径点名的删除（客户端 removeProject 会带；注册表里查不到 id 时的兜底）
+      const removedPaths = stringList(parsed.removedPaths).map((p) => normalizeWorkspace(p))
+      // 恢复名单：用户手动重新「添加项目」时由客户端发来，清掉对应路径的墓碑
+      const restorePaths = new Set(stringList(parsed.restorePaths).map((p) => normalizeWorkspace(p)))
       const current = readProjectsFile().projects
-      // 并集合并：服务端已有的一律保留（除非被显式删除），提交里的新增/修改生效。
-      // 这样即使某个来源的缓存残缺，也无法再把别人的项目“顺手删掉”。
-      const merged = mergeProjects(current, incoming, removed)
+      // —— 墓碑维护 ————
+      // ① 恢复：先摘掉 restorePaths 命中的旧墓碑（只按路径命中）；
+      // ② 新增：removedIds / removedPaths 各记一条（id 能在现有注册表里查到就
+      //    补齐路径与名字，查不到就只记 id / 只记路径）。
+      // 写失败不阻断注册表写入（墓碑是兜底手段，注册表才是主数据）。
+      const tombstones = readRemovedFile().filter((t) => !t.path || !restorePaths.has(t.path))
+      const tombKey = (t: RemovedEntry) => `${t.id}|${t.path}`
+      const tombSeen = new Set(tombstones.map(tombKey))
+      const now = Date.now()
+      const freshEntries: RemovedEntry[] = []
+      for (const id of removedIds) {
+        const hit = current.find((p) => p.id === id)
+        freshEntries.push({ id, path: hit ? hit.path : '', name: hit ? hit.name : '', at: now })
+      }
+      for (const rp of removedPaths) {
+        if (freshEntries.some((t) => t.path === rp)) continue
+        const hit = current.find((p) => p.path === rp)
+        freshEntries.push({ id: hit ? hit.id : '', path: rp, name: hit ? hit.name : '', at: now })
+      }
+      for (const t of freshEntries) {
+        if (tombSeen.has(tombKey(t))) continue
+        tombSeen.add(tombKey(t))
+        tombstones.push(t)
+      }
+      if (removedIds.length > 0 || removedPaths.length > 0 || restorePaths.size > 0) {
+        try {
+          writeRemovedFile(tombstones)
+        } catch (e) {
+          console.warn('[dsh-tokensave] 移除墓碑写盘失败（不影响注册表写入）:', e)
+        }
+      }
+      // 并集合并：服务端已有的一律保留（除非被显式删除 / 墓碑命中），
+      // 提交里的新增/修改生效。这样即使某个来源的缓存残缺，也无法再把
+      // 别人的项目“顺手删掉”；而已移除的项目也无法再被旧快照加回来。
+      const merged = mergeProjects(current, incoming, removed, tombstones)
       const saved = writeProjectsFile(merged)
       writeJson(res, 200, {
         timestamp: Date.now(),
@@ -1439,6 +1558,108 @@ function handleProjectsWrite(req: any, res: any): void {
       console.error('[dsh-tokensave] projects route failed:', error)
       writeJson(res, 400, { error: 'invalid projects payload' })
     }
+  })
+}
+
+// —— 删除项目源代码（移除确认弹窗的可选项）———————————————————
+//
+// 用户在「移除项目」弹窗勾选「删除项目源代码」后调用：把项目文件夹**整棵删掉**。
+// 这是本插件最危险的写操作，因此闸门最多：
+//   1. 只接受绝对路径，且必须是已存在目录（已不存在视为删除达成，返回 gone）；
+//   2. 拒绝符号链接（lstat 判定）——避免把链接背后的真身当项目删掉；
+//   3. 受保护根拒绝：目标等于受保护根、或受保护根在目标**里面**（删掉目标会
+//      连带毁掉它）一律 403。受保护根 = HOME、DSH 主目录（~/.dsh）、进程 cwd、
+//      系统临时目录；文件系统根（'/'、Windows 盘根）由 HOME 规则天然覆盖。
+//   4. 删除用 fs.rmSync 递归 + 少量重试（对付瞬时占用/权限抖动）。
+function protectedRoots(): string[] {
+  const candidates = [
+    process.env.HOME || process.env.USERPROFILE || '',
+    dshHomeDir(),
+    process.cwd(),
+    os.tmpdir(),
+  ]
+  return candidates.filter(Boolean).map((r) => path.resolve(r))
+}
+
+/** inner 在 outer 里面（含相等）吗？ */
+function isInsideOrEqual(inner: string, outer: string): boolean {
+  const rel = path.relative(outer, inner)
+  return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel))
+}
+
+function assertDeletableTarget(target: string): void {
+  if (path.parse(target).root === target) {
+    throw new Error('拒绝删除文件系统根目录')
+  }
+  for (const root of protectedRoots()) {
+    if (isInsideOrEqual(root, target)) {
+      throw new Error(`拒绝删除：目标包含受保护目录 ${root}`)
+    }
+  }
+}
+
+export function handleProjectDelete(req: any, res: any): void {
+  if (typeof req.on !== 'function') {
+    writeJson(res, 501, { error: 'request stream unavailable' })
+    return
+  }
+  let body = ''
+  req.on('data', (c: any) => { body += String(c) })
+  req.on('end', () => {
+    let parsed: any = null
+    try {
+      parsed = body ? JSON.parse(body) : {}
+    } catch {
+      writeJson(res, 400, { error: 'invalid json' })
+      return
+    }
+    const raw = String(parsed?.path ?? '').trim()
+    if (!raw || !path.isAbsolute(raw)) {
+      writeJson(res, 400, { error: '项目路径必须是绝对路径' })
+      return
+    }
+    const target = path.resolve(raw)
+    try {
+      const stat = fs.lstatSync(target)
+      if (stat.isSymbolicLink()) {
+        writeJson(res, 400, { error: '项目路径是符号链接，拒绝删除' })
+        return
+      }
+      if (!stat.isDirectory()) {
+        writeJson(res, 400, { error: '项目路径不是文件夹' })
+        return
+      }
+    } catch (error: any) {
+      if (error?.code === 'ENOENT' || error?.code === 'ENOTDIR') {
+        // 目录已经不在了：删除目标已达成，直接告知（客户端照常走移除流程）
+        writeJson(res, 200, { ok: true, path: normalizeWorkspace(target), gone: true })
+        return
+      }
+      writeJson(res, 500, { error: `读取项目路径失败：${error?.message || error?.code || '未知错误'}` })
+      return
+    }
+    try {
+      assertDeletableTarget(target)
+    } catch (error: any) {
+      writeJson(res, 403, { error: error?.message || '该路径受保护，拒绝删除' })
+      return
+    }
+    try {
+      fs.rmSync(target, { recursive: true, force: false, maxRetries: 3, retryDelay: 150 })
+    } catch (error: any) {
+      if (error?.code === 'ENOENT') {
+        writeJson(res, 200, { ok: true, path: normalizeWorkspace(target), gone: true })
+        return
+      }
+      const message = error?.code === 'EACCES' || error?.code === 'EPERM'
+        ? '没有权限删除该目录（可能有文件被占用或需要更高权限）'
+        : `删除失败：${error?.message || error?.code || '未知错误'}`
+      console.error('[dsh-tokensave] project-delete 失败:', target, error)
+      writeJson(res, 500, { error: message })
+      return
+    }
+    console.log(`[dsh-tokensave] 项目源代码已删除: ${target}`)
+    writeJson(res, 200, { ok: true, path: normalizeWorkspace(target), gone: false })
   })
 }
 // —— 挂载 ————————————————————————————————————————
@@ -1550,6 +1771,19 @@ export function mountTokensaveWebRoutes(ctx: Context): void {
     handleMkdir(req, res)
   }
 
+  // 删除项目源代码：POST-only（全插件最危险的写通道，同样自行鉴权）。
+  const projectDeleteGuard = (req: any, res: any) => {
+    const rejection = rejectionFor(ctx, req)
+    if (rejection !== undefined) {
+      writeJson(res, rejection, {
+        error: rejection === 503 ? 'authentication unavailable' : 'unauthorized'
+      })
+      return
+    }
+    if (req.method !== 'POST') return methodNotAllowed(res)
+    handleProjectDelete(req, res)
+  }
+
   // 探索者设置：GET 读目录 / POST 写选择（同一路由两方法；同样自行鉴权）。
   const explorerSettingsGuard = (req: any, res: any) => {
     const rejection = rejectionFor(ctx, req)
@@ -1604,6 +1838,7 @@ export function mountTokensaveWebRoutes(ctx: Context): void {
       [SCOPE_ROUTE_PATH, scopeGuard],
       [PROJECTS_ROUTE_PATH, projectsGuard],
       [MKDIR_ROUTE_PATH, mkdirGuard],
+      [PROJECT_DELETE_ROUTE_PATH, projectDeleteGuard],
       [EXPLORER_SETTINGS_ROUTE_PATH, explorerSettingsGuard],
       [CLONE_ROUTE_PATH, cloneStartGuard],
       [CLONE_STATUS_ROUTE_PATH, cloneStatusGuard],
@@ -1625,7 +1860,7 @@ export function mountTokensaveWebRoutes(ctx: Context): void {
     }
     registerAll(readRoutes, true)
     registerAll(writeRoutes, false)
-    console.log(`[dsh-tokensave] 路由已挂载: ${BOARD_ROUTE_PATH}, ${FS_ROUTE_PATH}, ${EXPLORERS_ROUTE_PATH}, ${PROJECT_INFO_ROUTE_PATH}, ${PROJECTS_ROUTE_PATH}, ${EXPLORER_SETTINGS_ROUTE_PATH}, ${CLONE_ROUTE_PATH}, ${REPOS_ROUTE_PATH}`)
+    console.log(`[dsh-tokensave] 路由已挂载: ${BOARD_ROUTE_PATH}, ${FS_ROUTE_PATH}, ${EXPLORERS_ROUTE_PATH}, ${PROJECT_INFO_ROUTE_PATH}, ${PROJECTS_ROUTE_PATH}, ${EXPLORER_SETTINGS_ROUTE_PATH}, ${CLONE_ROUTE_PATH}, ${REPOS_ROUTE_PATH}, ${PROJECT_DELETE_ROUTE_PATH}`)
     const registration = {
       server,
       dispose: () => {

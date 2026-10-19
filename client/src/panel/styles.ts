@@ -606,6 +606,12 @@ body.ts-vsplit-dragging .ts-card { transition:none !important; animation:none !i
 .ts-confirm-name { font-weight:600; }
 .ts-confirm-path { font-size:calc(var(--ts-fs, 12.5px) * 0.92); opacity:.6; word-break:break-all; font-family:var(--dsh-font-mono, monospace); }
 .ts-confirm-note { font-size:calc(var(--ts-fs, 12.5px) * 0.96); opacity:.7; line-height:1.65; }
+/* 「同时删除项目源代码」可选项：危险复选框（红描边卡），勾上后提示语同步变红 */
+.ts-confirm-note-warn { opacity:1 !important; color:#fca5a5; }
+.ts-confirm-opt { display:flex; align-items:flex-start; gap:9px; margin-top:12px; padding:9px 11px; border-radius:10px; border:1px solid rgba(248,113,113,.35); background:rgba(248,113,113,.08); cursor:pointer; font-size:calc(var(--ts-fs, 12.5px) * 0.96); line-height:1.6; text-align:left; }
+.ts-confirm-opt:hover { background:rgba(248,113,113,.14); }
+.ts-confirm-opt input[type="checkbox"] { flex:none; margin:3px 0 0; width:14px; height:14px; accent-color:#f87171; }
+.ts-confirm-opt-text b { color:#fca5a5; }
 .ts-btn-danger-solid { background:rgba(248,113,113,.9); border-color:rgba(248,113,113,1); color:#fff; font-weight:600; }
 .ts-btn-danger-solid:hover { background:rgba(248,113,113,1); box-shadow:0 0 14px rgba(248,113,113,.4); }
 /* 新建卡：虚线玻璃底 + 居中加号 */

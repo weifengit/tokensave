@@ -16,6 +16,8 @@ export interface ConfirmDialogProps {
   cancelText?: string
   /** 是否用危险样式（红色） */
   danger?: boolean
+  /** 确认操作进行中：禁用两个按钮（删除源代码等长操作防连点） */
+  busy?: boolean
   onConfirm: () => void
   onCancel: () => void
 }
@@ -26,6 +28,7 @@ export function ConfirmDialog({
   confirmText = '确认',
   cancelText = '取消',
   danger = false,
+  busy = false,
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
@@ -62,10 +65,11 @@ export function ConfirmDialog({
           <div className="ts-confirm-msg">{message}</div>
         </div>
         <div className="ts-modal-foot">
-          <button ref={cancelRef} className="ts-btn" onClick={onCancel}>{cancelText}</button>
+          <button ref={cancelRef} className="ts-btn" onClick={onCancel} disabled={busy}>{cancelText}</button>
           <button
             className={`ts-btn ${danger ? 'ts-btn-danger-solid' : 'ts-btn-primary'}`}
             onClick={onConfirm}
+            disabled={busy}
           >{confirmText}</button>
         </div>
       </div>

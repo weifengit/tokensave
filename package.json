@@ -38,7 +38,8 @@
     "test:chat-scroll": "node scripts/check-chat-scroll.mjs",
     "test:msg-queue": "node scripts/check-msg-queue.mjs",
     "test:clone": "node scripts/check-clone-project.mjs",
-    "test": "pnpm check && pnpm test:continue && pnpm test:width && pnpm test:hover && pnpm test:sound && pnpm test:todo && pnpm test:sidebar && pnpm test:composer-focus && pnpm test:dockview && pnpm test:desk && pnpm test:desk-dock && pnpm test:chat-scroll && pnpm test:msg-queue && pnpm test:clone && pnpm test:ui"
+    "test:project-remove": "node scripts/check-project-remove.mjs",
+    "test": "pnpm check && pnpm test:continue && pnpm test:width && pnpm test:hover && pnpm test:sound && pnpm test:todo && pnpm test:sidebar && pnpm test:composer-focus && pnpm test:dockview && pnpm test:desk && pnpm test:desk-dock && pnpm test:chat-scroll && pnpm test:msg-queue && pnpm test:clone && pnpm test:project-remove && pnpm test:ui"
   },
   "dependencies": {
     "@deepseek-ai/dsh-brand": "0.2.0-rc.2",

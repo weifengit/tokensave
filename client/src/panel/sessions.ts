@@ -11,7 +11,7 @@
  */
 import { useEffect, useState } from 'react'
 import { getClientContext, readService } from '../session-subscribe'
-import { rememberOpenedProject, loadProjects, touchProject, addProject } from './store'
+import { rememberOpenedProject, loadProjects, touchProject, addProjectAuto } from './store'
 import type { ProjectRecord } from './store'
 
 /**
@@ -1343,6 +1343,7 @@ function workspaceRowById(ctx: any, workspaceId: string): { path: string; title:
  *
  * 用户选择「自动登记」，让侧边栏每一个「新会话」按钮都落到 tokensave 工作台；
  * 自动登记的项目在「项目中心」里可见、可移除。
+ * 自动登记走 addProjectAuto：路径已在「移除墓碑」里的不再登记（用户手动「添加项目」才会恢复）。
  * @returns 对应项目（拿不到工作区路径时返回 undefined，调用方回落宿主原生行为）
  */
 export function ensureProjectForWorkspace(ctx: any, workspaceId: string): ProjectRecord | undefined {
@@ -1351,7 +1352,8 @@ export function ensureProjectForWorkspace(ctx: any, workspaceId: string): Projec
   const row = workspaceRowById(ctx, workspaceId)
   if (!row) return undefined
   const name = row.title || row.path.split('/').pop() || row.path
-  return addProject(name, row.path)
+  // 自动登记必须尊重「移除墓碑」：用户已把该路径移除的，不再自动加回来（防复活）。
+  return addProjectAuto(name, row.path)
 }
 
 /**

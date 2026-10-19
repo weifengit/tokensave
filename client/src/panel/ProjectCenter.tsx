@@ -30,7 +30,7 @@ import type { ProjectRecord, ViewMode, SortMode } from './store'
 import { enterProjectWorkbench, getCurrentSessionId, setControlRoomScreen, startProjectSession } from './sessions'
 import { useProjectsActivity } from './activity'
 import type { SessionActivity } from './activity'
-import { fetchProjectInfo } from './api'
+import { deleteProjectSource, fetchProjectInfo } from './api'
 import type { ProjectInfo } from './api'
 import { AddProjectDialog } from './AddProjectDialog'
 
@@ -175,6 +175,10 @@ export function ProjectCenter({ sessionId }: Props) {
   const [prefs, setPrefs] = useState(() => loadViewPrefs())
   // 待确认移除的项目（null 表示不显示确认弹窗）
   const [pendingRemove, setPendingRemove] = useState<ProjectRecord | null>(null)
+  // 勾选「同时删除项目源代码」——勾上后确认会先删盘再固化移除（见 confirmRemove）
+  const [deleteSource, setDeleteSource] = useState(false)
+  // 移除确认进行中（删除源代码是长操作，防连点 + 锁按钮）
+  const [removing, setRemoving] = useState(false)
   // 项目信息（真实文件 mtime + 推断的开发服务器地址），按 path 缓存
   const [infos, setInfos] = useState<Record<string, ProjectInfo>>({})
   // 活跃对话序号点（会话目录 / 会话状态变化时自动刷新）
@@ -281,12 +285,35 @@ export function ProjectCenter({ sessionId }: Props) {
   }
 
   /** 移除项目：**先弹确认弹窗**（破坏性操作），确认后才真删。 */
-  const dropProject = (p: ProjectRecord) => setPendingRemove(p)
+  const dropProject = (p: ProjectRecord) => {
+    setDeleteSource(false)
+    setRemoving(false)
+    setPendingRemove(p)
+  }
   const confirmRemove = () => {
-    if (!pendingRemove) return
-    removeProject(pendingRemove.id)
-    setPendingRemove(null)
-    refresh()
+    if (!pendingRemove || removing) return
+    const victim = pendingRemove
+    if (!deleteSource) {
+      removeProject(victim.id)
+      setPendingRemove(null)
+      refresh()
+      return
+    }
+    // 勾了「删除项目源代码」：先删盘（失败则中断，项目保持原样），成功后再固化移除。
+    // removeProject 会记下「移除墓碑」（id + 路径），服务端与各来源从此都不会把它加回来。
+    setRemoving(true)
+    deleteProjectSource(victim.path)
+      .then(() => {
+        removeProject(victim.id)
+        setPendingRemove(null)
+        refresh()
+        setNotice(`已移除项目并删除源代码：${victim.name}`)
+      })
+      .catch((e: unknown) => {
+        const msg = e instanceof Error ? e.message : String(e)
+        setNotice(`删除源代码失败：${msg}（项目未移除）`)
+      })
+      .finally(() => setRemoving(false))
   }
 
   return (
@@ -529,7 +556,8 @@ export function ProjectCenter({ sessionId }: Props) {
         <ConfirmDialog
           title="移除项目"
           danger
-          confirmText="确认移除"
+          confirmText={deleteSource ? '删除并移除' : '确认移除'}
+          busy={removing}
           message={(
             <>
               <div className="ts-confirm-lead">确定要把以下项目从<b>项目中心</b>移除吗？</div>
@@ -537,10 +565,26 @@ export function ProjectCenter({ sessionId }: Props) {
                 <span className="ts-confirm-name">📁 {pendingRemove.name}</span>
                 <span className="ts-confirm-path">{pendingRemove.path}</span>
               </div>
-              <div className="ts-confirm-note">
-                仅从项目中心的列表里移除，<b>不会删除磁盘上的任何文件</b>。
-                之后可以重新「添加项目」把它加回来。
-              </div>
+              {deleteSource ? (
+                <div className="ts-confirm-note ts-confirm-note-warn">
+                  将<b>永久删除</b>该文件夹下的<b>全部内容</b>（含 .git 与未提交的修改），<b>不可恢复</b>。
+                </div>
+              ) : (
+                <div className="ts-confirm-note">
+                  仅从项目中心的列表里移除，<b>不会删除磁盘上的任何文件</b>。
+                  之后可以重新「添加项目」把它加回来。
+                </div>
+              )}
+              <label className="ts-confirm-opt">
+                <input
+                  type="checkbox"
+                  checked={deleteSource}
+                  onChange={(e) => setDeleteSource(e.target.checked)}
+                />
+                <span className="ts-confirm-opt-text">
+                  同时<b>删除项目源代码</b>（完整删掉该项目的全部文件，不可恢复）
+                </span>
+              </label>
             </>
           )}
           onCancel={() => setPendingRemove(null)}

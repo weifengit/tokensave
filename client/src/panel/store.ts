@@ -47,6 +47,94 @@ export function normalizeProjects(parsed: any): ProjectRecord[] {
     })
 }
 
+// —— 移除墓碑（防止已移除的项目被「不知名操作」加回来）———————————
+//
+// 背景：移除项目后有几条链路会把它**悄悄加回来**：
+//   ① 服务端 POST /projects 是并集合并——任何来源拿着含旧项目的缓存回推一次，它就复活；
+//   ② 侧边栏「新会话」的自动登记（ensureProjectForWorkspace）会按工作区路径重新 addProject；
+//   ③ 本机 localStorage 缓存若还留着它，水合并集时又被当成「本地独有」回推服务端。
+// 解法：移除时记一条「墓碑」（id + 归一路径），本地 localStorage 与服务端
+// ~/.dsh/tokensave/projects.removed.json 各存一份；上述三条链路一律尊重墓碑。
+// 用户在「添加项目」里**手动**重新加入同一路径视为恢复：清掉墓碑（自动登记没有这个特权）。
+export interface RemovedTombstone {
+  id: string
+  path: string
+  name: string
+  at: number
+}
+const REMOVED_KEY = 'tokensave:projects-removed.v1'
+/** 墓碑上限：最老的先丢（防无限增长；正常使用远到不了这个量级）。 */
+const REMOVED_KEEP = 500
+let tombstoneCache: RemovedTombstone[] | null = null
+
+/** 路径轻量归一（与服务端 normalizeWorkspace 同口径：正斜杠、盘符小写、去尾斜杠）。 */
+function normProjectPath(raw: string): string {
+  let p = String(raw || '').trim().replace(/\\+/g, '/')
+  p = p.replace(/^([a-zA-Z]):/, (_, drive: string) => `${drive.toLowerCase()}:`)
+  return p.replace(/\/+$/, '')
+}
+
+function sanitizeTombstone(raw: any): RemovedTombstone | null {
+  const id = typeof raw?.id === 'string' ? raw.id.trim() : ''
+  const p = typeof raw?.path === 'string' ? normProjectPath(raw.path) : ''
+  if (!id && !p) return null
+  return { id, path: p, name: typeof raw?.name === 'string' ? raw.name : '', at: Number(raw?.at) || 0 }
+}
+
+function loadTombstones(): RemovedTombstone[] {
+  if (tombstoneCache) return tombstoneCache
+  try {
+    const raw = localStorage.getItem(REMOVED_KEY)
+    const list = raw ? JSON.parse(raw) : []
+    tombstoneCache = (Array.isArray(list) ? list : [])
+      .map(sanitizeTombstone)
+      .filter(Boolean) as RemovedTombstone[]
+  } catch {
+    tombstoneCache = []
+  }
+  return tombstoneCache
+}
+
+function saveTombstones(list: RemovedTombstone[]): void {
+  tombstoneCache = list.slice(-REMOVED_KEEP)
+  try {
+    localStorage.setItem(REMOVED_KEY, JSON.stringify(tombstoneCache))
+  } catch {
+    /* 隐私模式：写不进去，本次会话靠内存里的 tombstoneCache 兜底 */
+  }
+}
+
+function addTombstones(entries: RemovedTombstone[]): void {
+  const list = loadTombstones()
+  const key = (t: RemovedTombstone) => `${t.id}|${t.path}`
+  const seen = new Set(list.map(key))
+  for (const e of entries) {
+    if (seen.has(key(e))) continue
+    seen.add(key(e))
+    list.push(e)
+  }
+  saveTombstones(list)
+}
+
+/** 该项目（按 id 或路径任一命中）是否已被移除（墓碑在案）。 */
+export function isProjectTombstoned(id: string, path: string): boolean {
+  const np = normProjectPath(path)
+  return loadTombstones().some((t) => (t.id && t.id === id) || (t.path && t.path === np))
+}
+
+/** 该路径是否已被移除（自动登记守门用）。 */
+export function isPathTombstoned(path: string): boolean {
+  return isProjectTombstoned('', path)
+}
+
+/** 清掉这些路径的墓碑（用户手动重新「添加项目」= 恢复）。 */
+function clearTombstonesForPaths(paths: string[]): void {
+  const set = new Set(paths.map(normProjectPath))
+  const list = loadTombstones()
+  const kept = list.filter((t) => !t.path || !set.has(t.path))
+  if (kept.length !== list.length) saveTombstones(kept)
+}
+
 /**
  * 读项目列表（同步）：返回**本地缓存**。
  *
@@ -58,7 +146,8 @@ export function loadProjects(): ProjectRecord[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (!raw) return []
-    return normalizeProjects(JSON.parse(raw))
+    // 墓碑过滤：已移除的项目即使还躺在本地缓存里也不再出现（防复活第一环）
+    return normalizeProjects(JSON.parse(raw)).filter((p) => !isProjectTombstoned(p.id, p.path))
   } catch {
     return []
   }
@@ -92,6 +181,14 @@ function writeCache(list: ProjectRecord[]): void {
 let pushChain: Promise<unknown> = Promise.resolve()
 let lastPushAt = 0
 
+/** pushProjects 的可选附加名单（墓碑记除 / 恢复）。 */
+interface PushExtra {
+  /** 按路径记移除墓碑（移除项目时与 removed id 一并发）。 */
+  removedPaths?: string[]
+  /** 清除路径墓碑（用户手动重新添加 = 恢复）。 */
+  restorePaths?: string[]
+}
+
 /**
  * 把本机项目列表推回服务端注册表（跨来源 / 跨设备共享的真相）。失败静默，缓存仍可用。
  *
@@ -100,23 +197,27 @@ let lastPushAt = 0
  *
  * @param list - 本机当前列表
  * @param removed - 本次显式删除的项目 id（默认空 = 纯新增/修改）
+ * @param extra - removedPaths：按路径记移除墓碑；restorePaths：清除路径墓碑（恢复）
  */
-function pushProjects(list: ProjectRecord[], removed: string[] = []): void {
+function pushProjects(list: ProjectRecord[], removed: string[] = [], extra: PushExtra = {}): void {
   const snapshot = list.map((p) => ({ ...p }))
   const ids = [...removed]
   lastPushAt = Date.now()
-  pushChain = pushChain.then(() => publishProjects(snapshot, ids)).catch(() => { /* 离线时以缓存兼底 */ })
+  pushChain = pushChain
+    .then(() => publishProjects(snapshot, ids, extra))
+    .catch(() => { /* 离线时以缓存兼底 */ })
 }
 
 /**
  * 保存本机列表并回推服务端。
  * @param list - 新列表
  * @param removed - 本次显式删除的 id（仅 removeProject 会传）
+ * @param extra - 墓碑记除 / 恢复名单（透传给服务端）
  */
-function saveProjects(list: ProjectRecord[], removed: string[] = []): void {
+function saveProjects(list: ProjectRecord[], removed: string[] = [], extra: PushExtra = {}): void {
   writeCache(list)
   emitProjects(list)
-  pushProjects(list, removed)
+  pushProjects(list, removed, extra)
 }
 let syncInflight: Promise<boolean> | null = null
 
@@ -141,13 +242,40 @@ async function doSyncProjects(): Promise<boolean> {
   // 刚推送过就先不回拉，避免用尚未落库的旧快照覆盖本地刚做的修改。
   if (Date.now() - lastPushAt < 1500) return false
   const local = loadProjects()
-  let payload: { initialized: boolean; projects: ProjectRecord[] }
+  let payload: { initialized: boolean; projects: ProjectRecord[]; removed?: RemovedTombstone[] }
   try {
     payload = await fetchProjects()
   } catch {
     return false
   }
-  const remote = normalizeProjects(payload.projects)
+  // —— 墓碑对账 ————
+  // 有效墓碑 = 服务端墓碑 ∪ 本机墓碑；但服务器登记表里还活着的项目（被别的来源
+  // 手动恢复过）要让本机墓碑作废——「恢复」以服务端注册表为准，否则旧墓碑会把
+  // 恢复的项目重新藏掉。
+  const aliveKeys = new Set<string>()
+  for (const p of payload.projects) {
+    aliveKeys.add(p.id)
+    aliveKeys.add(normProjectPath(p.path))
+  }
+  const serverTombstones = (Array.isArray(payload.removed) ? payload.removed : [])
+    .map(sanitizeTombstone)
+    .filter(Boolean) as RemovedTombstone[]
+  const tombstones = loadTombstones().filter(
+    (t) => !(t.id && aliveKeys.has(t.id)) && !(t.path && aliveKeys.has(t.path)),
+  )
+  {
+    const seen = new Set(tombstones.map((t) => `${t.id}|${t.path}`))
+    for (const t of serverTombstones) {
+      if (seen.has(`${t.id}|${t.path}`)) continue
+      seen.add(`${t.id}|${t.path}`)
+      tombstones.push(t)
+    }
+  }
+  saveTombstones(tombstones)
+  const blocked = (p: ProjectRecord) =>
+    tombstones.some((t) => (t.id && t.id === p.id) || (t.path && t.path === normProjectPath(p.path)))
+
+  const remote = normalizeProjects(payload.projects).filter((p) => !blocked(p))
   if (!payload.initialized && local.length > 0) {
     // 服务端还没有注册表：播种本机既有项目 → 其它来源随后即可见
     pushProjects(local)
@@ -183,6 +311,11 @@ void syncProjectsFromServer()
 export function addProject(name: string, path: string, description = ''): ProjectRecord {
   const layout: LayoutMode = 'h-desk' // 固定唯一布局
   const now = Date.now()
+  // 用户**手动**把一个曾移除的路径加回来 = 恢复：清掉本地墓碑；
+  // 服务端那份随本次推送的 restorePaths 清除（见 saveProjects → publishProjects）。
+  // 自动登记走 addProjectAuto（墓碑路径直接拒绝），到不了这里。
+  const restored = isPathTombstoned(path)
+  if (restored) clearTombstonesForPaths([path])
   const record: ProjectRecord = {
     id: genId(),
     name: name || path.split('/').pop() || path,
@@ -204,12 +337,24 @@ export function addProject(name: string, path: string, description = ''): Projec
       layout,
       updatedAt: now,
     }
-    saveProjects(list)
+    saveProjects(list, [], restored ? { restorePaths: [path] } : undefined)
     return list[existing]
   }
   list.push(record)
-  saveProjects(list)
+  saveProjects(list, [], restored ? { restorePaths: [path] } : undefined)
   return record
+}
+
+/**
+ * 自动登记专用入口（侧边栏「新会话」→ ensureProjectForWorkspace）。
+ *
+ * 与手动「添加项目」的唯一区别：路径已被移除（墓碑在案）时**拒绝登记**并返回
+ * undefined——自动登记必须无条件尊重用户的移除决定，否则宿主里任何一个还指向
+ * 旧路径的工作区/会话都会把项目悄悄加回来。要恢复项目，请走项目中心的「添加项目」。
+ */
+export function addProjectAuto(name: string, path: string): ProjectRecord | undefined {
+  if (isPathTombstoned(path)) return undefined
+  return addProject(name, path)
 }
 
 /**
@@ -248,9 +393,17 @@ export function updateProjectDescription(id: string, description: string): boole
  * 关键：必须把 id 放进 removed 一并上报。服务端现在做并集合并，只有点名的 id
  * 才会真的从注册表消失；否则「列表里少了一条」会被当成“本地缓存没看到它”
  * 而自动保留——那正是防止残缺缓存误删别人项目的机制。
+ * 自 0.4.0 起还会同时记下「移除墓碑」（id + 路径）：本地 localStorage 与服务端
+ * projects.removed.json 各存一份，之后并集合并 / 自动登记 / 缓存水合都不会再把它捞回来。
  */
 export function removeProject(id: string): void {
-  saveProjects(loadProjects().filter((p) => p.id !== id), [id])
+  const list = loadProjects()
+  const victim = list.find((p) => p.id === id)
+  // 记墓碑（id + 路径各一份）：本地立刻生效，服务端那份随这次推送落库。
+  if (victim) {
+    addTombstones([{ id: victim.id, path: normProjectPath(victim.path), name: victim.name, at: Date.now() }])
+  }
+  saveProjects(list.filter((p) => p.id !== id), [id], victim ? { removedPaths: [victim.path] } : undefined)
   // 项目没了，把它从「已打开项目集合」里摘掉（Step 13：布局快照已交给 dockview，
   // 整块存在 tokensave:desk-dock.v2；项目不在集合里，reconcile 会移除它的面板，
   // 下一次写盘就不再有它的条目，不留孤儿）。
