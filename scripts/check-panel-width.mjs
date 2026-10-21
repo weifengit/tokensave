@@ -99,6 +99,34 @@ check('低于下限时两种行夹出同一个面板宽度（面板宽度是全�
   check('NaN 内容宽 → 退化成下限而不是 NaN', m.clampPanelWidth(NaN, 800) === m.POP_W_MIN)
   check('负数内容宽 → 退化成下限', m.clampPanelWidth(-999, 800) === m.POP_W_MIN)
   check('NaN 可用宽 → 不产生 NaN', Number.isFinite(m.clampPanelWidth(300, NaN)))
+
+  // —— 窄屏（手机）摆法 ——
+  // 手机端用户反馈：「呼吸灯面板被挤压到右边」—— 侧边栏抽屉能占 85vw，
+  // 贴它右缘起飞就只剩几十像素。这里把「什么时候改贴视口」钉住。
+  check('锚点右侧放不下最窄面板 → 走手机摆法',
+    m.needsSheetLayout(m.POP_W_MIN - 1) === true && m.needsSheetLayout(2) === true)
+  check('放得下最窄面板 → 仍走桌面摆法（不把桌面窗口也改成全宽）',
+    m.needsSheetLayout(m.POP_W_MIN) === false && m.needsSheetLayout(1200) === false)
+  check('门限就是 POP_W_MIN（不额外加死数字）',
+    m.needsSheetLayout(m.POP_W_MIN - 0.5) !== m.needsSheetLayout(m.POP_W_MIN))
+  {
+    const phone = m.sheetBox(390)     // 390×844 主流手机：391-16=374 → 居中 8
+    const small = m.sheetBox(320)     // 320 窄屏：全宽后两侧恰好剩 8
+    const pad = m.sheetBox(834)       // 平板竖屏：封顶 460 并居中
+    check('手机：左右各留 8px 边距，水平居中',
+      phone.left === 8 && phone.width === 390 - 16, `${phone.left}/${phone.width}`)
+    check('窄屏：宽度不会超过视口（不溢出）',
+      small.left >= 8 && small.left + small.width <= 320, `${small.left}+${small.width}`)
+    check('宽屏：宽度封顶 SHEET_MAX_W 且居中',
+      pad.width === m.SHEET_MAX_W && pad.left === Math.round((834 - m.SHEET_MAX_W) / 2),
+      `${pad.left}/${pad.width}`)
+    check('宽度总是整数且为正',
+      Number.isInteger(phone.width) && Number.isInteger(phone.left) && phone.width > 0)
+    check('视口极窄时不产生负宽 / 负数左缘',
+      m.sheetBox(4).width >= 0 && m.sheetBox(4).left >= m.SHEET_MARGIN_X)
+    check('NaN 视口宽 → 不产生 NaN（退化成手机默认宽）',
+      Number.isFinite(m.sheetBox(NaN).width) && Number.isFinite(m.sheetBox(NaN).left))
+  }
   check('宽度总是整数（避免亚像素抖动）', Number.isInteger(W([row('小数宽度测试标题')])))
 
   // —— 文本估算本身 ——

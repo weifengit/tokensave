@@ -188,9 +188,9 @@ function notifyOutcome(): void {
 }
 
 // —— 告警（提示音）：只在「观察到的停止」那条路上发 ——
-/** 一条结局告警（提示音用）：fail=中断/失败，done=正常完成 */
+/** 一条告警（提示音用）：fail=中断/失败，done=正常完成，pending=弹窗等你确认 */
 export interface PulseAlert {
-  kind: 'done' | 'fail'
+  kind: 'done' | 'fail' | 'pending'
   sessionId: string
   title: string
   /** 中断的完整事实（判定自动继续用）；仅 kind==='fail' 时有值 */
@@ -246,6 +246,23 @@ function emitAlert(kind: 'done' | 'fail', sessionId: string, title: string, turn
   for (const l of [...alertListeners]) {
     try {
       l({ kind, sessionId, title, interrupt })
+    } catch {
+      /* 单个订阅者出错不影响其它订阅者 */
+    }
+  }
+}
+
+/**
+ * 发出「有待确认弹窗」的告警（提示音用）。
+ *
+ * 与 emitAlert 分开写，是因为它没有「轮次」这个维度：不去重按 sessionId:turnAt，
+ * 而是靠调用处的 false → true 跃迁保「一段待确认只响一次」。危险操作等「允许一次」
+ * 就属于这一类 —— 那一轮不会结束，永远走不到 applyOutcome 的结局告警上。
+ */
+function emitPendingAlert(sessionId: string, title: string): void {
+  for (const l of [...alertListeners]) {
+    try {
+      l({ kind: 'pending', sessionId, title })
     } catch {
       /* 单个订阅者出错不影响其它订阅者 */
     }
@@ -641,6 +658,22 @@ export function useActivityPulse(): PulseState {
               }
             }
             if (changed) persistReadMarks()
+          }
+          // 新的一次待确认 → **起音**（不只是亮黄灯）。
+          //
+          // 用户反馈：危险操作卡在「允许一次」那类权限时，呼吸灯变黄了，但一点声音都没有。
+          // 根因：黄灯由「本项目里有 state === 'pending' 的活动」点亮（见下面 activity 循环），
+          // 而提示音原先只挂在 applyOutcome（「观察到的停止」）那条路上 —— 卡在半路等确认的
+          // 这一轮**永远不会结束**，也就永远走不到那里，于是安静地等成了默认行为。
+          //
+          // 判据比上面那条严格一档：只认 false → true 的**跃迁**。
+          // wasPending === undefined = 「这个会话我第一次看到时就已经弹着」——那是切页面 /
+          // 刷新撞上已有的弹窗；对着它响铃就是噪音（黄灯 + 角标已经告诉你在等）。
+          // 标题只用于人类可读的展示：状态行（SessionStatusRow）没有标题字段，
+          // 要回会话目录里取，取不到就退回 sessionId。只在跃迁这一拍查，不在每轮轮询里逐个查。
+          if (wasPending === false && isPending) {
+            const pendingRow = sessionRow(ctx, id)
+            emitPendingAlert(id, String(pendingRow?.title || pendingRow?.displayTitle || id))
           }
           if (!was && isRunning) dropDoneFor(id)
           prevRunning.set(id, isRunning)

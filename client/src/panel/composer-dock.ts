@@ -173,22 +173,29 @@ export function useDockNativeComposer(
     /**
      * 容器在停靠点是否处于**最前层**。fixed 座位的 z-index 高于工作台内一切浮层，
      * 不做这道判定，最大化浮层/叠放窗口盖住主对话时输入条仍浮在最上（用户反馈）。
-     * 命中测试前先把座位自己藏起来（同步块内完成，不产生中间帧），命中点必须落在
-     * cell 内部才算「主对话真的露在最前」。
+     * 命中测试只临时摘掉座位的指针事件（**绝不**动 visibility/display：那会让含焦点的
+     * 编辑面失去可聚焦性 → 跨帧即 blur，手机上的表现就是软键盘刚弹出又被系统收回）。
+     * 命中点必须落在 cell 内部才算「主对话真的露在最前」。
      */
     const cellFront = (cell: HTMLElement, r: DOMRect): boolean => {
       const x = Math.round(r.left + r.width / 2)
       const y = Math.round(r.bottom - 24)
-      if (x < 0 || y < 0 || x >= window.innerWidth || y >= window.innerHeight) return false
-      const prev = seat.style.visibility
-      seat.style.visibility = 'hidden'
+      // 视口下界取「布局视口」与「可视视口」的较大者：手机键盘弹出时可用高度会变小
+      // （Android interactive-widget=resizes-content / iOS 视口收缩）。若按缩小后的值
+      // 判定，停靠点会在键盘弹出那一瞬越界 → apply 把座位隐藏 → 正在编辑的输入条被
+      // blur，系统随即收回键盘（用户反馈：一点输入框，键盘刚弹出就收回去）。
+      const vv = window.visualViewport
+      const maxY = Math.max(window.innerHeight, vv ? vv.offsetTop + vv.height : 0)
+      if (x < 0 || y < 0 || x >= window.innerWidth || y >= maxY) return false
+      const prevPe = seat.style.pointerEvents
+      seat.style.pointerEvents = 'none'
       let hit: Element | null = null
       try {
         hit = document.elementFromPoint(x, y)
       } catch {
         hit = null
       }
-      seat.style.visibility = prev
+      seat.style.pointerEvents = prevPe
       return !!hit && cell.contains(hit)
     }
 
@@ -216,6 +223,21 @@ export function useDockNativeComposer(
       observed = cell
     }
 
+    /**
+     * 隐藏停靠中的输入条（面板不可见/被盖住时不再浮在最上层）。
+     *
+     * 铁律：**座位里还握着焦点时绝不藏**。把它藏起来（visibility/display）会让其中的
+     * contenteditable 失去可聚焦性而触发 blur，系统立即收回软键盘 —— 手机上表现就是
+     * 「一点输入框，键盘刚弹出来又收回去」（Chromium 实测：同一任务内临时隐藏+恢复
+     * 不丢焦点，但只要跨一帧即 BLURED->BODY）。宁可短暂停在旧坐标（下一轮 apply 会
+     * 自己纠正），也不能打断正在输入的会话。
+     */
+    const hideSeat = () => {
+      const active = document.activeElement
+      if (active && seat.contains(active)) return
+      seat.style.visibility = 'hidden'
+    }
+
     const apply = () => {
       raf = 0
       try {
@@ -224,7 +246,7 @@ export function useDockNativeComposer(
         const cands = candidates()
         if (cands.length === 0) {
           // 容器都不在文档里（工作台拆除中/面板被摘）：藏掉输入条，等下次调度再试
-          seat.style.visibility = 'hidden'
+          hideSeat()
           return
         }
         // 逐个过「可见 + 在最前层」两道门，选第一个全过的停靠；全不过则藏。
@@ -239,7 +261,7 @@ export function useDockNativeComposer(
         if (!target) {
           // 面板隐藏（后台标签/区域收起）或被别的窗口盖住：输入条跟着藏，
           // 不再以 fixed 高层级浮在所有窗口之上
-          seat.style.visibility = 'hidden'
+          hideSeat()
           return
         }
         const { cell, r } = target

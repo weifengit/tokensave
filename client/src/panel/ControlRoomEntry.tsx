@@ -61,10 +61,30 @@ import {
 import {
   autoStateOf, noteManualContinue, subscribeAutoContinue,
 } from './auto-continue'
-import { panelWidthFor, type WidthRow } from './panel-width'
+import {
+  needsSheetLayout, panelWidthFor, sheetBox, type WidthRow,
+} from './panel-width'
 import {
   HOVER_CLOSE_MS, boxOf, zoneOf, type PointerZone,
 } from './hover-corridor'
+
+/**
+ * 浮层位置。mode 决定横向摆法：
+ *   side  —— 桌面：贴侧边栏容器右缘（右侧放得下时）
+ *   sheet —— 手机：锚点右侧放不下最窄面板，改贴视口、居中、近全宽
+ *             （见 panel-width.ts 的 needsSheetLayout / sheetBox）
+ *
+ * mode 存进 state 而不是每次现算：清单变化时只需重算宽度，而「贴视口」的摆法
+ * 宽度由视口定、不跟清单走 —— 现算会把它又拉回桌面摆法。
+ */
+type PanelPos = {
+  mode: 'side' | 'sheet'
+  top?: number
+  bottom?: number
+  left: number
+  width: number
+  maxHeight?: number
+}
 
 /** 圆点数量（用户要求 3 个）。 */
 const DOT_COUNT = 3
@@ -331,8 +351,8 @@ function ContinueSettingsBlock() {
  *     两块设置区与清单区因此永远同宽（此前是清单撐宽、设置区被拉得很难看）；
  *   - 说明文字全部走 title 悬浮提示，面板内不出现解释段（极简）。
  */
-function HoverPanel({ pos, panelRef, items, onPick, onHover, onMarkRead, onMarkAllRead, onContinue }: {
-  pos: { top?: number; bottom?: number; left: number; width: number; maxHeight?: number }
+function HoverPanel({ pos, panelRef, items, onPick, onHover, onMarkRead, onMarkAllRead, onContinue, onClose }: {
+  pos: PanelPos
   /** 面板自己的 DOM 引用（父级的走廊命中测试要读它的真实矩形） */
   panelRef: React.RefObject<HTMLDivElement | null>
   items: PopItem[]
@@ -345,6 +365,8 @@ function HoverPanel({ pos, panelRef, items, onPick, onHover, onMarkRead, onMarkA
   onMarkAllRead: () => void
   /** 发送继续 */
   onContinue: (item: PopItem) => Promise<void>
+  /** 手机摆法下的显式关闭（见下面 ✕；手机不靠 hover 自动收） */
+  onClose: () => void
 }) {
   // 提示音设置**直接嵌在面板里**（与「对话清单」同面板同现，不再单独弹一层）；
   // 自动继续的状态（已发送 / 发送中）来自模块级记录，不是 React state ——
@@ -399,7 +421,7 @@ function HoverPanel({ pos, panelRef, items, onPick, onHover, onMarkRead, onMarkA
   return createPortal(
     <div
       ref={panelRef}
-      className="ts-warn-pop ts-hover-pop"
+      className={`ts-warn-pop ts-hover-pop${pos.mode === 'sheet' ? ' is-sheet' : ''}`}
       role="dialog"
       aria-label="对话清单"
       style={{ top: pos.top, bottom: pos.bottom, left: pos.left, width: pos.width, maxHeight: pos.maxHeight }}
@@ -426,6 +448,19 @@ function HoverPanel({ pos, panelRef, items, onPick, onHover, onMarkRead, onMarkA
           >
             <i />
           </button>
+          {/* 手机摆法：用显式 ✕ 关闭。手机上抽屉一收，触发器（角标）就跟着 display:none，
+              原有的 hover 自动收起会拒不到可靠信号 → 面板必须有自己的退出口。 */}
+          {pos.mode === 'sheet' && (
+            <button
+              type="button"
+              className="ts-warn-close"
+              aria-label="关闭对话清单"
+              title="关闭清单"
+              onClick={onClose}
+            >
+              ✕
+            </button>
+          )}
         </SectionHead>
         <div className="ts-sound-body">
           {/* 四行子内容用一张 card 包住（用户要求：第二~第五行用外框表示子内容） */}
@@ -739,7 +774,7 @@ export function ControlRoomEntry({ wide }: { wide?: boolean }) {
   ]
 
   // —— 跑马灯悬浮面板：圆点 hover → 弹出对话清单（取代原生 title，因为它点不了）——
-  const [hoverPos, setHoverPos] = useState<{ top?: number; bottom?: number; left: number; width: number; maxHeight?: number } | null>(null)
+  const [hoverPos, setHoverPos] = useState<PanelPos | null>(null)
   const hoverTimer = useRef<number | null>(null)
   const clearHoverTimer = () => {
     if (hoverTimer.current) {
@@ -752,43 +787,87 @@ export function ControlRoomEntry({ wide }: { wide?: boolean }) {
    * 否则会停在「打开那一刻的最长一条」，清单变短了也窄不下来。
    * 用当前面板的 left 算（不是 0）—— 那样会把可用空间算错，宽度直接顶到上限。
    */
-  const wantW = hoverPos && hoverItems.length > 0 ? panelWidth(hoverPos.left, hoverItems) : 0
+  // 手机摆法（sheet）的宽度由视口定，不跟清单走 —— 否则会被拉回「贴侧边栏」的窄条。
+  const wantW = hoverPos && hoverItems.length > 0 && hoverPos.mode === 'side'
+    ? panelWidth(hoverPos.left, hoverItems)
+    : 0
   useEffect(() => {
     if (!hoverPos || wantW === 0 || hoverPos.width === wantW) return
     setHoverPos({ ...hoverPos, width: wantW })
     // hoverPos 故意不入依赖：只在算出的宽度真的变了时重算，避免自己触发自己
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [wantW])
-  /** 打开：定位算法与角标清单同款（贴按钮右缘，放不下改锚上方） */
-  const openHover = () => {
-    clearHoverTimer()
-    if (hoverPos || hoverItems.length === 0) return
+
+  /**
+   * 视口变化（转屏 / 手机上侧边栏抽屉开合 / 软键盘）→ 重算一次。
+   * 手机摆法按视口居中，不重算就会停在旧宽度上（横屏后尤其明显）。
+   */
+  useEffect(() => {
+    if (!hoverPos) return
+    let raf = 0
+    const onResize = () => {
+      if (raf) return
+      raf = requestAnimationFrame(() => {
+        raf = 0
+        const pos = computePanelPos()
+        if (pos) setHoverPos(pos)
+      })
+    }
+    window.addEventListener('resize', onResize)
+    return () => {
+      window.removeEventListener('resize', onResize)
+      if (raf) cancelAnimationFrame(raf)
+    }
+    // hoverPos 故意不入依赖：只在「面板开着」与清单变化时重挂监听
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hoverPos != null, hoverItems])
+  /**
+   * 算一次面板位置：打开时算一次，视口变化（转屏 / 手机上侧边栏抽屉开合 / 软键盘）再算一次。
+   *
+   * 横向两种摆法：
+   *   side  —— 桌面：贴侧边栏容器右缘，宽度跟着清单最长那条走（见 panel-width.ts）；
+   *   sheet —— 手机：锚点右侧放不下最窄面板时改贴视口。手机上侧边栏是 85vw 的抽屉，
+   *             锚点右侧只剩几十像素，继续贴右缘就会把面板夹成一条贴在屏幕右缘的
+   *             窄条（用户反馈：「被挤压到右边，不方便查看和点击」）。
+   */
+  const computePanelPos = (): PanelPos | null => {
     const r = btnRef.current?.getBoundingClientRect()
-    if (!r || (r.width === 0 && r.height === 0)) return
-    // 贴按钮右缘。宽度**跟着清单里最长的那条走**（见 panel-width.ts）：
-    // 短标题的清单就窄窄一条，长标题到上限为止（靠省略号收尾），不再一律顶格宽。
-    const left = Math.max(8, sidebarRightOf(btnRef.current as HTMLElement) + 8)
-    const width = panelWidth(left, hoverItems)
-    // 高度：最多占视口 80%，再按锚点这一侧**真正剩下的空间**收紧 ——
-    // 条目多时面板要能长高（超出部分在清单内部滚动），而不是被 max-height 一刀裁掉末尾几条。
+    if (!r || (r.width === 0 && r.height === 0)) return null
+    const vw = window.innerWidth
+    const sideLeft = Math.max(8, sidebarRightOf(btnRef.current as HTMLElement) + 8)
+    const sheet = needsSheetLayout(vw - sideLeft - 12)
+    // sheet：宽度由视口定（清单最长行走省略号），不随侧边栏宽度漂移
+    const box = sheet ? sheetBox(vw) : { left: sideLeft, width: panelWidth(sideLeft, hoverItems) }
+    const mode: PanelPos['mode'] = sheet ? 'sheet' : 'side'
+    const left = box.left
+    const width = box.width
     const vh = window.innerHeight
+    // 手机摆法：纵向也与触发器脱钩 —— 位置交给 CSS（top: env(safe-area-inset-top) + 12），
+    // 这里只给高度上界。跟着触发器算的话，抽屉一收（触发器 display:none、
+    // 或折叠动画中宽度连续变化）面板会跟着漂移甚至被算到屏外。
+    if (mode === 'sheet') {
+      return { mode, left, width, maxHeight: Math.max(POP_H_MIN, Math.min(vh * 0.76, POP_H_MAX)) }
+    }
     const cap = Math.min(vh * 0.8, POP_H_MAX)
     const belowSpace = vh - (r.bottom + 6) - 8
     const aboveSpace = r.top - 6 - 8
     if (belowSpace >= POP_H_MIN) {
-      setHoverPos({ top: r.bottom + 6, left, width, maxHeight: Math.max(POP_H_MIN, Math.min(cap, belowSpace)) })
-    } else if (aboveSpace >= POP_H_MIN) {
-      setHoverPos({
-        bottom: vh - r.top + 6,
-        left,
-        width,
-        maxHeight: Math.max(POP_H_MIN, Math.min(cap, aboveSpace)),
-      })
-    } else {
-      // 两侧都不够：自己算个高度，再把顶边夹回视口内（不再用写死的 POP_H 估）
-      const maxHeight = Math.max(POP_H_MIN, Math.min(cap, vh - 16))
-      setHoverPos({ top: Math.max(8, Math.min(r.top, vh - maxHeight - 12)), left, width, maxHeight })
+      return { mode, top: r.bottom + 6, left, width, maxHeight: Math.max(POP_H_MIN, Math.min(cap, belowSpace)) }
     }
+    if (aboveSpace >= POP_H_MIN) {
+      return { mode, bottom: vh - r.top + 6, left, width, maxHeight: Math.max(POP_H_MIN, Math.min(cap, aboveSpace)) }
+    }
+    // 两侧都不够：自己算个高度，再把顶边夹回视口内（不再用写死的 POP_H 估）
+    const maxHeight = Math.max(POP_H_MIN, Math.min(cap, vh - 16))
+    return { mode, top: Math.max(8, Math.min(r.top, vh - maxHeight - 12)), left, width, maxHeight }
+  }
+
+  /** 打开：算位置并展开（hover / 点角标共用） */
+  const openHover = () => {
+    clearHoverTimer()
+    if (hoverPos || hoverItems.length === 0) return
+    const pos = computePanelPos()
+    if (pos) setHoverPos(pos)
   }
   /**
    * 关闭：指针离开后**不立刻收**，而是进一段「宽限倒计时」，到点再问一次“指针在哪”。
@@ -808,6 +887,11 @@ export function ControlRoomEntry({ wide }: { wide?: boolean }) {
    */
   const renewRef = useRef(0)
   const scheduleClose = () => {
+    // 手机摆法 = 钉住：不参与 hover 自动收起。
+    // 手机上侧边栏是抽屉，一收起来触发器（角标）就 display:none，mouseleave / 指针命中
+    // 都会给出「已离开」的假信号，面板就跟着抽屉一起消失了（用户反馈：
+    // 「侧边栏一收起来，浮动面板跟着关闭了」）。手机改用显式 ✕ / 点面板外关闭。
+    if (hoverPos?.mode === 'sheet') return
     clearHoverTimer()
     hoverTimer.current = window.setTimeout(() => {
       hoverTimer.current = null
@@ -891,6 +975,12 @@ export function ControlRoomEntry({ wide }: { wide?: boolean }) {
     const onDown = (ev: MouseEvent) => {
       const t = ev.target as HTMLElement | null
       if (t?.closest('.ts-warn-pop') || t?.closest('.ts-side-entry')) return
+      // 手机摆法下，侧边栏自身的巷道（折叠把手 / 抽屉本体）不算「面板外」：
+      // 用户收侧栏只是想让它让开，不是想关面板（他连面板都挡不住收侧栏的动作）。
+      if (
+        hoverPos.mode === 'sheet'
+        && t?.closest('[class*="_sidebarCol"], [class*="_logoRow"], [data-pane="sidebar"]')
+      ) return
       clearHoverTimer()
       setHoverPos(null)
     }
@@ -1001,6 +1091,10 @@ export function ControlRoomEntry({ wide }: { wide?: boolean }) {
         <HoverPanel
           pos={hoverPos}
           panelRef={panelRef}
+          onClose={() => {
+            clearHoverTimer()
+            setHoverPos(null)
+          }}
           items={hoverItems}
           onPick={(it) => {
             pick(it)

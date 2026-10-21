@@ -25,6 +25,7 @@ import { injectProjectCenterStyles } from './styles'
 import {
   loadProjects, removeProject, loadViewPrefs, saveViewPrefs, sortProjects, subscribeProjects, syncProjectsFromServer,
   updateProjectDescription,
+  toggleProjectStatus,
 } from './store'
 import type { ProjectRecord, ViewMode, SortMode } from './store'
 import { enterProjectWorkbench, getCurrentSessionId, setControlRoomScreen, startProjectSession } from './sessions'
@@ -316,6 +317,109 @@ export function ProjectCenter({ sessionId }: Props) {
       .finally(() => setRemoving(false))
   }
 
+  /**
+   * 翻牌：切换项目状态并持久化。
+   *
+   * 卡片本身不需要本地 state —— 状态存在项目记录里（store.toggleProjectStatus），
+   * 写回后 refresh() 触发重渲染，class 一变 CSS 自己就把动画演完。
+   * 这样「翻过去 → 刷新页面 → 还是背面」是一致的（不会刷新就弹回正面）。
+   */
+  const toggleStatus = (id: string) => {
+    toggleProjectStatus(id)
+    refresh()
+  }
+
+  /**
+   * 卡片的一面（翻牌的两面共用同一份内容，只有「状态呈现」不同）。
+   *
+   * 为什么两面都渲染完整内容，而不是背面只放一个「已完成」：
+   *   翻过去的背面如果只剩状态字样，用户在完成态下就点不到「＋ 新会话 / 移除 /
+   *   进入工作台」了。翻牌是**呈现状态**，不是把卡片换成一张不能用的卡。
+   * 所以两面只差三处：图标（📁 / ✅）、状态胶囊（进行中 / 已完成）、背面多一条
+   * 「✓ 已完成」横条；底色/描边那套区分配色在 CSS（.ts-flip-back）。
+   */
+  const cardFace = (p: ProjectRecord, back: boolean) => (
+    <>
+      <div className="ts-center-cardhead">
+        <span className="ts-center-icon" aria-hidden="true">{back ? '✅' : '📁'}</span>
+        <span className="ts-center-name" title={p.name}>{p.name}</span>
+        <ActivityDots items={activity[p.id]} onPick={(sid) => enter(p, sid)} />
+        {/* 翻牌按钮放在标题行最右 = 卡片右上角（用户指定的位置）。
+            两面各自持有自己的按钮：正面那枚在翻过去后随正面一起背向隐藏，
+            不会出现「翻到背面就点不回来」。必须先 stopPropagation，
+            否则会连带触发整卡的「进入工作台」。 */}
+        <button
+          type="button"
+          className="ts-flip-btn"
+          aria-pressed={back}
+          title={back ? '翻回去：改回「进行中」' : '翻牌：标记为「完成」'}
+          onClick={(e) => { e.stopPropagation(); toggleStatus(p.id) }}
+        >{back ? '↺ 翻回' : '↻ 翻牌'}</button>
+      </div>
+      <div className="ts-center-path" title={p.path}>
+        <span className="ts-center-basedir">{baseName(p.path)}</span>
+        <span className="ts-center-fullpath">{p.path}</span>
+      </div>
+      <div className="ts-center-desc" title={p.description}>
+        {p.description || <span className="ts-dim">（未填写项目介绍）</span>}
+      </div>
+      <div className="ts-center-meta">
+        <span className="ts-tag" title="项目文件夹内最老文件的修改时间">创建于 {infoOf(p)?.oldestMtimeMs ? formatCreated(infoOf(p)!.oldestMtimeMs) : '—'}</span>
+        <span className="ts-tag ts-tag-warn">更新于 {relTime(infoOf(p)?.mtimeMs || 0)}</span>
+        {/* 卡片上**不放**状态胶囊（用户反馈：胶囊把卡片顶高了）：
+            状态由翻牌本身表达 —— 背面绿配色 + 「✓ 已完成」横条 + 右上角按钮文案。
+            想在卡片上直接改状态的，点右上角那枚按钮（title 里写清了当前状态）。 */}
+      </div>
+      <div className="ts-center-actions">
+        {/* 启动情况（与两个按钮同排不跨行）：
+            未启动 → 灰标，只看不点；
+            已启动 → 同一枚小标升级成**超链接**：悬停显示「去调试 →」，
+              点它进该项目的工作台调试（预览 + DSH 主对话两窗并存）。
+            两段文字叠在同一格里（宽度取较大者），悬停不挤动后面的按钮。 */}
+        {infoOf(p)?.devRunning ? (
+          <a
+            className="ts-dev-chip on ts-dev-chip-link"
+            role="link"
+            tabIndex={sessionId ? 0 : -1}
+            title={`开发服务器正在监听 · 点它进入「${p.name}」的工作台调试（项目预览 + DSH 主对话）`}
+            onClick={(e) => {
+              // 别让卡片自己的「进入工作台」也接一手（那会按默认布局再进一次）
+              e.stopPropagation()
+              enter(p, undefined, 'debug')
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault()
+                e.stopPropagation()
+                enter(p, undefined, 'debug')
+              }
+            }}
+          >
+            <span className="ts-dev-chip-state">● 已启动</span>
+            <span className="ts-dev-chip-go">去调试 →</span>
+          </a>
+        ) : (
+          <span
+            className="ts-dev-chip"
+            title="未检测到开发服务器；在项目里跑起来后工作台会自动出现预览"
+          >○ 未启动</span>
+        )}
+        <button
+          className="ts-btn ts-btn-sm ts-btn-primary"
+          disabled={busyId === p.id}
+          onClick={(e) => { e.stopPropagation(); void newSession(p) }}
+          title={`在「${p.name}」下开一个新对话，并直接进入它的工作台`}
+        >{busyId === p.id ? '新建中…' : '＋ 新会话'}</button>
+        <button
+          className="ts-btn ts-btn-sm ts-btn-danger"
+          onClick={(e) => { e.stopPropagation(); dropProject(p) }}
+          title="从项目中心移除（弹窗里可勾选「删除项目源代码」把文件夹一起删掉）"
+        >移除</button>
+      </div>
+    </>
+  )
+
+
   return (
     <div className="ts-cr ts-center">
       <div className="ts-center-bg" aria-hidden="true">
@@ -363,6 +467,11 @@ export function ProjectCenter({ sessionId }: Props) {
                 className={`ts-seg-btn${prefs.sort === 'updated' ? ' active' : ''}`}
                 onClick={() => setPref({ sort: 'updated' })}
               >按更新时间</button>
+              <button
+                className={`ts-seg-btn${prefs.sort === 'status' ? ' active' : ''}`}
+                onClick={() => setPref({ sort: 'status' })}
+                title="按完成情况：进行中在前、已完成在后（同组按创建时间倒序）"
+              >按完成情况</button>
             </div>
             <span className="ts-center-count">{projects.length} 个项目</span>
           </div>
@@ -408,12 +517,23 @@ export function ProjectCenter({ sessionId }: Props) {
                     title={sessionId ? `进入「${p.name}」工作台` : '当前会话上下文不可用，无法进入工作台'}
                     onClick={() => enter(p)}
                     onKeyDown={(e) => {
+                      // 只在**整行自己**被聚焦时响应：行内的「＋ 新会话 / 移除 / 状态胶囊」
+                      // 的回车与空格会冒泡到这里 —— 旧写法会让它们顺带把「进入工作台」也触发一次。
+                      if (e.target !== e.currentTarget) return
                       if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); enter(p) }
                     }}
                   >
                     <td className="ts-plist-idx">{i + 1}</td>
                     <td>
-                      <span className="ts-plist-name" title={p.name}>{p.name}</span>
+                      <div className="ts-plist-namecell">
+                        <span className="ts-plist-name" title={p.name}>{p.name}</span>
+                        <button
+                          type="button"
+                          className={`ts-status-chip${p.status === 'done' ? ' is-done' : ''}`}
+                          title={p.status === 'done' ? '当前：已完成（点它翻回「进行中」）' : '当前：进行中（点它标记为「已完成」）'}
+                          onClick={(e) => { e.stopPropagation(); toggleStatus(p.id) }}
+                        >{p.status === 'done' ? '已完成' : '进行中'}</button>
+                      </div>
                     </td>
                     <td>
                       <span className="ts-plist-path" title={p.path}>{p.path}</span>
@@ -443,7 +563,7 @@ export function ProjectCenter({ sessionId }: Props) {
                       <button
                         className="ts-btn ts-btn-sm ts-btn-danger"
                         onClick={(e) => { e.stopPropagation(); dropProject(p) }}
-                        title="从项目中心移除（不影响磁盘文件）"
+                        title="从项目中心移除（弹窗里可勾选「删除项目源代码」把文件夹一起删掉）"
                       >移除</button>
                     </td>
                   </tr>
@@ -457,78 +577,27 @@ export function ProjectCenter({ sessionId }: Props) {
             {shown.map((p) => (
               <div
                 key={p.id}
-                className={`ts-center-card ts-center-card-click${sessionId ? '' : ' disabled'}`}
+                className={`ts-flip-scene ts-center-card-click${sessionId ? '' : ' disabled'}`}
                 role="button"
                 tabIndex={0}
-                title={sessionId ? `进入「${p.name}」工作台` : '当前会话上下文不可用，无法进入工作台'}
+                title={sessionId
+                  ? `进入「${p.name}」工作台（右上角「翻牌」切换 进行中 / 完成）`
+                  : '当前会话上下文不可用，无法进入工作台'}
                 onClick={() => enter(p)}
                 onKeyDown={(e) => {
                   if (!sessionId) return
+                  // 同上（卡片模式）：只在卡片自己被聚焦时才算「进入工作台」。
+                  // 否则翻牌按钮聚焦后敲回车 = 翻牌 + 同时进工作台（用户反馈的现象之一）。
+                  if (e.target !== e.currentTarget) return
                   if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); enter(p) }
                 }}
               >
-                <div className="ts-center-cardhead">
-                  <span className="ts-center-icon">📁</span>
-                  <span className="ts-center-name" title={p.name}>{p.name}</span>
-                  <ActivityDots items={activity[p.id]} onPick={(sid) => enter(p, sid)} />
-                  <span className="ts-center-enterhint">进入 →</span>
-                </div>
-                <div className="ts-center-path" title={p.path}>
-                  <span className="ts-center-basedir">{baseName(p.path)}</span>
-                  <span className="ts-center-fullpath">{p.path}</span>
-                </div>
-                <div className="ts-center-desc" title={p.description}>
-                  {p.description || <span className="ts-dim">（未填写项目介绍）</span>}
-                </div>
-                <div className="ts-center-meta">
-                  <span className="ts-tag" title="项目文件夹内最老文件的修改时间">创建于 {infoOf(p)?.oldestMtimeMs ? formatCreated(infoOf(p)!.oldestMtimeMs) : '—'}</span>
-                  <span className="ts-tag ts-tag-warn">更新于 {relTime(infoOf(p)?.mtimeMs || 0)}</span>
-                </div>
-                <div className="ts-center-actions">
-                  {/* 启动情况（与两个按钮同排不跨行）：
-                      未启动 → 灰标，只看不点；
-                      已启动 → 同一枚小标升级成**超链接**：悬停显示「去调试 →」，
-                        点它进该项目的工作台调试（预览 + DSH 主对话两窗并存）。
-                      两段文字叠在同一格里（宽度取较大者），悬停不挤动后面的按钮。 */}
-                  {infoOf(p)?.devRunning ? (
-                    <a
-                      className="ts-dev-chip on ts-dev-chip-link"
-                      role="link"
-                      tabIndex={sessionId ? 0 : -1}
-                      title={`开发服务器正在监听 · 点它进入「${p.name}」的工作台调试（项目预览 + DSH 主对话）`}
-                      onClick={(e) => {
-                        // 别让卡片自己的「进入工作台」也接一手（那会按默认布局再进一次）
-                        e.stopPropagation()
-                        enter(p, undefined, 'debug')
-                      }}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' || e.key === ' ') {
-                          e.preventDefault()
-                          e.stopPropagation()
-                          enter(p, undefined, 'debug')
-                        }
-                      }}
-                    >
-                      <span className="ts-dev-chip-state">● 已启动</span>
-                      <span className="ts-dev-chip-go">去调试 →</span>
-                    </a>
-                  ) : (
-                    <span
-                      className="ts-dev-chip"
-                      title="未检测到开发服务器；在项目里跑起来后工作台会自动出现预览"
-                    >○ 未启动</span>
-                  )}
-                  <button
-                    className="ts-btn ts-btn-sm ts-btn-primary"
-                    disabled={busyId === p.id}
-                    onClick={(e) => { e.stopPropagation(); void newSession(p) }}
-                    title={`在「${p.name}」下开一个新对话，并直接进入它的工作台`}
-                  >{busyId === p.id ? '新建中…' : '＋ 新会话'}</button>
-                  <button
-                    className="ts-btn ts-btn-sm ts-btn-danger"
-                    onClick={(e) => { e.stopPropagation(); dropProject(p) }}
-                    title="从项目中心移除（不影响磁盘文件）"
-                  >移除</button>
+                {/* 翻牌：外层负责透视、内层负责旋转，两面**叠在同一个网格格里**
+                    （高度由两面中较高的一面决定，见 styles.ts 的 .ts-flip-scene 注释）。
+                    状态是唯一数据源：status === 'done' 就是翻到背面。 */}
+                <div className={`ts-flip-inner${p.status === 'done' ? ' is-done' : ''}`}>
+                  <div className="ts-center-card ts-flip-face ts-flip-front">{cardFace(p, false)}</div>
+                  <div className="ts-center-card ts-flip-face ts-flip-back">{cardFace(p, true)}</div>
                 </div>
               </div>
             ))}
@@ -567,7 +636,7 @@ export function ProjectCenter({ sessionId }: Props) {
               </div>
               {deleteSource ? (
                 <div className="ts-confirm-note ts-confirm-note-warn">
-                  将<b>永久删除</b>该文件夹下的<b>全部内容</b>（含 .git 与未提交的修改），<b>不可恢复</b>。
+                  将<b>永久删除</b>该项目的<b>整个文件夹</b>（连文件夹本身一起删掉，含 .git 与未提交的修改），<b>不可恢复</b>。
                 </div>
               ) : (
                 <div className="ts-confirm-note">
@@ -582,7 +651,7 @@ export function ProjectCenter({ sessionId }: Props) {
                   onChange={(e) => setDeleteSource(e.target.checked)}
                 />
                 <span className="ts-confirm-opt-text">
-                  同时<b>删除项目源代码</b>（完整删掉该项目的全部文件，不可恢复）
+                  同时<b>删除项目源代码</b>（把项目文件夹从磁盘上整棵删掉，不可恢复）
                 </span>
               </label>
             </>

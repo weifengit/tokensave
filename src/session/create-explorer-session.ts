@@ -27,6 +27,7 @@ import { randomUUID } from 'node:crypto'
 import { mkdir } from 'node:fs/promises'
 import type { Context } from '@deepseek-ai/cordis'
 import { splitModel } from '../explorer-catalog.ts'
+import { isRemovedProjectPath } from '../board-web-route.ts'
 
 /** 取一个宿主服务：reflect 层免 inject，未注册/未就绪返回 undefined。 */
 function serviceOf(ctx: Context, name: string): any {
@@ -82,8 +83,17 @@ export async function createExplorerSession(
     }
   }
 
-  // 官方 createOrAdopt 建会话前同样 mkdir 保证项目目录存在（避免空目录项目首跑失败）
-  await mkdir(opts.cwd, { recursive: true })
+  // 官方 createOrAdopt 建会话前同样 mkdir 保证项目目录存在（避免空目录项目首跑失败），
+  //
+  // 但**不能**为一个已被「移除项目」的路径重新造目录：用户刚把项目连文件夹一起删掉，
+  // 这里一 mkdir 就会在磁盘上把它（空的）变回来 —— 看起来就像「移除只删了里面的东西」。
+  // 判据是移除墓碑（~/.dsh/tokensave/projects.removed.json，见 isRemovedProjectPath）；
+  // 用户真的要恢复项目，得重新走「添加项目」（那会清掉墓碑），不能靠 mkdir 悄悄重建。
+  if (isRemovedProjectPath(opts.cwd)) {
+    console.warn(`[dsh-tokensave] 探索者 cwd 指向已移除的项目，跳过 mkdir（不把删掉的目录造回来）: ${opts.cwd}`)
+  } else {
+    await mkdir(opts.cwd, { recursive: true })
+  }
 
   // ① 建会话 + 启动 loop（CreateAgentOptions.meta.cwd / agentOptions 见 dsh-agent 类型）
   const handle = await agents.create({

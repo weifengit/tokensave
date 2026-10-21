@@ -58,7 +58,10 @@ for (const sel of ['.ts-warn-body', '.ts-warn-title', '.ts-warn-tags', '.ts-warn
   check(`${sel} 有 min-width:0（防撐宽）`, !!r && r.includes('min-width:0'))
 }
 check('宽度改由 panel-width 模块决定（不再写死常量夹紧）',
-  tsx.includes("from './panel-width'") && tsx.includes('panelWidth(left, hoverItems)'))
+  tsx.includes("from './panel-width'") &&
+  // 桌面摆法：宽度跟清单最长那条走；手机摆法：宽度由视口定（sheetBox）。
+  // 两条路径都在 panel-width 里，tsx 不写死数字。
+  /panelWidth\(sideLeft, hoverItems\)/.test(tsx) && /sheetBox\(vw\)/.test(tsx))
 check('定位不再传 maxWidth，也不再传写死的 width',
   !/setHoverPos\([\s\S]*?maxWidth/.test(tsx) && /left,\s*width/.test(tsx))
 check('清单变化时宽度会跟着重算', tsx.includes('wantW') && /setHoverPos\(\{ \.\.\.hoverPos, width: wantW \}\)/.test(tsx))
@@ -220,6 +223,26 @@ const commentScan = (() => {
 })()
 check('CSS 注释配对（无游离的 */，否则会吞掉后面的规则）', commentScan === -2,
   commentScan === -1 ? '有注释没闭合' : commentScan >= 0 ? `位置 ${commentScan}` : '')
+// —— 逐字符扫描的盲区补丁 ——
+// 未闭合的 /* 会被**后面某个 */ 抵消**，扫完仍然「平衡」，上面那条照样 PASS。
+// 2026-10-20 的事故：styles.ts 里一段注释漏了收尾符，紧跟其后的三条 min-width 规则
+// 被整块吞进注释 —— 源码里那几行确实在，丢的是解析后的规则，正则一条都没红。
+// 所以再按「行首开块」复核一次：凡是看起来像规则开头的行，都必须落在注释**之外**。
+// （不能用「/* 与 */ 计数相等」代替：CSS 注释不嵌套，注释里写 /* 是合法文本，
+//   本文件开头那两段文档注释刚好就是这种情况，计数比对会误报。）
+const insideCommentAt = (pos) => {
+  let inComment = false
+  for (let i = 0; i < pos; i++) {
+    if (!inComment && css.startsWith('/*', i)) { inComment = true; i++ }
+    else if (inComment && css.startsWith('*/', i)) { inComment = false; i++ }
+  }
+  return inComment
+}
+const swallowed = [...css.matchAll(/^[^\s][^{}\n]*\{/gm)]
+  .filter((m) => insideCommentAt(m.index))
+  .map((m) => m[0].trim().slice(0, 48))
+check('没有「规则开头」被注释吞掉（补逐字符扫描的盲区）', swallowed.length === 0,
+  swallowed.length ? `被吞: ${swallowed.join(' | ')}` : '已核对全部行首开块')
 for (const sel of ['.ts-sound-body', '.ts-cont-block', '.ts-list-body']) {
   check(`${sel} 与另两块同边距（padding:0 12px 10px）`,
     (ruleOf(sel) || '').includes('padding:0 12px 10px'))
@@ -273,6 +296,57 @@ check('高度由空间算出而不是写死 POP_H',
   !/window\.innerHeight - POP_H - 12/.test(tsx) && !/const POP_H = /.test(tsx))
 check('面板 style 真的把 maxHeight 传下去了',
   /style=\{\{[^}]*maxHeight: pos\.maxHeight/.test(tsx))
+
+// —— 手机端：呼吸灯面板不得被侧边栏抽屉挤成右缘窄条 ——
+// 用户反馈：「手机端要展开左侧栏才能点开呼吸灯，出来的面板被挤压到右边」。
+// 根因：横向锚点是「侧边栏容器右缘 + 8」，而手机抽屉能占到 85vw。
+check('手机摆法：放不下最窄面板时改贴视口（不再贴侧边栏右缘）',
+  /needsSheetLayout, panelWidthFor, sheetBox, type WidthRow/.test(tsx) &&
+  /const sheet = needsSheetLayout\(vw - sideLeft - 12\)/.test(tsx) &&
+  /sheet \? sheetBox\(vw\) : \{ left: sideLeft/.test(tsx))
+check('摆法标记进 state（清单变化重算宽度时不会被拉回桌面摆法）',
+  /mode: 'side' \| 'sheet'/.test(tsx) &&
+  /const wantW = hoverPos && hoverItems\.length > 0 && hoverPos\.mode === 'side'/.test(tsx) &&
+  /const mode: PanelPos\['mode'\] = sheet \? 'sheet' : 'side'/.test(tsx))
+check('手机摆法下 max-width 与 sheetBox 的 vw-16 对齐（不被再夹一次）',
+  /\.ts-warn-pop\.is-sheet \{[^}]*z-index:950/.test(css) &&
+  /\.ts-warn-pop\.is-sheet \{[^}]*max-width:calc\(100vw - 16px\)/.test(css) &&
+  /pos\.mode === 'sheet' \? ' is-sheet' : ''/.test(tsx))
+check('窄屏层级压过抽屉/黑纱（899~900），但不盖官方弹窗(1000)/菜单(1100)',
+  /z-index:950/.test(css) && 950 < 1000 && 950 > 900)
+check('触屏给足热区（清单行≥44px、已读/继续≥30px）',
+  /@media \(pointer: coarse\)/.test(css) &&
+  /\.ts-warn-pop\.is-sheet \.ts-warn-item \{[^}]*min-height:44px/.test(css) &&
+  /\.ts-warn-pop\.is-sheet \.ts-warn-read,[\s\S]{0,120}?ts-warn-continue-btn \{[^}]*min-height:30px/.test(css))
+check('视口变化（转屏/抽屉开合）重算位置',
+  /const computePanelPos = \(\): PanelPos \| null/.test(tsx) &&
+  /window\.addEventListener\('resize', onResize\)/.test(tsx) &&
+  /const pos = computePanelPos\(\)[\s\S]{0,40}?if \(pos\) setHoverPos\(pos\)/.test(tsx))
+check('手机摆法 = 钉住：不因侧边栏收起（触发器 display:none）而自动收起',
+  // 抽屉一收，角标就是 display:none：mouseleave 与指针命中都会报「已离开」的假信号。
+  /if \(hoverPos\?\.mode === 'sheet'\) return/.test(tsx) &&
+  // 守卫必须在 scheduleClose 最前（它才是 hover 自动收起的唯一入口）
+  /const scheduleClose = \(\) => \{[\s\S]{0,600}?if \(hoverPos\?\.mode === 'sheet'\) return/.test(tsx))
+check('手机摆法：收侧边栏不算「点面板外」（不连带关面板）',
+  /hoverPos\.mode === 'sheet'[\s\S]{0,160}?_sidebarCol/.test(tsx) &&
+  /_logoRow/.test(tsx))
+check('手机摆法给出显式关闭（✕）——手机不靠 hover 自动收',
+  /onClose: \(\) => void/.test(tsx) &&
+  /className="ts-warn-close"/.test(tsx) &&
+  /pos\.mode === 'sheet' && \(/.test(tsx) &&
+  /onClose=\{\(\) => \{[\s\S]{0,80}?setHoverPos\(null\)/.test(tsx) &&
+  // CSS 真的给 ✕ 定了尺寸与 44×44 命中区（不能只是一个看不见的字符）
+  /\.ts-warn-pop\.is-sheet \.ts-warn-close \{[^}]*width:26px/.test(css) &&
+  /\.ts-warn-pop\.is-sheet \.ts-warn-close::after \{[^}]*inset:-9px/.test(css))
+check('手机摆法纵向与触发器脱钩（top 交给 CSS，含刘海安全区）',
+  /if \(mode === 'sheet'\) \{\s*return \{ mode, left, width, maxHeight/.test(tsx) &&
+  /\.ts-warn-pop\.is-sheet \{[^}]*top:calc\(env\(safe-area-inset-top, 0px\) \+ 12px\)/.test(css) &&
+  /\.ts-warn-pop\.is-sheet \{[^}]*bottom:auto/.test(css))
+check('触屏：提示音开关与迷你按钮抬到可点尺寸（原来 28×16 点不准）',
+  /\.ts-warn-pop\.is-sheet \.ts-cont-sw \{[^}]*width:40px[^}]*height:22px/.test(css) &&
+  /\.ts-warn-pop\.is-sheet \.ts-cont-sw::after \{[^}]*inset:-11px -2px/.test(css) &&
+  /\.ts-warn-pop\.is-sheet \.ts-sound-mini \{[^}]*height:36px/.test(css) &&
+  /\.ts-warn-pop\.is-sheet \.ts-box-row \.ts-select,[\s\S]{0,80}?height:34px/.test(css))
 
 console.log(fail === 0 ? '\nALL PASS' : `\n${fail} FAILED`)
 process.exitCode = fail === 0 ? 0 : 1

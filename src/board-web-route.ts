@@ -21,6 +21,9 @@ import {
   type ExplorerSelection, type ModelEntry, type ProviderEntry,
 } from './explorer-catalog.ts'
 import { getBoardStore, extractTitle } from './blackboard/store.ts'
+import {
+  createSoundSync, sanitizeSettingsPayload, SOUND_SETTINGS_ROUTE_PATH,
+} from './sound-sync.ts'
 import { currentRun } from './blackboard/runs.ts'
 
 export const BOARD_ROUTE_PATH = '/plugins/dsh-tokensave/board'
@@ -32,6 +35,8 @@ export const MKDIR_ROUTE_PATH = '/plugins/dsh-tokensave/mkdir'
 export const EXPLORER_SETTINGS_ROUTE_PATH = '/plugins/dsh-tokensave/explorer-settings'
 export const CLONE_ROUTE_PATH = '/plugins/dsh-tokensave/clone'
 export const CLONE_STATUS_ROUTE_PATH = '/plugins/dsh-tokensave/clone-status'
+// 提示音设置的跨端共享：路径常量与它的存储/广播中枢同在 sound-sync.ts，从这里转出去
+export { SOUND_SETTINGS_ROUTE_PATH }
 export const PROJECT_DELETE_ROUTE_PATH = '/plugins/dsh-tokensave/project-delete'
 
 // —— 当前「打开的工作台项目」（探索者归属的真相）————————————
@@ -1230,6 +1235,8 @@ interface StoredProject {
   layout: string
   createdAt: number
   updatedAt: number
+  /** 项目状态：'active' 进行中 / 'done' 完成（项目中心卡片翻牌切换，跨来源共享） */
+  status: string
 }
 
 /** DSH 主目录（与 dsh-remote-mobile 的 ~/.dsh/<plugin> 落库约定一致）。 */
@@ -1301,6 +1308,28 @@ function writeRemovedFile(list: RemovedEntry[]): void {
     'utf8'
   )
   fs.renameSync(tmp, file) // 原子替换：读方永远看到完整 JSON
+}
+
+/**
+ * 某个路径是否已经被「移除项目」（墓碑在案）。
+ *
+ * 用途：**禁止把用户已经删掉的目录再造回来**。官方原语建会话前会 mkdir(opts.cwd)
+ * （见 src/session/create-explorer-session.ts），而 cwd 可能仍是刚被移除的项目路径
+ * （发起会话的 cwd / 工作台记忆）——那会在用户眼前把已删除的项目文件夹重新变出来
+ * （空的），看起来就像「移除只删了里面的东西」。
+ *
+ * 墓碑是本插件「移除决定必须固化」的唯一判据（写入方在 board-web-route 的
+ * writeRemovedFile）；这里只读它，不做任何写入。
+ */
+export function isRemovedProjectPath(raw: string): boolean {
+  const target = normalizeWorkspace(raw)
+  if (!target) return false
+  try {
+    return readRemovedFile().some((t) => Boolean(t.path) && t.path === target)
+  } catch {
+    // 墓碑文件读不出来时按「没被移除」处理：宁可重建，也不阻断正常建会话
+    return false
+  }
 }
 
 /** 墓碑是否命中一条项目记录（id 或归一路径任一相等即命中）。 */
@@ -1379,6 +1408,8 @@ function sanitizeProject(raw: any): StoredProject | null {
     layout: raw.layout === 'h-desk' ? 'h-desk' : 'h-desk',
     createdAt,
     updatedAt: Number(raw.updatedAt) || createdAt,
+    // 状态与 layout 同口径：只认白名单里的值，拿不准就回「进行中」（老注册表没有这个字段）
+    status: raw.status === 'done' ? 'done' : 'active',
   }
 }
 
@@ -1605,7 +1636,7 @@ export function handleProjectDelete(req: any, res: any): void {
   }
   let body = ''
   req.on('data', (c: any) => { body += String(c) })
-  req.on('end', () => {
+  req.on('end', async () => {
     let parsed: any = null
     try {
       parsed = body ? JSON.parse(body) : {}
@@ -1648,7 +1679,7 @@ export function handleProjectDelete(req: any, res: any): void {
       fs.rmSync(target, { recursive: true, force: false, maxRetries: 3, retryDelay: 150 })
     } catch (error: any) {
       if (error?.code === 'ENOENT') {
-        writeJson(res, 200, { ok: true, path: normalizeWorkspace(target), gone: true })
+        writeJson(res, 200, { ok: true, path: normalizeWorkspace(target), gone: true, verified: true })
         return
       }
       const message = error?.code === 'EACCES' || error?.code === 'EPERM'
@@ -1658,8 +1689,36 @@ export function handleProjectDelete(req: any, res: any): void {
       writeJson(res, 500, { error: message })
       return
     }
+
+    // —— 删完必须复核：目录要**真的不在**，否则一律不许报成功 ——
+    //
+    // 为什么加这一步（用户反馈「勾了删除、code/test 还在」）：
+    // rmSync(recursive) 本身是把文件夹连根删掉的，但「删完又回来了」有两条现实路径 ——
+    //   ① 删掉之后被别的进程顺手重建（例如建会话/探索者时会 mkdir 工作区目录）；
+    //   ② 删除只完成一半（内容清了、目录项没落盘）。
+    // 两条都会让用户看到文件夹还在。因此在返回前做「确认 → 退避重删 → 再确认」；
+    // 仍然存在就回 500，让客户端**不要**把项目从项目中心移除 ——
+    // 「既没删干净、又把它从清单里抹掉」是本功能最坏的结果。
+    for (let attempt = 0; attempt < 3 && fs.existsSync(target); attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, 150))
+      try {
+        fs.rmSync(target, { recursive: true, force: true, maxRetries: 2, retryDelay: 100 })
+      } catch (error: any) {
+        console.warn('[dsh-tokensave] project-delete 复核重删失败:', target, error?.code || error?.message)
+      }
+    }
+    if (fs.existsSync(target)) {
+      console.error('[dsh-tokensave] project-delete 复核失败，目录仍在:', target)
+      writeJson(res, 500, {
+        ok: false,
+        gone: false,
+        verified: false,
+        error: '目录仍然存在：删除没有真正生效（可能被其它进程占用，或删除后立刻被重建）',
+      })
+      return
+    }
     console.log(`[dsh-tokensave] 项目源代码已删除: ${target}`)
-    writeJson(res, 200, { ok: true, path: normalizeWorkspace(target), gone: false })
+    writeJson(res, 200, { ok: true, path: normalizeWorkspace(target), gone: false, verified: true })
   })
 }
 // —— 挂载 ————————————————————————————————————————
@@ -1811,6 +1870,47 @@ export function mountTokensaveWebRoutes(ctx: Context): void {
     }
     return true
   }
+
+  // —— 提示音设置跨端共享（手机 ↔ 电脑）——
+  //
+  // 手机和电脑是同一套设置：改哪一端都写进服务端文件，再经 SSE 广播给所有在线客户端。
+  // 正在响的那一端收到 enabled=false 会当场 stopSound() —— 这正是「手机一关，电脑马上静」。
+  // 同一条路径有两种 GET：带 Accept: text/event-stream 走长连接（推），其余给快照（拉）。
+  const soundSync = createSoundSync(path.join(dshHomeDir(), 'tokensave', 'sound.json'))
+  const soundGuard = (req: any, res: any) => {
+    if (!authed(req, res)) return
+    if (req.method === 'GET') {
+      const accept = String(req.headers?.accept ?? '')
+      const url = String(req.url ?? '')
+      if (accept.includes('text/event-stream') || /[?&]stream=1/.test(url)) {
+        soundSync.openStream(req, res)
+        return
+      }
+      writeJson(res, 200, soundSync.snapshot())
+      return
+    }
+    if (req.method !== 'POST') return methodNotAllowed(res)
+    // 防挂死：拿不到请求流就明确报错，而不是既不读也不回应
+    if (typeof req.on !== 'function') {
+      writeJson(res, 501, { error: 'request stream unavailable' })
+      return
+    }
+    let body = ''
+    req.on('data', (c: any) => { body += String(c) })
+    req.on('end', () => {
+      try {
+        const parsed = body ? JSON.parse(body) : {}
+        const settings = sanitizeSettingsPayload(parsed?.settings)
+        const next = soundSync.apply(settings, String(parsed?.by ?? ''))
+        console.log(`[dsh-tokensave] 提示音设置已同步（rev ${next.rev}，来自 ${next.updatedBy || '未知设备'}，在线 ${soundSync.clientCount()} 端）`)
+        writeJson(res, 200, next)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'invalid sound settings payload'
+        console.warn('[dsh-tokensave] 提示音设置保存失败:', message)
+        writeJson(res, 400, { error: message })
+      }
+    })
+  }
   const cloneStartGuard = (req: any, res: any) => {
     if (!authed(req, res)) return
     if (req.method !== 'POST') return methodNotAllowed(res)
@@ -1842,6 +1942,8 @@ export function mountTokensaveWebRoutes(ctx: Context): void {
       [EXPLORER_SETTINGS_ROUTE_PATH, explorerSettingsGuard],
       [CLONE_ROUTE_PATH, cloneStartGuard],
       [CLONE_STATUS_ROUTE_PATH, cloneStatusGuard],
+      // 提示音设置：GET 快照 / GET+SSE 长连接 / POST 写入 —— 自行鉴权 + 方法判定
+      [SOUND_SETTINGS_ROUTE_PATH, soundGuard],
     ]
     const offs: Array<(() => void) | undefined> = []
     const registerAll = (
@@ -1860,13 +1962,15 @@ export function mountTokensaveWebRoutes(ctx: Context): void {
     }
     registerAll(readRoutes, true)
     registerAll(writeRoutes, false)
-    console.log(`[dsh-tokensave] 路由已挂载: ${BOARD_ROUTE_PATH}, ${FS_ROUTE_PATH}, ${EXPLORERS_ROUTE_PATH}, ${PROJECT_INFO_ROUTE_PATH}, ${PROJECTS_ROUTE_PATH}, ${EXPLORER_SETTINGS_ROUTE_PATH}, ${CLONE_ROUTE_PATH}, ${REPOS_ROUTE_PATH}, ${PROJECT_DELETE_ROUTE_PATH}`)
+    console.log(`[dsh-tokensave] 路由已挂载: ${BOARD_ROUTE_PATH}, ${FS_ROUTE_PATH}, ${EXPLORERS_ROUTE_PATH}, ${PROJECT_INFO_ROUTE_PATH}, ${PROJECTS_ROUTE_PATH}, ${EXPLORER_SETTINGS_ROUTE_PATH}, ${CLONE_ROUTE_PATH}, ${REPOS_ROUTE_PATH}, ${PROJECT_DELETE_ROUTE_PATH}, ${SOUND_SETTINGS_ROUTE_PATH}`)
     const registration = {
       server,
       dispose: () => {
         for (const off of offs) {
           try { off?.() } catch { /* noop */ }
         }
+        // 长连接要主动断开，否则旧注册的 SSE 客户端会一直挂在已注销的路由上
+        try { soundSync.dispose() } catch { /* noop */ }
         if (current === registration) current = null
       }
     }

@@ -141,6 +141,32 @@ export function clampPanelWidth(want: number, avail: number): number {
   return Math.round(Math.max(lower, Math.min(upper, w)))
 }
 
+/**
+ * —— 窄屏（手机）摆法 ——
+ *
+ * 触发器的横向锚点是「侧边栏容器右缘 + 8」（见 ControlRoomEntry.sidebarRightOf）。
+ * 手机上侧边栏是抽屉，能占到 85vw（最多 320px），锚点右侧往往只剩几十像素：
+ * 面板被夹成一条贴在右缘的窄条（用户反馈原话：「呼吸灯面板被挤压到右边，
+ * 不方便查看和点击」）。
+ *
+ * 所以：锚点右侧连最窄宽度都放不下时，改用「贴视口」的摆法 —— 水平居中、近全宽。
+ */
+export const SHEET_MARGIN_X = 8
+/* 手机摆法的宽度上限：大屏手机 / 平板竖屏下不铺满整屏，留出视觉呼吸 */
+export const SHEET_MAX_W = 460
+
+/** 锚点右侧放不下最窄面板 → 该用手机摆法（贴视口而不是贴侧边栏右缘） */
+export function needsSheetLayout(sideSpace: number): boolean {
+  return !(sideSpace >= POP_W_MIN)
+}
+
+/** 手机摆法的 left/width：水平居中，宽度夹到上限与两侧边距之内 */
+export function sheetBox(viewportW: number): { left: number; width: number } {
+  const vw = Number.isFinite(viewportW) ? viewportW : 390
+  const width = Math.round(Math.min(SHEET_MAX_W, Math.max(0, vw - SHEET_MARGIN_X * 2)))
+  return { left: Math.max(SHEET_MARGIN_X, Math.round((vw - width) / 2)), width }
+}
+
 // —— 文本宽度 ——
 
 // measureCtx 在文件顶部声明（见上）—— 顶部算 SETTINGS_MIN_W 时就会调到 textWidth，

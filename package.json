@@ -29,6 +29,7 @@
     "test:width": "node scripts/check-panel-width.mjs",
     "test:hover": "node scripts/check-hover-corridor.mjs",
     "test:sound": "node scripts/check-alert-kick.mjs",
+    "test:sound-sync": "node scripts/check-sound-sync.mjs",
     "test:todo": "node scripts/check-todo-collapse.mjs",
     "test:sidebar": "node scripts/check-sidebar-collapse.mjs",
     "test:dockview": "node scripts/check-dockview-spike.mjs",
@@ -39,7 +40,10 @@
     "test:msg-queue": "node scripts/check-msg-queue.mjs",
     "test:clone": "node scripts/check-clone-project.mjs",
     "test:project-remove": "node scripts/check-project-remove.mjs",
-    "test": "pnpm check && pnpm test:continue && pnpm test:width && pnpm test:hover && pnpm test:sound && pnpm test:todo && pnpm test:sidebar && pnpm test:composer-focus && pnpm test:dockview && pnpm test:desk && pnpm test:desk-dock && pnpm test:chat-scroll && pnpm test:msg-queue && pnpm test:clone && pnpm test:project-remove && pnpm test:ui"
+    "test:card-flip": "node scripts/check-card-flip.mjs",
+    "test:pending-alert": "node scripts/check-pending-alert.mjs",
+    "test:card-layout": "node scripts/check-card-layout.mjs",
+    "test": "pnpm check && pnpm test:continue && pnpm test:width && pnpm test:hover && pnpm test:sound && pnpm test:sound-sync && pnpm test:pending-alert && pnpm test:todo && pnpm test:sidebar && pnpm test:composer-focus && pnpm test:dockview && pnpm test:desk && pnpm test:desk-dock && pnpm test:chat-scroll && pnpm test:msg-queue && pnpm test:clone && pnpm test:project-remove && pnpm test:card-flip && pnpm test:card-layout && pnpm test:ui"
   },
   "dependencies": {
     "@deepseek-ai/dsh-brand": "0.2.0-rc.2",

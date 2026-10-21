@@ -409,6 +409,22 @@ check('输入条随面板隐藏/被盖而藏（不再 fixed 高层级常浮在�
   /if \(!r \|\| !cellFront\(cell, r\)\) continue/.test(composerDock) &&
   /seat\.style\.visibility = ''/.test(composerDock) &&
   /'visibility',/.test(composerDock))
+check('输入条持焦时绝不隐藏（手机键盘弹出不被 blur 掉）',
+  // 手机键盘弹出会改可用高度/触发 resize+scroll；此刻若把含焦点的座位藏起来，
+  // 其中的 contenteditable 立即失焦、系统收回键盘（Chromium 实测：同一任务内临时
+  // 隐藏+恢复不丢焦点，跨一帧即 BLURED->BODY）。
+  /const hideSeat = \(\) => \{/.test(composerDock) &&
+  /const active = document\.activeElement/.test(composerDock) &&
+  /if \(active && seat\.contains\(active\)\) return/.test(composerDock) &&
+  // 两条「藏」的分支必须都走 hideSeat，不得再直接写 visibility
+  /if \(cands\.length === 0\) \{[\s\S]{0,240}?hideSeat\(\)/.test(composerDock) &&
+  /if \(!target\) \{[\s\S]{0,320}?hideSeat\(\)/.test(composerDock) &&
+  // 命中测试只用 pointer-events 临时穿透，绝不碰 visibility/display
+  /seat\.style\.pointerEvents = 'none'/.test(composerDock) &&
+  /seat\.style\.pointerEvents = prevPe/.test(composerDock) &&
+  !/seat\.style\.visibility = 'hidden'\n\s+let hit/.test(composerDock) &&
+  // 视口下界取布局视口与可视视口的较大者（键盘压缩视口时停靠点不越界）
+  /Math\.max\(window\.innerHeight, vv \? vv\.offsetTop \+ vv\.height : 0\)/.test(composerDock))
 check('面板被 dockview 重挂后输入条跟到新坐标（ref 失效按选择器回查活节点）',
   /const candidates = \(\): HTMLElement\[\]/.test(composerDock) &&
   // 先验 isConnected：被摘除的旧节点 rect 冻结在旧坐标，不能继续用它锚位

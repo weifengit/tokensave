@@ -31,6 +31,7 @@ import { installScrollMemory } from './scroll-memory'
 import { installSidebarCollapse } from './sidebar-collapse'
 import { installComposerFocus } from './composer-focus'
 import { DockSpikeGate } from './panel/dock-spike'
+import { startSoundSync } from './panel/sound'
 
 export const inject = { slots: true }
 
@@ -199,6 +200,13 @@ export function apply(ctx: Context) {
     installComposerFocus()
   } catch (e) {
     console.warn('[composer-focus] install failed:', e)
+  }
+  // 提示音设置的跨端同步：手机与电脑共享同一份，任一端关掉后另一端（含正在响的）立刻静音。
+  // 必须在这里启动而不是面板里 —— 面板关着、标签页在后台，都得能收到广播。
+  try {
+    startSoundSync()
+  } catch (e) {
+    console.warn('[sound-sync] start failed:', e)
   }
   // DockKit 补丁：关闭主对话窗口后，空出的 docked pane 自动合并（相邻窗口扩展，不残留空白/遮罩）
   try {

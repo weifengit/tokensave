@@ -102,14 +102,17 @@ export function getSoundSettings(): SoundSettings {
   return { ...settings }
 }
 
-/** 改设置（部分更新），立刻持久化并通知订阅者 */
-export function setSoundSettings(patch: Partial<SoundSettings>): SoundSettings {
-  settings = normalize({ ...settings, ...patch })
+/** 写本地缓存（隐私模式等写不进去也不影响本次会话） */
+function persistLocal(): void {
   try {
     window.localStorage.setItem(LS_KEY, JSON.stringify(settings))
   } catch {
     /* 隐私模式等：本次会话内仍生效 */
   }
+}
+
+/** 通知订阅者（面板重渲染 / 自动继续读最新值） */
+function notifySettings(): void {
   for (const fn of [...settingsListeners]) {
     try {
       fn()
@@ -117,6 +120,14 @@ export function setSoundSettings(patch: Partial<SoundSettings>): SoundSettings {
       /* noop */
     }
   }
+}
+
+/** 改设置（部分更新）：立刻本地生效 + 持久化 + 通知，并**上报服务端**让另一台设备跟上 */
+export function setSoundSettings(patch: Partial<SoundSettings>): SoundSettings {
+  settings = normalize({ ...settings, ...patch })
+  persistLocal()
+  notifySettings()
+  schedulePush()
   return { ...settings }
 }
 
@@ -283,10 +294,12 @@ function armAutoStop(): void {
 
 /**
  * 播某一类提醒音（按当前设置循环到时长上限）。
- * @param role - done=完成 / fail=中断
+ * @param role - done=完成 / fail=中断（「待确认」告警也用 fail 那一段音效）
  * @param force - true = 忽略“启用提醒”开关（试听用）
+ * @param label - 面板里「正在响的 X」的显示名；不传按 role 推（pending 告警要单独一个名字，
+ *                否则会把「等你确认」说成「中断」，用户会以为有一轮报错了）
  */
-export async function playRole(role: SoundRole, force = false): Promise<void> {
+export async function playRole(role: SoundRole, force = false, label?: string): Promise<void> {
   const s = { ...settings }
   if (!s.enabled && !force) return
   const id = role === 'done' ? s.doneId : s.failId
@@ -299,7 +312,7 @@ export async function playRole(role: SoundRole, force = false): Promise<void> {
   const token = ++playToken
   lastStartAt = Date.now()
   armAutoStop()
-  setPlaying(role === 'done' ? '完成' : '中断')
+  setPlaying(label ?? (role === 'done' ? '完成' : '中断'))
   const started = Date.now()
   const limit = durationMs(s)
   try {
@@ -320,6 +333,190 @@ export async function playRole(role: SoundRole, force = false): Promise<void> {
 let bridgeOff: (() => void) | null = null
 
 /** 挂上告警桥（幂等）；返回解绑函数。ControlRoomEntry 挂载时调用一次。 */
+
+// —— 跨端同步（手机 ↔ 电脑共享同一份提示音设置）——
+//
+// 用户反馈：「手机发了信息，电脑端的提示音还在一直响着；手机上调呼吸灯面板里的
+// 开关控制不了电脑端」。根因：设置原本只写各浏览器自己的 localStorage。
+// 现在以**服务端为真相源**：改动 POST 上去，服务端经 SSE 广播给所有在线客户端；
+// 收到 enabled=false 的那一端立即 stopSound() —— 正在响的当场停下。
+//
+// 为什么要 SSE：电脑端往往停在**后台标签页**，浏览器把后台定时器节流到分钟级，
+// 纯轮询拖不住「马上就停」。长连接不受定时器节流影响；轮询只作长连接建不起来时的兜底。
+
+const SYNC_PATH = '/plugins/dsh-tokensave/sound-settings'
+const DEVICE_KEY = 'tokensave:device.v1'
+/** POST 去抖：音量滑杆拖动会连发 onChange，没必要每格都打一次服务端 */
+const PUSH_DEBOUNCE_MS = 300
+/** 兜底轮询间隔（仅在长连接未建立时运行） */
+const FALLBACK_POLL_MS = 5_000
+
+/** 已应用到的服务端版本号：只在它变大时应用，自己写出去的回声不会成环 */
+let appliedRev = -1
+let syncStarted = false
+let streamOpen = false
+let stream: EventSource | null = null
+let pushTimer: number | null = null
+let pollTimer: number | null = null
+
+/** 本设备短标识（只进服务端日志，用于看「谁改的」） */
+function deviceId(): string {
+  try {
+    const kept = window.localStorage.getItem(DEVICE_KEY)
+    if (kept) return kept
+  } catch {
+    /* 隐私模式 */
+  }
+  const id = `dev-${Math.random().toString(36).slice(2, 8)}`
+  try {
+    window.localStorage.setItem(DEVICE_KEY, id)
+  } catch {
+    /* noop */
+  }
+  return id
+}
+
+/** 把本端设置推到服务端（去抖；失败不影响本地体验，下次改动/轮询再对账） */
+function schedulePush(): void {
+  if (typeof window === 'undefined') return
+  if (pushTimer !== null) window.clearTimeout(pushTimer)
+  pushTimer = window.setTimeout(() => {
+    pushTimer = null
+    void pushNow()
+  }, PUSH_DEBOUNCE_MS)
+}
+
+async function pushNow(): Promise<void> {
+  try {
+    const res = await fetch(SYNC_PATH, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ settings: getSoundSettings(), by: deviceId() }),
+    })
+    if (!res.ok) return
+    const data = await res.json().catch(() => null)
+    // 记住自己写到哪一版，服务端把这版广播回来时不会重复应用
+    if (data && typeof data.rev === 'number') appliedRev = data.rev
+  } catch {
+    /* 离线 / 网关未就绪 */
+  }
+}
+
+/** 应用服务端状态。返回是否真的应用了。 */
+function applyRemoteState(state: any): boolean {
+  if (!state || typeof state.rev !== 'number') return false
+  if (state.rev <= appliedRev) return false
+  appliedRev = state.rev
+  const remote = state.settings && typeof state.settings === 'object' ? state.settings : {}
+  // 合并而不是整体替换：服务端万一只存了部分字段，其余保持本端现值
+  const next = normalize({ ...settings, ...(remote as Partial<SoundSettings>) })
+  const changed = JSON.stringify(next) !== JSON.stringify(settings)
+  settings = next
+  persistLocal()
+  // 远端把提示音关了 → 立刻掐断正在响的。
+  // 「一直响」那档人不在电脑前就没法关，靠的就是这一条。
+  if (!next.enabled) stopSound()
+  if (changed) notifySettings()
+  return true
+}
+
+/**
+ * 拉一次快照。
+ * 服务端从未写过（rev 0）时把**本端设置当种子**播上去，而不是被默认值覆盖 ——
+ * 否则手机上已经关掉的开关会被一次同步重新打开。
+ */
+async function refreshSnapshot(): Promise<void> {
+  try {
+    const res = await fetch(SYNC_PATH, { headers: { Accept: 'application/json' } })
+    if (!res.ok) return
+    const state = await res.json().catch(() => null)
+    if (!state) return
+    if (typeof state.rev !== 'number' || state.rev === 0) {
+      appliedRev = 0
+      await pushNow()
+      return
+    }
+    applyRemoteState(state)
+  } catch {
+    /* 拿不到就继续用本地设置 */
+  }
+}
+
+function startPollFallback(): void {
+  if (streamOpen) return // 长连接活着就不必轮询兜底
+  if (pollTimer !== null || typeof window === 'undefined') return
+  pollTimer = window.setInterval(() => { void refreshSnapshot() }, FALLBACK_POLL_MS)
+}
+
+function stopPollFallback(): void {
+  if (pollTimer === null) return
+  window.clearInterval(pollTimer)
+  pollTimer = null
+}
+
+function openStream(): void {
+  if (typeof EventSource === 'undefined') {
+    startPollFallback()
+    return
+  }
+  try {
+    stream = new EventSource(SYNC_PATH)
+    stream.addEventListener('open', () => {
+      streamOpen = true
+      stopPollFallback()
+    })
+    stream.addEventListener('settings', (ev: MessageEvent) => {
+      try {
+        applyRemoteState(JSON.parse(String(ev.data)))
+      } catch {
+        /* 忽略坏帧 */
+      }
+    })
+    stream.addEventListener('error', () => {
+      // EventSource 自己会按 retry 重连；重连期间用轮询兜底
+      streamOpen = false
+      startPollFallback()
+    })
+  } catch {
+    startPollFallback()
+  }
+}
+
+/** 停同步（卸载 / 自检用） */
+export function stopSoundSync(): void {
+  syncStarted = false
+  streamOpen = false
+  stopPollFallback()
+  if (pushTimer !== null) {
+    window.clearTimeout(pushTimer)
+    pushTimer = null
+  }
+  if (stream) {
+    try {
+      stream.close()
+    } catch {
+      /* noop */
+    }
+    stream = null
+  }
+}
+
+/** 当前长连接是否活着（自检/排查用） */
+export function isSoundStreamOpen(): boolean {
+  return streamOpen
+}
+
+/**
+ * 启动跨端同步（幂等；页面级单例，由插件入口 client/src/index.ts 调一次）。
+ * 不在面板里启动 —— 面板关着也得能收到「另一端把它关了」的广播。
+ */
+export function startSoundSync(): () => void {
+  if (syncStarted || typeof window === 'undefined') return stopSoundSync
+  syncStarted = true
+  void refreshSnapshot()
+  openStream()
+  return stopSoundSync
+}
 export function initSoundBridge(): () => void {
   // 自动继续引擎同生命周期：它在「告警」这条路上判该不该自动发「继续」，
   // 不依赖面板是否打开（面板收起时 max-tokens 一样要被接上）。
@@ -329,7 +526,14 @@ export function initSoundBridge(): () => void {
       // 角标先上屏、声音随后半拍（两帧 ≈ 16-32ms）：两者同步感知，不再“先听到后看到”。
       // 但 rAF 在**隐藏标签页 / 浏览器最小化**时被冻结（实测：隐藏页里挂的 rAF 5s 内一次没跑），
       // 只走 rAF 会把提示音整个吞掉 —— 起音交给 scheduleAlertKick（rAF + 定时兜底）。
-      scheduleAlertKick(() => void playRole(a.kind === 'fail' ? 'fail' : 'done'))
+      scheduleAlertKick(() => {
+        // 三种告警共用两段音效：正常完成用 doneId；中断与「待确认」都用 failId
+        // （两者都是「要你马上看一眼」，且用户已经在设置里给中断挑好了曲子）。
+        // pending 单独给个显示标签，面板里才不会把等待确认写成「中断」。
+        if (a.kind === 'done') void playRole('done')
+        else if (a.kind === 'pending') void playRole('fail', false, '待确认')
+        else void playRole('fail')
+      })
     })
   }
   return () => {

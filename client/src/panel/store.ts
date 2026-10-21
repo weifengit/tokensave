@@ -5,6 +5,9 @@
 import { fetchProjects, publishProjects } from './api'
 export type LayoutMode = 'h-desk'
 
+/** 项目状态：「进行中」与「完成」——项目中心卡片用翻牌呈现/切换（见 ProjectCenter）。 */
+export type ProjectStatus = 'active' | 'done'
+
 export interface ProjectRecord {
   id: string
   name: string
@@ -15,6 +18,8 @@ export interface ProjectRecord {
   createdAt: number
   /** 上次更新时间：进入工作台 / 点「展示」时刷新，供「按更新时间」排序与展示 */
   updatedAt: number
+  /** 项目状态：卡片翻牌切换（active 进行中 / done 完成），随注册表跨来源同步 */
+  status: ProjectStatus
 }
 
 // 布局模式固定仅 1 种（H 型工作台），无选择项；保留结构以便未来扩展
@@ -43,6 +48,8 @@ export function normalizeProjects(parsed: any): ProjectRecord[] {
         createdAt,
         // 旧记录没有 updatedAt：回退到 createdAt，保证排序/展示不缺值
         updatedAt: Number(p.updatedAt) || createdAt,
+        // 老缓存里的项目没有 status：缺省视为「进行中」，不把未知值当真
+        status: p.status === 'done' ? 'done' : 'active',
       }
     })
 }
@@ -324,6 +331,7 @@ export function addProject(name: string, path: string, description = ''): Projec
     layout,
     createdAt: now,
     updatedAt: now,
+    status: 'active',
   }
   const list = loadProjects()
   // 同路径去重：更新已有记录而不是重复添加
@@ -388,6 +396,25 @@ export function updateProjectDescription(id: string, description: string): boole
 }
 
 /**
+ * 翻牌：把项目在「进行中 ⇄ 完成」之间切换并持久化。
+ *
+ * 与 updateProjectDescription 同一份存储、同一个口径：只改这一个字段，走
+ * saveProjects → pushProjects 回推服务端注册表（服务端 sanitizeProject 只认
+ * 'active' / 'done' 两个值），所以手机端 / 另一个来源看到的也是同一张卡的正反面。
+ *
+ * @returns 切换后的状态；项目不存在时返回 undefined（不动存储）
+ */
+export function toggleProjectStatus(id: string): ProjectStatus | undefined {
+  if (!id) return undefined
+  const list = loadProjects()
+  const hit = list.find((p) => p.id === id)
+  if (!hit) return undefined
+  hit.status = hit.status === 'done' ? 'active' : 'done'
+  saveProjects(list)
+  return hit.status
+}
+
+/**
  * 删除一个项目（用户显式操作）。
  *
  * 关键：必须把 id 放进 removed 一并上报。服务端现在做并集合并，只有点名的 id
@@ -425,7 +452,7 @@ export function removeProject(id: string): void {
 // 与项目数据分开存：这是纯 UI 偏好，换机器/清掉也不影响项目列表。
 
 export type ViewMode = 'card' | 'list'
-export type SortMode = 'name' | 'created' | 'updated'
+export type SortMode = 'name' | 'created' | 'updated' | 'status'
 
 const VIEW_KEY = 'tokensave:project-view.v1'
 
@@ -439,7 +466,8 @@ export function loadViewPrefs(): ViewPrefs {
     const raw = localStorage.getItem(VIEW_KEY)
     const p = raw ? JSON.parse(raw) : null
     const mode: ViewMode = p?.mode === 'list' ? 'list' : 'card'
-    const sort: SortMode = p?.sort === 'name' || p?.sort === 'updated' ? p.sort : 'created'
+    const sort: SortMode =
+      p?.sort === 'name' || p?.sort === 'updated' || p?.sort === 'status' ? p.sort : 'created'
     return { mode, sort }
   } catch {
     return { mode: 'card', sort: 'created' }
@@ -458,6 +486,7 @@ export function saveViewPrefs(prefs: ViewPrefs): void {
  * 按给定方式排序（返回新数组，不改原数组）。
  * - name：按项目名称（中文用 localeCompare 才是正确的拼音/笔画序）
  * - created / updated：按时间**倒序**（最近的在最前，符合“项目中心”的使用直觉）
+ * - status：按完成情况（进行中在前、已完成在后；同组按创建时间倒序）
  */
 export function sortProjects(list: ProjectRecord[], sort: SortMode): ProjectRecord[] {
   const out = list.slice()
@@ -465,6 +494,11 @@ export function sortProjects(list: ProjectRecord[], sort: SortMode): ProjectReco
     out.sort((a, b) => a.name.localeCompare(b.name, 'zh-Hans-CN'))
   } else if (sort === 'updated') {
     out.sort((a, b) => b.updatedAt - a.updatedAt)
+  } else if (sort === 'status') {
+    // 完成情况：进行中(0) 排在已完成(1) 前面 —— 还要继续做的项目先看到；
+    // 同组内按创建时间倒序，与「按创建时间」同一种口径，不引入第三种顺序。
+    const rank = (s: ProjectStatus) => (s === 'done' ? 1 : 0)
+    out.sort((a, b) => rank(a.status) - rank(b.status) || b.createdAt - a.createdAt)
   } else {
     out.sort((a, b) => b.createdAt - a.createdAt)
   }

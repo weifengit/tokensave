@@ -230,6 +230,43 @@ body.ts-desk-nochat [data-conversation-region="composer"] {
 /* 清单浮层：portal 到 body + position:fixed（top/left 由 JSX 按按钮矩形给），
    所以 rail（56px 收起）与展开态都从按钮右缘飞出，不被侧边栏 overflow 裁剪 */
 .ts-warn-pop { position:fixed; z-index:60; max-width:calc(100vw - 24px); max-height:80vh; display:flex; flex-direction:column; border-radius:12px; border:1px solid var(--ts-pop-line); background:var(--ts-pop-bg); color:var(--ts-pop-fg); box-shadow:var(--ts-pop-shadow); backdrop-filter:blur(12px) saturate(1.2); overflow:hidden; }
+/* 手机摆法：锚点右侧放不下最窄面板 → 贴视口居中（几何在 panel-width.ts 的 sheetBox，
+   由 ControlRoomEntry 加 is-sheet 类）。
+   这里只做两件事：
+   1) z-index 抬到 950。窄屏下侧边栏是浮层抽屉（官方 / 生态插件都在 899~900 这一档），
+      原来的 60 会被它和它的黑纱压在下面 —— 面板既发暗又点不着；950 仍低于官方弹窗
+      (1000) 与菜单 (1100)，不会盖住真正的模态。
+   2) max-width 与 sheetBox 的 vw-16 对齐，免得行内宽度被这里再夹一次。 */
+/* 手机摆法：贴视口顶部、且与触发器脱钩。
+   1) z-index 抬到 950。窄屏下侧边栏是浮层抽屉（官方 / 生态插件都在 899~900 这一档），
+      原来的 60 会被它和它的黑纱压在下面 —— 面板既发暗又点不着；950 仍低于官方弹窗
+      (1000) 与菜单 (1100)，不会盖住真正的模态。
+   2) max-width 与 sheetBox 的 vw-16 对齐，免得行内宽度被这里再夹一次。
+   3) top 由 CSS 定（含刘海安全区），不在 JS 里跟触发器算：手机上抽屉一收，
+      触发器就是 display:none，跟着它算面板会漂移甚至被算到屏外。 */
+.ts-warn-pop.is-sheet { z-index:950; max-width:calc(100vw - 16px); top:calc(env(safe-area-inset-top, 0px) + 12px); bottom:auto; }
+/* 手机摆法的显式关闭：视觉上是一枚小 ✕，命中区用 ::after 撑到 44×44 */
+.ts-warn-pop.is-sheet .ts-warn-close { position:relative; flex:none; width:26px; height:26px; box-sizing:border-box; margin-left:10px; padding:0; border:1px solid rgba(127,127,127,.4); background:rgba(127,127,127,.14); color:inherit; border-radius:8px; font-size:14px; line-height:1; cursor:pointer; display:inline-flex; align-items:center; justify-content:center; opacity:.85; }
+.ts-warn-pop.is-sheet .ts-warn-close::after { content:''; position:absolute; inset:-9px; }
+/* 命中区 26+9×2 = 44×44；右边距 10px > 左侵 2px + 右侵 9px，与开关的 ::after 不重叠 */
+.ts-warn-pop.is-sheet .ts-warn-close:hover { background:rgba(127,127,127,.3); opacity:1; }
+/* 触屏：手指点得准比排得密重要 —— 清单行、已读/继续、开关与迷你按钮全部抬到 44px 量级。
+   特别地：提示音开关原本只有 28×16，手机上基本点不准（用户反馈：
+   「手机端回消息之类的，也无法关闭提示音」——开关就在面板里，但手点不到）。 */
+@media (pointer: coarse) {
+  .ts-warn-pop.is-sheet .ts-warn-item { min-height:44px; padding:10px 10px; }
+  .ts-warn-pop.is-sheet .ts-warn-read,
+  .ts-warn-pop.is-sheet .ts-warn-continue-btn { min-height:30px; padding:0 10px; }
+  .ts-warn-pop.is-sheet .ts-cont-sw { width:40px; height:22px; }
+  .ts-warn-pop.is-sheet .ts-cont-sw > i { width:18px; height:18px; }
+  .ts-warn-pop.is-sheet .ts-cont-sw::after { content:''; position:absolute; inset:-11px -2px; }
+  .ts-warn-pop.is-sheet .ts-box-row { min-height:44px; padding:8px 10px; }
+  .ts-warn-pop.is-sheet .ts-box-row .ts-select,
+  .ts-warn-pop.is-sheet .ts-box-row .ts-sound-min { height:34px; font-size:14px; }
+  .ts-warn-pop.is-sheet .ts-sound-range { height:28px; }
+  .ts-warn-pop.is-sheet .ts-sound-mini { width:36px; height:36px; font-size:14px; }
+}
+
 /* 跑马灯悬浮面板：**宽度由 JS 固定给**（见 ControlRoomEntry 的 panelWidth）。
    这里只保证它是个全宽容器 —— 设置区 / 清单区都是 width:100%，
    整块面板只有一种宽度，不再出现“清单被长标题撐宽、设置区停在原宽”的割裂感。 */
@@ -487,8 +524,11 @@ body.ts-desk-nochat [data-conversation-region="composer"] {
 .ts-center-emptywrap { flex:1; display:flex; align-items:center; justify-content:center; padding:24px; }
 .ts-center-card { position:relative; box-sizing:border-box; min-height:186px; display:flex; flex-direction:column; gap:10px; padding:18px; border:1px solid transparent; border-radius:16px; background:linear-gradient(135deg,rgba(255,255,255,.14) 0%,rgba(255,255,255,.05) 32%,rgba(255,255,255,.01) 62%,rgba(0,0,0,.06) 100%),rgba(127,127,127,.09); box-shadow:0 10px 26px rgba(0,0,0,.22),inset 0 1px 0 rgba(255,255,255,.10); backdrop-filter:blur(6px) saturate(1.15); transition:transform .14s ease, box-shadow .14s ease; }
 .ts-center-card::after { content:""; position:absolute; inset:0; border-radius:inherit; padding:1px; background:conic-gradient(from 45deg,rgba(0,0,0,.28) 0deg,rgba(255,255,255,.5) 90deg,rgba(0,0,0,.28) 180deg,rgba(255,255,255,.5) 270deg,rgba(0,0,0,.28) 360deg); -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0); -webkit-mask-composite:xor; mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0); mask-composite:exclude; pointer-events:none; opacity:.45; }
-.ts-center-card:hover { transform:translateY(-2px); box-shadow:0 16px 34px rgba(0,0,0,.3),inset 0 1px 0 rgba(255,255,255,.14); }
-.ts-center-cardhead { display:flex; align-items:center; gap:11px; min-width:0; }
+/* 位移类 hover **只留给「添加项目」卡**（它没有 3D 姿态，抬一下无妨）。
+   翻牌卡两面绝不能有 hover 位移 —— 那会和内层 180° 旋转在 preserve-3d 里打架，
+   表现就是悬停抖 / 翻回来那一下更明显（用户反馈）。翻牌卡的悬停反馈只靠盒阴影。 */
+.ts-center-addcard:hover { transform:translateY(-2px); box-shadow:0 16px 34px rgba(0,0,0,.3),inset 0 1px 0 rgba(255,255,255,.14); }
+.ts-center-cardhead { display:flex; align-items:center; gap:9px; min-width:0; }
 .ts-center-icon { flex:none; font-size:calc(var(--ts-fs, 12.5px) * 1.76); line-height:1; }
 .ts-center-name { flex:1; min-width:0; font-size:calc(var(--ts-fs, 12.5px) * 1.28); font-weight:700; line-height:22px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .ts-center-path { flex:none; display:flex; flex-direction:column; gap:1px; min-width:0; }
@@ -501,9 +541,60 @@ body.ts-desk-nochat [data-conversation-region="composer"] {
 .ts-center-card-click { cursor:pointer; }
 .ts-center-card-click:focus-visible { outline:2px solid rgba(96,165,250,.8); outline-offset:2px; }
 .ts-center-card-click.disabled { cursor:not-allowed; opacity:.55; }
-/* 卡片右上角“进入 →”提示：只在悬停时明显，不抢标题 */
-.ts-center-enterhint { flex:none; font-size:calc(var(--ts-fs, 12.5px) * 0.92); opacity:0; transform:translateX(-3px); transition:opacity .14s ease, transform .14s ease; color:#60a5fa; white-space:nowrap; }
-.ts-center-card-click:hover .ts-center-enterhint { opacity:1; transform:translateX(0); }
+
+/* —— 项目中心：卡片翻牌（进行中 ⇄ 完成）——
+   用户要求：卡片用翻牌呈现项目状态，能翻过去也能翻回来，翻过去那面换一套配色。
+
+   三个要点必须同时成立，否则翻牌会翻车：
+   1. 分工：场景（.ts-flip-scene）给 perspective，内层（.ts-flip-inner）给 rotateY，
+      两面**叠在同一个网格格里**（grid-area:1/1，见 .ts-flip-front/.ts-flip-back）。
+      用同格叠放而不是 position:absolute —— 卡片高度由两面中较高的一面决定，
+      不必写死高度，也不会因为背面多一行而露底。
+   2. 两面都 backface-visibility:hidden，背面自带 rotateY(180deg)：内层转到 180° 时
+      正面自动隐形、背面正好转正。这是翻牌的正统做法，不靠切 display/opacity
+      （那样会闪，也会让「两面都在 DOM 里」的可访问性优势消失）。
+   3. 两面的 transform 必须是**常数**：.ts-center-card:hover 的 translateY(-2px) 与它自带的
+      transform 过渡都对「面」失效 —— 否则 preserve-3d 里会有两个 3D 变换互相打架
+      （悬停就抖 / 翻几次后卡片不见 / 放大错位的虚影）。几何完全不动，hover 只用盒阴影。 */
+/* 透视距离：1200px 时旋转中的近边会被放得很明显（用户看到「放大错位的虚影」）。
+   1600px 投影更平，翻牌仍看得清，但不会有夸张的放大。 */
+.ts-flip-scene { perspective:1600px; }
+.ts-flip-scene .ts-flip-inner { display:grid; width:100%; height:100%; transform-style:preserve-3d; will-change:transform; transition:transform .5s cubic-bezier(.2,.72,.2,1); }
+.ts-flip-scene .ts-flip-inner.is-done { transform:rotateY(180deg); }
+/* 面：同格叠放 + 背向隐藏。transition **只给 box-shadow** —— 绝不能给 transform。
+   .ts-center-card 自带 transition: transform .14s 与 :hover { translateY(-2px) }，
+   那条 hover 会在 preserve-3d 里给「面」再叠一层 0.14s 的位移动画，与内层 0.5s 的
+   180° 旋转互相打架。实测三个症状全来自它：
+     ① 鼠标悬停就抖（hover 位移 → 移出热区 → 复位 → 再进，自激）；
+     ② 连翻几次后卡片看不见、鼠标移开才刷出来（图层卡在中间态）；
+     ③ 放大错位的虚影（两个 3D 变换叠加后的投影，看着像卡片被放大）。
+   所以两面的 transform 必须是**常数**（正面 none / 背面 rotateY(180deg)），
+   并把位移类的 hover 反馈整个去掉 —— 卡片只因「点击翻牌」而旋转。 */
+.ts-flip-face { grid-area:1/1; backface-visibility:hidden; -webkit-backface-visibility:hidden; transition:box-shadow .14s ease; }
+/* 正面 = 「进行中」态：蓝调描边（与背面那套绿调成对，光靠翻转动作区分不够） */
+.ts-flip-front { border-color:rgba(96,165,250,.30); }
+.ts-flip-back { transform:rotateY(180deg); }
+/* hover 只改阴影、不动几何：动了几何就会「移出去 → 移回来」地自激抖动 */
+.ts-flip-scene:hover .ts-center-card { box-shadow:0 16px 34px rgba(0,0,0,.3),inset 0 1px 0 rgba(255,255,255,.14); }
+/* 背面 = 「完成」态：整套换成暖绿调（底 + 圆锥渐变描边 + 横条文字），与进行中的蓝面对照。
+   翻牌后卡片颜色不同 —— 这是用户要的「另一种标识色」，不能只靠翻转动作本身。 */
+.ts-flip-back { border-color:rgba(74,222,128,.42); background:linear-gradient(135deg,rgba(74,222,128,.20) 0%,rgba(74,222,128,.07) 34%,rgba(255,255,255,.02) 64%,rgba(0,0,0,.06) 100%),rgba(22,60,44,.34); }
+.ts-flip-back::after { background:conic-gradient(from 45deg,rgba(74,222,128,.30) 0deg,rgba(187,247,208,.85) 90deg,rgba(74,222,128,.30) 180deg,rgba(187,247,208,.85) 270deg,rgba(74,222,128,.30) 360deg); opacity:.7; }
+/* 右上角「翻牌」按钮：两面各持一枚（正面那枚翻过去后随正面背向隐藏，不会出现点不到） */
+.ts-flip-btn { flex:none; display:inline-flex; align-items:center; padding:2px 7px; border-radius:999px; border:1px solid rgba(148,163,184,.42); background:rgba(148,163,184,.14); color:var(--ts-fg-mute, #94a3b8); font:inherit; font-size:calc(var(--ts-fs, 12.5px) * 0.84); line-height:18px; white-space:nowrap; cursor:pointer; transition:background .14s ease, border-color .14s ease, color .14s ease; }
+.ts-flip-btn:hover { background:rgba(96,165,250,.22); border-color:rgba(96,165,250,.6); color:#93c5fd; }
+.ts-flip-back .ts-flip-btn:hover { background:rgba(74,222,128,.24); border-color:rgba(74,222,128,.62); color:#86efac; }
+.ts-flip-btn:focus-visible { outline:2px solid rgba(96,165,250,.8); outline-offset:1px; }
+/* 状态胶囊：**只用在列表模式**。
+   卡片上不放它 —— 用户反馈「胶囊把卡片顶高了、不好看」，卡片的状态呈现交给翻牌本身：
+   背面那套绿配色 + 「✓ 已完成」横条 + 右上角按钮文案（翻牌 / 翻回）。 */
+.ts-status-chip { flex:none; display:inline-flex; align-items:center; padding:1px 8px; border-radius:999px; border:1px solid rgba(96,165,250,.45); background:rgba(96,165,250,.16); color:#93c5fd; font:inherit; font-size:calc(var(--ts-fs, 12.5px) * 0.86); line-height:17px; white-space:nowrap; cursor:pointer; }
+.ts-status-chip.is-done { border-color:rgba(74,222,128,.5); background:rgba(74,222,128,.18); color:#4ade80; }
+.ts-status-chip:focus-visible { outline:2px solid rgba(96,165,250,.8); outline-offset:1px; }
+/* 列表模式：名称格改成 flex 行（名字 + 状态胶囊同一行对齐） */
+.ts-plist-namecell { display:flex; align-items:center; gap:6px; min-width:0; }
+/* 减动效：翻牌直接切到目标面，不演旋转（前庭敏感用户） */
+@media (prefers-reduced-motion: reduce) { .ts-flip-scene .ts-flip-inner { transition:none; } }
 /* 项目介绍：两行截断，保持卡片等高 */
 .ts-center-desc { flex:1 1 auto; min-height:0; font-size:calc(var(--ts-fs, 12.5px) * 0.96); line-height:1.55; opacity:.72; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; word-break:break-word; }
 .ts-btn-sm { padding:3px 11px; font-size:calc(var(--ts-fs, 12.5px) * 0.96); }
@@ -1074,6 +1165,27 @@ body.ts-vsplit-dragging .ts-card { transition:none !important; animation:none !i
 .ts-center-actions { flex-wrap:nowrap; }
 .ts-center-meta { flex-wrap:nowrap; }
 .ts-center-meta .ts-tag, .ts-dev-chip { white-space:nowrap; flex:none; }
+
+/* —— 项目中心：翻牌卡的**布局收口**（修「卡片变宽重叠 + 抖动 + 点翻牌却进工作台」）——
+   三个症状同一个根因：.ts-center-grid 的列是 minmax(248px,1fr) —— 列宽有**下限**，
+   内容再宽也不会把列撑宽，而是让 min-width:auto 的网格项**溢出到相邻列**（看着就是
+   卡片变宽、与旁边的卡片重叠）。再叠一层反馈：.ts-center-inner 是 overflow:auto，
+   溢出会出现横向滚动条 → 可用宽度变化 → auto-fill 重算列数 → 卡片位置在点击中途跳动
+   （看着就是「一直抖动」），于是那一下点击落到卡片身上 → 进了工作台而不是翻牌。
+   所以两件事都要做：
+   1) 把 min-width 链一路放开（网格项 → 内层 → 两面），让卡片能收缩到列宽以内；
+   2) 卡片内容要能在列宽内自己排开（不靠换行、也不顶出边框）。 */
+.ts-flip-scene { min-width:0; }
+.ts-flip-scene .ts-flip-inner { grid-template-columns:minmax(0,1fr); min-width:0; }
+.ts-flip-face { min-width:0; }
+
+
+/* 3D 与 backdrop-filter 天生不兼容：preserve-3d 的子元素带 backdrop-filter 时，Chromium
+   会把它**拍平成 2D 图层** —— 背面的 backface-visibility 随之失效，于是「背面镜像着画在正面
+   之上」，看着就是卡片一直在抖/闪；而且点击命中的是上面那层（不是翻牌按钮），于是进了
+   工作台（用户反馈的两个现象：抖 + 点翻牌却进工作台）。
+   卡片底色由 gradient + 描边 + 阴影承担，这里去掉模糊换稳定渲染 —— 翻牌能用的前提。 */
+.ts-flip-face { backdrop-filter:none; -webkit-backdrop-filter:none; }
 /* 启动情况小标：已启动=绿，未启动=灰（放在「进入工作台」之前） */
 .ts-dev-chip { font-size:calc(var(--ts-fs, 12.5px) * 0.88); padding:2px 8px; border-radius:99px; border:1px solid rgba(127,127,127,.45); background:rgba(127,127,127,.12); opacity:.72; }
 .ts-dev-chip.on { border-color:rgba(74,222,128,.55); background:rgba(74,222,128,.18); color:#86efac; opacity:1; }

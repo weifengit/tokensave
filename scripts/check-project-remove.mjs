@@ -15,6 +15,12 @@
  *      2. 服务端并集合并、GET 下发、按路径/按 id 的显式删除、恢复名单全部尊重墓碑；
  *      3. 自动登记（addProjectAuto）对墓碑路径一律拒绝——用户手动「添加项目」才可恢复；
  *      4. 本地缓存读取与水合对账都要过滤墓碑（「恢复」以服务端注册表为准）。
+ *   C. 删盘「真的删掉了」（用户反馈：勾了删除、code/test 还在）：
+ *      1. 删完必须复核目录真的不在（确认 → 退避重删 → 再确认）；
+ *      2. 复核不过就 500 + ok:false —— 宁可不移除，也不能「既没删干净又从清单消失」；
+ *      3. 不许把已移除项目的目录再 mkdir 回来（探索者会话的 cwd 守卫）；
+ *      4. 弹窗文案要写明「连文件夹本身一起删」——旧文案只说「该文件夹下的全部内容」，
+ *         读起来像是只清空内容、留下空文件夹。
  */
 import { readFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
@@ -35,6 +41,7 @@ const center = readFileSync(join(root, 'client/src/panel/ProjectCenter.tsx'), 'u
 const dialog = readFileSync(join(root, 'client/src/panel/ConfirmDialog.tsx'), 'utf8')
 const styles = readFileSync(join(root, 'client/src/panel/styles.ts'), 'utf8')
 const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
+const explorer = readFileSync(join(root, 'src/session/create-explorer-session.ts'), 'utf8')
 
 console.log('— A. 删除项目源代码（服务端闸门）—')
 
@@ -178,6 +185,39 @@ check('sessions：自动登记走 addProjectAuto（墓碑路径拒绝复活）',
 check('publishProjects 的 extra 参数在 store 侧透传',
   /function pushProjects\(list: ProjectRecord\[\], removed: string\[\] = \[\], extra: PushExtra = \{\}\): void/.test(store) &&
   /publishProjects\(snapshot, ids, extra\)/.test(store))
+
+console.log('— C. 删盘复核（「勾了删除、文件夹还在」的收口）—')
+
+check('服务端：删完先确认目录真的不在，才报成功（gone / verified 两个标记）',
+  /for \(let attempt = 0; attempt < 3 && fs\.existsSync\(target\); attempt\+\+\)/.test(route) &&
+  /verified: true/.test(route) &&
+  /verified: false/.test(route))
+
+check('服务端：复核重删用 force:true（已不在也不报错）并退避重试',
+  /await new Promise\(\(resolve\) => setTimeout\(resolve, 150\)\)/.test(route) &&
+  /fs\.rmSync\(target, \{ recursive: true, force: true, maxRetries: 2, retryDelay: 100 \}\)/.test(route))
+
+check('服务端：复核不过就 500 + ok:false（客户端据此不把它从清单里抹掉）',
+  /writeJson\(res, 500, \{\s*ok: false,/.test(route) &&
+  /目录仍然存在：删除没有真正生效/.test(route) &&
+  /if \(!pendingRemove \|\| removing\) return/.test(center) &&
+  /项目未移除/.test(center))
+
+check('服务端：墓碑只读查询（isRemovedProjectPath）—— 禁止把已删目录造回来',
+  /export function isRemovedProjectPath\(raw: string\): boolean/.test(route) &&
+  /readRemovedFile\(\)\.some\(\(t\) => Boolean\(t\.path\) && t\.path === target\)/.test(route))
+
+check('探索者建会话前不再 mkdir 已移除项目的 cwd（移除不再是「删了又回来」）',
+  /import \{ isRemovedProjectPath \} from '\.\.\/board-web-route\.ts'/.test(explorer) &&
+  /if \(isRemovedProjectPath\(opts\.cwd\)\) \{/.test(explorer) &&
+  /\} else \{\s*\n\s*await mkdir\(opts\.cwd, \{ recursive: true \}\)/.test(explorer) &&
+  /跳过 mkdir（不把删掉的目录造回来）/.test(explorer))
+
+check('弹窗文案写明「连文件夹本身一起删」（旧文案只说“文件夹下的全部内容”）',
+  /整个文件夹/.test(center) &&
+  /把项目文件夹从磁盘上整棵删掉/.test(center) &&
+  !/该文件夹下的<b>全部内容<\/b>/.test(center))
+
 
 check('自检已接入 pnpm test 链', pkg.scripts['test:project-remove'] !== undefined && pkg.scripts.test.includes('test:project-remove'))
 
