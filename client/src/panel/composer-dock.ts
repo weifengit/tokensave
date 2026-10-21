@@ -61,8 +61,11 @@ export function useDockNativeComposer(
   useLayoutEffect(() => {
     const seedCell = ref.current
     if (!seedCell || typeof document === 'undefined') return
-    const seat = document.querySelector<HTMLElement>(COMPOSER_SEAT)
-    if (!seat) return
+    const initialSeat = document.querySelector<HTMLElement>(COMPOSER_SEAT)
+    if (!initialSeat) return
+    // 用非空类型而不是 `let seat: HTMLElement | null`：后面的闭包（apply/cleanup）
+    // 都在“已解析出活节点”之后才执行，标注成可能为空只会换来满屏 TS18047。
+    let seat: HTMLElement = initialSeat
     // background / backgroundImage 也要接管：宿主的 composerSeat 自带一条
     // 「透明 → 背景色」的渐变遮罩（linear-gradient(transparent 0, rgb(21,21,23) 36px)），
     // 作用是让滚到输入条上沿的消息被淡出。停靠后它跟着输入条一起被搬进工作台，
@@ -80,9 +83,47 @@ export function useDockNativeComposer(
       'background',
       'backgroundImage',
       'visibility',
+      'opacity',
+      'pointerEvents',
     ] as const
     /** 停靠前的原始行內样式：**模块级**缓（不随 effect 重跑丢失，否则 enabled→false 时根本读不到原值）。 */
     let saved = PRE_DOCK_STYLES.get(seat)
+
+    /** 记下座位自己的原始行内样式（每个活节点只记一次，避免把已停靠的值当成原值）。 */
+    const capture = () => {
+      const cached = PRE_DOCK_STYLES.get(seat)
+      if (cached) { saved = cached; return }
+      const next: Record<string, string> = {}
+      for (const k of KEYS) next[k] = (seat.style as any)[k]
+      // 「隐身」是我们自己写的状态，不是宿主的原始值：不剥掉的话，effect 重跑时
+      // 会把 visibility:hidden / opacity:0 当原值记下，卸载时又写回去 ——
+      // 原生对话页的输入条就再也不出现了。这三项宿主从不写行内值，清空即原值。
+      next.visibility = ''
+      next.opacity = ''
+      next.pointerEvents = ''
+      saved = next
+      PRE_DOCK_STYLES.set(seat, next)
+    }
+
+    /**
+     * 解析**当前真正在文档里的**座位。
+     *
+     * 宿主在**切换会话时会重建 composer 座位**（React 换掉整棵 composer 子树）：
+     * 旧节点脱离文档，而本 effect 的依赖（面板集合 / reloadKey）不会因此变化 ——
+     * 只认挂载时那一个节点的话，之后每轮 apply 都写在一个已摘除的节点上，
+     * 新座位保持宿主原样（sticky + 「透明→底色」渐变）停在页面最底部压住工作台
+     * 状态栏（用户反馈的原话：「切换对话时输入框下方一层渐变黑，状态栏都看不见」）。
+     * 因此每轮 apply 先验 isConnected，失效就按稳定选择器找回活节点并重新记原值。
+     */
+    const resolveSeat = (): HTMLElement | null => {
+      if (seat && seat.isConnected) return seat
+      const next = document.querySelector<HTMLElement>(COMPOSER_SEAT)
+      if (!next) return null
+      seat = next
+      saved = undefined
+      capture()
+      return seat
+    }
 
     const restore = () => {
       for (const k of KEYS) {
@@ -92,21 +133,45 @@ export function useDockNativeComposer(
       }
     }
 
+    /**
+     * 隐藏停靠中的输入条（面板不可见 / 被盖住时不再浮在最上层）。
+     *
+     * 两条硬约束同时成立：
+     *  ① 座位里还握着焦点时**绝不**用 visibility/display 藏 —— 那会让其中的
+     *     contenteditable 失去可聚焦性而触发 blur，系统立即收回软键盘（手机上
+     *     就是「一点输入框，键盘刚弹出来又收回去」；Chromium 实测跨一帧即 blur）。
+     *  ② 也**不能**因此就让它停在宿主原位：宿主座位自带渐变底且 sticky 在底部，
+     *     一恢复原样就压住工作台状态栏（用户反馈「输入框下方一块渐变黑」）。
+     * 折中：持焦时只做**视觉隐身**（opacity:0 + pointer-events:none）—— 不触发
+     * blur、不挡下层点击；停靠条件恢复后 apply 成功分支会立即恢复可见。
+     */
+    const hideSeat = () => {
+      const active = document.activeElement
+      if (active && seat.contains(active)) {
+        seat.style.visibility = ''
+        seat.style.opacity = '0'
+        seat.style.pointerEvents = 'none'
+        return
+      }
+      seat.style.visibility = 'hidden'
+      seat.style.opacity = ''
+      seat.style.pointerEvents = ''
+    }
+
     // 主对话面板收起/关闭时不再停靠：让输入条回到宿主的原位置（避免悬在空格里）
     if (!enabled) {
       // 交还给宿主：优先恢复**停靠前真实值**；没抓过说明本次根本没停靠，
       // 清掉我们可能写过的那几项（空字符串 = 移除行内值，回落到宿主样式表）。
       restore()
+      // 工作台视图还在、只是主对话卡不在（被关/尚未挂载）：宿主座位留在原位
+      // 会压住状态栏，仍按「不 blur」的方式藏掉。
+      hideSeat()
       PRE_DOCK_STYLES.delete(seat)
       seedCell.style.removeProperty('--ts-chat-content-w')
       return
     }
-    // 停靠前先记下原值（只记一次，避免把已停靠的值当成原值）
-    if (!saved) {
-      saved = {}
-      for (const k of KEYS) saved[k] = (seat.style as any)[k]
-      PRE_DOCK_STYLES.set(seat, saved)
-    }
+    // 停靠前先记下原值
+    capture()
 
     // 输入条会遮住消息末尾：量出它的高度写回 CSS 变量，
     // 让消息流底部预留同样高度的留白（跟随多行输入动态变化）。
@@ -223,24 +288,25 @@ export function useDockNativeComposer(
       observed = cell
     }
 
-    /**
-     * 隐藏停靠中的输入条（面板不可见/被盖住时不再浮在最上层）。
-     *
-     * 铁律：**座位里还握着焦点时绝不藏**。把它藏起来（visibility/display）会让其中的
-     * contenteditable 失去可聚焦性而触发 blur，系统立即收回软键盘 —— 手机上表现就是
-     * 「一点输入框，键盘刚弹出来又收回去」（Chromium 实测：同一任务内临时隐藏+恢复
-     * 不丢焦点，但只要跨一帧即 BLURED->BODY）。宁可短暂停在旧坐标（下一轮 apply 会
-     * 自己纠正），也不能打断正在输入的会话。
-     */
-    const hideSeat = () => {
-      const active = document.activeElement
-      if (active && seat.contains(active)) return
-      seat.style.visibility = 'hidden'
+    /** 座位被宿主整块换掉（切换会话重建 composer 子树）时立刻重算，不等 300ms 轮询。 */
+    let seatMo: MutationObserver | null = null
+    let seatParent: HTMLElement | null = null
+    const watchSeat = () => {
+      const parent = seat?.parentElement ?? null
+      if (parent === seatParent) return
+      seatMo?.disconnect()
+      seatParent = parent
+      if (!parent) return
+      seatMo = new MutationObserver(schedule)
+      seatMo.observe(parent, { childList: true })
     }
 
     const apply = () => {
       raf = 0
       try {
+        // 座位可能已被宿主换掉（切会话重建 composer 子树）→ 每轮先解析活节点
+        if (!resolveSeat()) return
+        watchSeat()
         // 候选集：ref 活节点 + 选择器命中的全部活节点（面板被 dockview 重挂/
         // 提升进 overlay 后，活的那份可能不是 ref 拿到的那份）。
         const cands = candidates()
@@ -267,6 +333,8 @@ export function useDockNativeComposer(
         const { cell, r } = target
         if (cell !== observed) attach(cell)
         seat.style.visibility = ''
+        seat.style.opacity = ''
+        seat.style.pointerEvents = ''
         // 容器内缩：border + padding，让输入条落在容器边框内部
         const cs = getComputedStyle(cell)
         const insetX = (parseFloat(cs.borderLeftWidth) || 0) + (parseFloat(cs.paddingLeft) || 0)
@@ -316,6 +384,7 @@ export function useDockNativeComposer(
     return () => {
       ro?.disconnect()
       mo?.disconnect()
+      seatMo?.disconnect()
       window.removeEventListener('resize', schedule)
       window.removeEventListener('scroll', schedule, true)
       window.clearInterval(timer)

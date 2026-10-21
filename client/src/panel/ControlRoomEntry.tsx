@@ -51,7 +51,7 @@ import {
 import { markPulseRead, useActivityPulse, type InterruptKind } from './pulse'
 import {
   DURATION_OPTIONS, SOUND_OPTIONS, getSoundSettings, initSoundBridge, playRole,
-  setSoundSettings, stopSound, subscribePlaying,
+  setSoundSettings, stopSoundEverywhere, subscribePlaying,
 } from './sound'
 import type { SoundDuration, SoundId, SoundSettings } from './sound'
 import {
@@ -547,7 +547,10 @@ function HoverPanel({ pos, panelRef, items, onPick, onHover, onMarkRead, onMarkA
             <button
               type="button"
               className={`ts-sound-mini${playingLabel ? ' is-playing' : ''}`}
-              title={playingLabel ? `停止正在响的「${playingLabel}」提示音（在页面内任意交互：点击、按键、触摸、滚动也会自动停，250ms 宽限期）` : '停止提示音（在页面内任意交互：点击、按键、触摸、滚动也会自动停，250ms 宽限期）'}
+              title={playingLabel
+                ? `停止正在响的「${playingLabel}」提示音（同时让其它已连接的端一起静音；在页面内任意交互：点击 / 滚动 / 按键也会自动停，250ms 宽限期）`
+                : '停止提示音（同时让其它已连接的端一起静音；在页面内任意交互：点击 / 滚动 / 按键也会自动停，250ms 宽限期）'}
+              onClick={() => stopSoundEverywhere()}
             >
             ■
           </button>

@@ -451,7 +451,11 @@ export async function startProjectSession(
   }
   try {
     const workspaceId = readProjectWorkspaceId(ctx, projectPath)
-    const reuse = readProjectSessions(ctx, projectPath).find((s) => s.blank && s.id !== excludeSessionId)
+    // 复用的空白会话必须是**用户自己的**：探索者会话也是 root 会话（cwd = 项目路径），
+    // 若它恰好还是空白态，新建会话会直接打开一条探索者对话（用户反馈的「新建会话
+    // 还是有探索者的对话」）。探索者标题固定 tokensave- 前缀，据此排除。
+    const reuse = readProjectSessions(ctx, projectPath)
+      .find((s) => s.blank && !s.explorer && s.id !== excludeSessionId)
     const id = reuse?.id
       ?? String(await sessions.create(workspaceId ? { workspaceId } : { cwd: projectPath }))
     // 顺序很关键：先写好「视图偏好 + 项目记忆 + 立即激活工作台视图」，再导航。

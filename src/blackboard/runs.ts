@@ -31,6 +31,16 @@ export interface RunRecord {
   runId: string
   startedAtMs: number
   sessions: RunSessionInfo[]
+  /**
+   * 发起本轮委派的主会话（`tokensave_delegate` 调用方的 sessionId）。
+   *
+   * 为什么必须记：探索者会话是 root 会话（cwd = 项目路径），但轮次本身属于
+   * **发起它的那条对话**。旧实现只按 workspace 登记，于是一个新会话进入同一项目
+   * 的工作台时，仍会看到上一轮探索者窗口和协作对话（用户反馈：「新建会话还是有
+   * 探索者那些内容和探索者的对话」）。记住发起会话后，客户端只在本会话发起时展示。
+   * 旧记录没有这个字段（undefined）→ 客户端退回「按本会话 delegate 跨度自证」。
+   */
+  originSessionId?: string
 }
 
 interface RunsFile {
@@ -95,7 +105,11 @@ function previousRunPostIds(workspace: string, prev: RunRecord): string[] {
  * 开启新一轮：归档上一轮帖 + 重置登记，返回本轮 runId。
  * 首次（无上一轮记录）只重置登记，不归档。
  */
-export function beginRun(workspace: string): { runId: string; archived: number } {
+export function beginRun(
+  workspace: string,
+  /** 发起本轮委派的主会话（可选；旧调用方不传时保持旧行为） */
+  originSessionId?: string,
+): { runId: string; archived: number } {
   const data = ensureLoaded()
   const key = normalizeWorkspace(workspace)
   const prev = data.runs[key]
@@ -108,7 +122,13 @@ export function beginRun(workspace: string): { runId: string; archived: number }
     }
   }
   const runId = `run-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-  data.runs[key] = { runId, startedAtMs: Date.now(), sessions: [] }
+  const origin = typeof originSessionId === 'string' && originSessionId ? originSessionId : undefined
+  data.runs[key] = {
+    runId,
+    startedAtMs: Date.now(),
+    sessions: [],
+    ...(origin ? { originSessionId: origin } : {}),
+  }
   persist()
   return { runId, archived }
 }

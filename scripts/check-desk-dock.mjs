@@ -28,6 +28,10 @@ const dock = readFileSync(join(root, 'client/src/panel/DeskDock.tsx'), 'utf8')
 const composerDock = readFileSync(join(root, 'client/src/panel/composer-dock.ts'), 'utf8')
 const chatView = readFileSync(join(root, 'client/src/panel/chat-view.ts'), 'utf8')
 const mainChat = readFileSync(join(root, 'client/src/panel/MainChat.tsx'), 'utf8')
+// 服务端轮次登记 + /explorers 归属元信息（探索者只属于发起它的会话）
+const runsSrc = readFileSync(join(root, 'src/blackboard/runs.ts'), 'utf8')
+const routeSrc = readFileSync(join(root, 'src/board-web-route.ts'), 'utf8')
+const workflowSrc = readFileSync(join(root, 'src/orchestration/workflow.ts'), 'utf8')
 const cr = readFileSync(join(root, 'client/src/panel/ControlRoom.tsx'), 'utf8')
 const sessSrc = readFileSync(join(root, 'client/src/panel/SessionPicker.tsx'), 'utf8')
 const styles = readFileSync(join(root, 'client/src/panel/styles.ts'), 'utf8')
@@ -52,8 +56,10 @@ check('探索者面板为动态 id（<projectId>:exp:<sessionId>）',
   /paneId\(project\.id, `exp:\$\{s\.id\}`\)/.test(dock) && /kind\.startsWith\('exp:'\)/.test(dock))
 check('面板内容是真组件（非镜像）：黑板/协作对话/收益/主对话/预览/探索者',
   /<Blackboard workspace=\{project\.path\} \/>/.test(dock) &&
-  /<TalkColumn\s+sessionId=\{sid\}\s+explorers=\{data\.explorers\}/.test(dock) &&
-  /<SavingsColumn sessionId=\{sid\} explorers=\{data\.explorers\} \/>/.test(dock) &&
+  // 探索者列表统一走**过滤后的** `explorers`（只含本轮发起会话的探索者）；
+  // 直接读 data.explorers 会把上一轮内容漏进新会话（用户反馈的那条 bug）。
+  /<TalkColumn\s+sessionId=\{sid\}\s+explorers=\{explorers\}/.test(dock) &&
+  /<SavingsColumn sessionId=\{sid\} explorers=\{explorers\} \/>/.test(dock) &&
   /<MainChat sessionId=\{sid\} \/>/.test(dock) &&
   /<PreviewPanel/.test(dock) && /<ExplorerWindow/.test(dock))
 
@@ -392,7 +398,7 @@ check('正文宽度：往外拖永不变窄（max 不低于当前宽度）',
   !/const max = Math\.max\(CONTENT_MIN, avail - CONTENT_EDGE_BUDGET\)$/.test(mainChat))
 check('输入条停靠不会因 enabled 切换而永留 position:fixed',
   /PRE_DOCK_STYLES/.test(composerDock) &&
-  /PRE_DOCK_STYLES\.set\(seat, saved\)/.test(composerDock) &&
+  /PRE_DOCK_STYLES\.set\(seat, next\)/.test(composerDock) &&
   /PRE_DOCK_STYLES\.delete\(seat\)/.test(composerDock) &&
   // 退化锚点只认工作台内部的祖先：dockview 摘掉 cell 的那一瞬不能锚到无关盒子
   /if \(!node\.closest\?\.\('\.ts-dock'\)\) continue/.test(composerDock))
@@ -409,13 +415,17 @@ check('输入条随面板隐藏/被盖而藏（不再 fixed 高层级常浮在�
   /if \(!r \|\| !cellFront\(cell, r\)\) continue/.test(composerDock) &&
   /seat\.style\.visibility = ''/.test(composerDock) &&
   /'visibility',/.test(composerDock))
-check('输入条持焦时绝不隐藏（手机键盘弹出不被 blur 掉）',
-  // 手机键盘弹出会改可用高度/触发 resize+scroll；此刻若把含焦点的座位藏起来，
-  // 其中的 contenteditable 立即失焦、系统收回键盘（Chromium 实测：同一任务内临时
-  // 隐藏+恢复不丢焦点，跨一帧即 BLURED->BODY）。
+check('输入条持焦时只做视觉隐身（不 blur、也不停在宿主原位压状态栏）',
+  // 手机键盘弹出会改可用高度/触发 resize+scroll；此刻若把含焦点的座位用
+  // visibility/display 藏起来，其中的 contenteditable 立即失焦、系统收回键盘
+  // （Chromium 实测：同一任务内临时隐藏+恢复不丢焦点，跨一帧即 BLURED->BODY）。
+  // 但也不能因此就让它保持宿主原样：宿主座位是 sticky + 渐变底，会压住状态栏
+  // （用户反馈「切换对话后输入框下方一层渐变黑」）——所以持焦时改用 opacity:0
+  // + pointer-events:none 做视觉隐身。
   /const hideSeat = \(\) => \{/.test(composerDock) &&
   /const active = document\.activeElement/.test(composerDock) &&
-  /if \(active && seat\.contains\(active\)\) return/.test(composerDock) &&
+  /if \(active && seat\.contains\(active\)\) \{/.test(composerDock) &&
+  /seat\.style\.opacity = '0'/.test(composerDock) &&
   // 两条「藏」的分支必须都走 hideSeat，不得再直接写 visibility
   /if \(cands\.length === 0\) \{[\s\S]{0,240}?hideSeat\(\)/.test(composerDock) &&
   /if \(!target\) \{[\s\S]{0,320}?hideSeat\(\)/.test(composerDock) &&
@@ -425,6 +435,31 @@ check('输入条持焦时绝不隐藏（手机键盘弹出不被 blur 掉）',
   !/seat\.style\.visibility = 'hidden'\n\s+let hit/.test(composerDock) &&
   // 视口下界取布局视口与可视视口的较大者（键盘压缩视口时停靠点不越界）
   /Math\.max\(window\.innerHeight, vv \? vv\.offsetTop \+ vv\.height : 0\)/.test(composerDock))
+check('宿主切换会话重建座位后，输入条跟随新节点（不再压状态栏）',
+  // 实测：切换会话时宿主会重建 composer 座位；原实现只在 effect 挂载时 querySelector
+  // 一次，之后 apply 全写去已摘除的旧节点 → 新座位保持 sticky + 渐变底压在状态栏上。
+  /const resolveSeat = \(\): HTMLElement \| null => \{/.test(composerDock) &&
+  /if \(seat && seat\.isConnected\) return seat/.test(composerDock) &&
+  /const next = document\.querySelector<HTMLElement>\(COMPOSER_SEAT\)/.test(composerDock) &&
+  /if \(!resolveSeat\(\)\) return/.test(composerDock) &&
+  // 座位被换掉时立刻重算（不等 300ms 轮询）
+  /seatMo = new MutationObserver\(schedule\)/.test(composerDock) &&
+  /seatMo\.observe\(parent, \{ childList: true \}\)/.test(composerDock))
+check('探索者轮次按发起会话归属（新会话不继承上一轮的探索者/协作对话）',
+  /const ownsRun = useMemo/.test(dock) &&
+  /run\.originSessionId === sid/.test(dock) &&
+  /s\.name === 'tokensave_delegate'/.test(dock) &&
+  /const explorers = useMemo/.test(dock) &&
+  /ownsRun \? data\.explorers : NO_EXPLORERS/.test(dock) &&
+  /next\.run = snap\.run/.test(dock))
+check('服务端轮次登记发起会话，/explorers 返回归属元信息',
+  // 轮次按 workspace 存（runs.json），旧实现不记「谁发起的」→ 新会话继承旧内容。
+  /originSessionId\?: string/.test(runsSrc) &&
+  /export function beginRun\(/.test(runsSrc) &&
+  /origin \? \{ originSessionId: origin \} : \{\}/.test(runsSrc) &&
+  /startedAtMs: run\?\.startedAtMs \?\? null/.test(routeSrc) &&
+  /originSessionId: run\?\.originSessionId \?\? null/.test(routeSrc) &&
+  /parallelExplore\(ctx, taskDescription, codeContext, explorerCount, params\.agent, sessionId\)/.test(workflowSrc))
 check('面板被 dockview 重挂后输入条跟到新坐标（ref 失效按选择器回查活节点）',
   /const candidates = \(\): HTMLElement\[\]/.test(composerDock) &&
   // 先验 isConnected：被摘除的旧节点 rect 冻结在旧坐标，不能继续用它锚位
@@ -509,6 +544,8 @@ check('startProjectSession 导航失败要上报（不能静默成功）',
   /let navigated = false/.test(readFileSync(join(root, 'client/src/panel/sessions.ts'), 'utf8')) &&
   /if \(!navigated\) return \{ ok: false, error: '会话导航服务不可用' \}/.test(
     readFileSync(join(root, 'client/src/panel/sessions.ts'), 'utf8')))
+check('新建/复用空白会话排除探索者会话（否则新会话 = 一条探索者对话）',
+  /readProjectSessions\(ctx, projectPath\)[\s\S]{0,80}?\.find\(\(s\) => s\.blank && !s\.explorer && s\.id !== excludeSessionId\)/.test(sessionsSrc))
 
 // —— 6. 产物 ——
 const dist = join(root, 'dist/client.js')

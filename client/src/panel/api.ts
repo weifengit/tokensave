@@ -110,6 +110,24 @@ export interface TelemetrySession {
 }
 
 /**
+ * 本轮探索的归属信息（服务端轮次登记 runs.json 的投影）。
+ *
+ * originSessionId 是本轮委派的发起会话；startedAtMs 让「升级前没记 origin」的旧记录
+ * 也能由客户端用本会话的 tokensave_delegate 跨度自证归属（见 DeskDock 的 ownsRun）。
+ */
+export interface ExplorerRunInfo {
+  runId: string
+  startedAtMs: number | null
+  originSessionId: string | null
+}
+
+/** 探索者快照：当前轮的探索者会话 + 这一轮属于谁。 */
+export interface ExplorerSnapshot {
+  sessions: TelemetrySession[]
+  run: ExplorerRunInfo | null
+}
+
+/**
  * 探索者探测：tokensave 自有路由（严格按项目隔离）。
  *
  * @param workspace 当前项目路径。传入后只取该项目工作区的探索者——**不再回退全量**：
@@ -118,7 +136,7 @@ export interface TelemetrySession {
  *   （规范化 + 尾部路径段比较），客户端只做严格收敛。
  *   不传 workspace 时返回全量（仅调试用）。
  */
-export async function fetchExplorers(workspace?: string): Promise<TelemetrySession[]> {
+export async function fetchExplorers(workspace?: string): Promise<ExplorerSnapshot> {
   const pick = (data: any): TelemetrySession[] =>
     (Array.isArray(data?.sessions) ? data.sessions : []).filter(
       (s: any) => typeof s?.title === 'string' && s.title.startsWith('tokensave-')
@@ -127,7 +145,21 @@ export async function fetchExplorers(workspace?: string): Promise<TelemetrySessi
   const url = workspace ? `${base}?workspace=${encodeURIComponent(workspace)}` : base
   const res = await fetch(url)
   if (!res.ok) throw new Error(`探索者快照加载失败（HTTP ${res.status}）`)
-  return pick(await res.json())
+  const data = await res.json()
+  // 服务端可能还没热更新（旧版本没有 runId/startedAtMs）：缺字段时按 null 处理，
+  // 客户端会退回「无轮次归属信息 → 不过滤」的旧行为，不会误藏探索者。
+  const runId = typeof data?.runId === 'string' && data.runId ? data.runId : null
+  const run: ExplorerRunInfo | null = runId
+    ? {
+        runId,
+        startedAtMs: Number.isFinite(Number(data?.startedAtMs)) ? Number(data.startedAtMs) : null,
+        originSessionId:
+          typeof data?.originSessionId === 'string' && data.originSessionId
+            ? data.originSessionId
+            : null,
+      }
+    : null
+  return { sessions: pick(data), run }
 }
 
 /**

@@ -91,8 +91,11 @@ check('自动继续只认 fail（新增 pending 不会触发自动发消息）',
   /noteUserActivity\(a\.sessionId\)\s*\n\s*return/.test(cont))
 
 check('用户一操作就停（答完弹窗，铃声不会响不停）',
-  /const INTERACTION_EVENTS = \['pointerdown', 'keydown', 'touchstart', 'wheel'\] as const/.test(sound) &&
-  /function onUserInteraction\(\): void \{[\s\S]{0,200}?stopSound\(\)/.test(sound))
+  // 事件集要覆盖鼠标、触屏、键盘与滚动（部分浏览器 / 触屏设备只发其中几种）
+  /const INTERACTION_EVENTS = \[/.test(sound) &&
+  /'pointerdown', 'mousedown', 'click', 'keydown',/.test(sound) &&
+  /'touchstart', 'touchmove', 'wheel', 'scroll',/.test(sound) &&
+  /function onUserInteraction\(\): void \{[\s\S]{0,240}?stopSoundEverywhere\(\)/.test(sound))
 
 check('自检已接入 pnpm test 链',
   pkg.scripts['test:pending-alert'] !== undefined && pkg.scripts.test.includes('test:pending-alert'))

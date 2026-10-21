@@ -124,8 +124,13 @@ function notifySettings(): void {
 
 /** 改设置（部分更新）：立刻本地生效 + 持久化 + 通知，并**上报服务端**让另一台设备跟上 */
 export function setSoundSettings(patch: Partial<SoundSettings>): SoundSettings {
+  const wasEnabled = settings.enabled
   settings = normalize({ ...settings, ...patch })
   persistLocal()
+  // 本端用开关关掉时立刻掐断正在响的。
+  // 为什么不能只靠跨端同步：自己写出去的回包会被 appliedRev 挡掉（防回声成环），
+  // 所以「本端关掉」这条路上没有任何人会调 stopSound —— 不在这里停，声音就继续响到时长上限。
+  if (wasEnabled && !settings.enabled) stopSound()
   notifySettings()
   schedulePush()
   return { ...settings }
@@ -267,9 +272,34 @@ export function stopSound(): void {
   if (wake) wake()
 }
 
+/**
+ * 掐断提示音，并广播给所有在线端一起静音。
+ *
+ * 提示音是在**每个客户端各自**播放的（手机、电脑、另一个标签页都可能同时在响）；
+ * 只停本地的话，用户在这台机器上点了半天，另一端的告警还在响 —— 听感就是
+ * 「在 dsh 页面操作停不下来」。手动 ■ 与页面内任意交互都走这里。
+ */
+export function stopSoundEverywhere(): void {
+  stopSound()
+  broadcastStop()
+}
+
 // —— 用户一操作就自动停（用户需求：不用每次手动点 ■）——
 /** 页面内哪些事件算“用户在操作”。pointerdown 同时覆盖鼠标与触屏 */
-const INTERACTION_EVENTS = ['pointerdown', 'keydown', 'touchstart', 'wheel'] as const
+const INTERACTION_EVENTS = [
+  'pointerdown', 'mousedown', 'click', 'keydown',
+  'touchstart', 'touchmove', 'wheel', 'scroll',
+] as const
+/**
+ * 「本端没在响」时的广播节流。
+ *
+ * 为什么要广播：提示音是**每个客户端各自**播的，告警也来自各端自己的侦测。
+ * 用户在 A 页面上点一下，B 标签页 / 另一台设备可能正在响同一轮告警 —— 不给它们
+ * 发一条停止，用户就会觉得「点了没反应」。
+ * 但也不能把每个 keydown 都发出去：本端没在响时按 8s 一拍广播就够了。
+ */
+const IDLE_STOP_BROADCAST_MS = 8_000
+let lastIdleStopAt = 0
 /** 起音后这段毫秒内的操作不算（避免“正在操作时刚好响了一声”被当场抹掉） */
 const INTERACTION_GRACE_MS = 250
 /** 最近一次起音时间（宽限期用） */
@@ -278,9 +308,17 @@ let lastStartAt = 0
 let autoStopArmed = false
 
 function onUserInteraction(): void {
-  if (!playingLabel) return
-  if (Date.now() - lastStartAt < INTERACTION_GRACE_MS) return
-  stopSound()
+  const now = Date.now()
+  if (playingLabel) {
+    if (now - lastStartAt < INTERACTION_GRACE_MS) return
+    // 本地先停，再广播给其它在线端（手机 / 另一标签页可能正在响同一轮告警）
+    stopSoundEverywhere()
+    return
+  }
+  // 本端没在响，但别的端可能在响（同一轮告警会被多个客户端各自侦测到）
+  if (now - lastIdleStopAt < IDLE_STOP_BROADCAST_MS) return
+  lastIdleStopAt = now
+  broadcastStop()
 }
 
 /** 挂上“一操作就停”的全局监听（只挂一次，capture 阶段先于业务处理） */
@@ -290,6 +328,13 @@ function armAutoStop(): void {
   for (const type of INTERACTION_EVENTS) {
     window.addEventListener(type, onUserInteraction, true)
   }
+  // 窗口失焦也算「人在操作」：点进项目预览的 iframe、切到另一窗口、点浏览器菜单……
+  // 这些操作根本不会在本文档里冒泡出 pointerdown（iframe 内的事件属于它自己的文档），
+  // 旧实现只监听本文档事件，于是「点什么都没反应、声音一直响」。
+  window.addEventListener('blur', onUserInteraction, true)
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') onUserInteraction()
+  })
 }
 
 /**
@@ -402,6 +447,30 @@ async function pushNow(): Promise<void> {
   }
 }
 
+/** 「停止」广播去抖：用户连续点击 / 滚动只发一次，不把服务端打成筛子 */
+const STOP_BROADCAST_DEBOUNCE_MS = 800
+let lastStopBroadcastAt = 0
+
+/**
+ * 广播一次「让所有端静音」。
+ *
+ * 不带 settings / 不改 rev：它只是一次瞬时事件。旧服务端不认 action:"stop" 会
+ * 回 400，catch 掉即可 —— 本地已经停了，跨端能力等新版服务端生效后自动补上。
+ */
+function broadcastStop(): void {
+  if (typeof window === 'undefined') return
+  const now = Date.now()
+  if (now - lastStopBroadcastAt < STOP_BROADCAST_DEBOUNCE_MS) return
+  lastStopBroadcastAt = now
+  void fetch(SYNC_PATH, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'stop', by: deviceId() }),
+  }).catch(() => {
+    /* 离线 / 旧服务端：本地已经停了，不影响体验 */
+  })
+}
+
 /** 应用服务端状态。返回是否真的应用了。 */
 function applyRemoteState(state: any): boolean {
   if (!state || typeof state.rev !== 'number') return false
@@ -471,6 +540,11 @@ function openStream(): void {
       } catch {
         /* 忽略坏帧 */
       }
+    })
+    // 「别的一端要求静音」：手机在页面上点了一下 / 按了 ■，电脑端也得当场停。
+    // 只停声音，不动设置、不写 rev —— 与 settings 帧是两条互不干扰的路。
+    stream.addEventListener('stop', () => {
+      stopSound()
     })
     stream.addEventListener('error', () => {
       // EventSource 自己会按 retry 重连；重连期间用轮询兜底
@@ -556,6 +630,8 @@ export function initSoundBridge(): () => void {
   get: getSoundSettings,
   set: setSoundSettings,
   play: (role: SoundRole) => playRole(role, true),
-  stop: stopSound,
+  // stopEverywhere 才是与面板 ■ / 页面交互同一条路（本地停 + 广播给其它端）
+  stop: stopSoundEverywhere,
+  stopLocal: stopSound,
   playing: () => playingLabel,
 }

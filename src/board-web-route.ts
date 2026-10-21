@@ -1209,7 +1209,17 @@ function handleExplorers(ctx: Context, req: any, res: any): void {
         state: agent?.status === 'running' ? 'running' : 'idle'
       })
     }
-    writeJson(res, 200, { timestamp: Date.now(), workspace: wanted, runId: run?.runId ?? null, sessions })
+    // 除探索者列表外，还要带出**轮次归属**：originSessionId 是本轮委派的发起会话，
+    // startedAtMs 供旧记录（升级前没记 origin）由客户端用本会话 delegate 跨度自证。
+    // 客户端据此只在本会话发起时展示探索者/协作对话（见 DeskDock 的 ownsRun）。
+    writeJson(res, 200, {
+      timestamp: Date.now(),
+      workspace: wanted,
+      runId: run?.runId ?? null,
+      startedAtMs: run?.startedAtMs ?? null,
+      originSessionId: run?.originSessionId ?? null,
+      sessions,
+    })
   } catch (error) {
     console.error('[dsh-tokensave] explorers route failed:', error)
     writeJson(res, 500, { error: 'explorers unavailable' })
@@ -1900,6 +1910,13 @@ export function mountTokensaveWebRoutes(ctx: Context): void {
     req.on('end', () => {
       try {
         const parsed = body ? JSON.parse(body) : {}
+        // 交互广播：任一端点了 / 滚了 / 按了 → 让所有在线端立刻静音。
+        // 不改设置、不动 rev —— 它只是一次瞬时事件，不会与设置同步打架。
+        if (parsed && parsed.action === 'stop') {
+          const payload = soundSync.stop(String(parsed.by ?? ''))
+          writeJson(res, 200, { ok: true, ...payload })
+          return
+        }
         const settings = sanitizeSettingsPayload(parsed?.settings)
         const next = soundSync.apply(settings, String(parsed?.by ?? ''))
         console.log(`[dsh-tokensave] 提示音设置已同步（rev ${next.rev}，来自 ${next.updatedBy || '未知设备'}，在线 ${soundSync.clientCount()} 端）`)

@@ -66,6 +66,14 @@ export interface SoundSync {
   snapshot(): SoundState
   /** 落盘并广播；返回新状态（rev +1）。 */
   apply(settings: Record<string, unknown>, by: string): SoundState
+  /**
+   * 广播一次「停止正在响的提示音」（不改设置、不改 rev）。
+   *
+   * 为什么需要它：提示音在**每一个在线客户端**上各自播放（手机、电脑、另一个标签页
+   * 都可能同时在响）。只在本地 stopSound 的话，用户在这一端点了/滚了，另一端还在响
+   * ——听感就是「在 dsh 页面操作停不下来」。所以任一端拦停时向所有端广播一次。
+   */
+  stop(by: string): { at: number; by: string }
   /** 把这次响应升级成 SSE 长连接，并立即推一份当前状态。 */
   openStream(req: any, res: any): void
   /** 当前在线长连接数（自检/日志用）。 */
@@ -178,6 +186,18 @@ export function createSoundSync(filePath: string): SoundSync {
       req.on?.('close', close)
       req.on?.('error', close)
       res.on?.('close', close)
+    },
+
+    stop(by: string) {
+      const payload = { at: Date.now(), by: String(by || '').slice(0, 64) }
+      for (const res of [...clients]) {
+        if (res.writableEnded || res.destroyed) {
+          drop(res)
+          continue
+        }
+        send(res, 'stop', payload)
+      }
+      return payload
     },
 
     clientCount: () => clients.size,

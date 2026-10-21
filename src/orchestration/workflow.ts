@@ -63,7 +63,9 @@ export async function executeWorkflow(ctx: Context, params: WorkflowParams) {
   }
 
   // ── 阶段 2：并行派发探索者 ──
-  const explorers = await parallelExplore(ctx, taskDescription, codeContext, explorerCount, params.agent)
+  // 最后一个参数是**发起会话**：轮次登记它，工作台才能只在该会话里展示本轮探索者
+  // （否则新会话进入同一项目时仍看到上一轮的探索者窗口与协作对话）。
+  const explorers = await parallelExplore(ctx, taskDescription, codeContext, explorerCount, params.agent, sessionId)
 
   // ── 阶段 3：交叉验证（等全员发帖 + 评审读正文）──
   const { text, silent } = await crossValidate(ctx, taskDescription, workspace, explorers)

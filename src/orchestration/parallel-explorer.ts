@@ -79,7 +79,9 @@ function liveProviderIds(ctx: Context): Set<string> | null {
 }
 export async function parallelExplore(
   ctx: Context, taskDescription: string,
-  codeContext: string | null, explorerCount: number, agent?: Agent
+  codeContext: string | null, explorerCount: number, agent?: Agent,
+  /** 发起本轮委派的主会话（记进轮次登记，供工作台按会话归属展示） */
+  originSessionId?: string,
 ): Promise<Array<{ sessionId: string; label: string; model: string }>> { // model 供简报标注未发帖者
   // 探索者集合：用户若在「探索者设置」里存过选择，就**完全按选择跑**（自行控制）；
   // 从未配置时保持旧行为——内置预设按 explorer_count 截取。
@@ -116,7 +118,8 @@ export async function parallelExplore(
   const cwd = resolveExplorerCwd(agent)
   // 轮次隔离（BUG-1/优化-6）：开新一轮 = 归档上一轮 tokensave 帖 + 重置登记；
   // 建完探索者后登记本轮会话，/explorers 路由据此过滤 → 旧轮窗口 8s 内消失。
-  const run = beginRun(cwd)
+  // 把发起会话记进轮次登记：新会话不该看到上一轮的探索者/协作对话。
+  const run = beginRun(cwd, originSessionId)
   if (run.archived > 0) console.log(`[dsh-tokensave] 轮次隔离：已归档上一轮 ${run.archived} 条黑板帖（${run.runId}）`)
   // 1. 并行创建探索者会话——官方原语直建（agents.create + 预设装配 + 标题事件），
   //    见 src/session/create-explorer-session.ts；不再依赖 dsh-call-session 的 session_create。

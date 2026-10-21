@@ -29,7 +29,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { installDockview } from '../vendor/dockview'
 import { fetchExplorers, fetchProjectInfo } from './api'
-import type { TelemetrySession } from './api'
+import type { ExplorerRunInfo, TelemetrySession } from './api'
 import { Blackboard } from './Blackboard'
 import { TalkColumn } from './TalkColumn'
 import { SavingsColumn } from './SavingsColumn'
@@ -55,7 +55,7 @@ import {
   SKIN_GROUPS, readSkinId, chooseSkin, applySkin as applySkinVars, bootSkin, currentThemeMode,
 } from './skins'
 import { startThemeWatch } from './theme'
-import { getClientContext, subscribeSession } from '../session-subscribe'
+import { getClientContext, subscribeSession, subscribeSessionMetrics } from '../session-subscribe'
 import { KINDS, paneId, parsePaneId, paneTitle, paneIcon, type Kind } from './desk-panes'
 import type { ProjectRecord } from './store'
 
@@ -664,9 +664,17 @@ function kindLabel(id: string): string {
 
 interface ProjectData {
   explorers: TelemetrySession[]
+  /** 当前轮的归属信息（无轮次登记时为 null / 缺省） */
+  run?: ExplorerRunInfo | null
   devUrl?: string
   devRunning?: boolean
 }
+
+/**
+ * 空探索者数组：当前会话不是本轮发起者时用它代替真实列表。
+ * 用模块级常量而不是 `[]` 字面量 —— 保持引用稳定，依赖数组不会每帧变化。
+ */
+const NO_EXPLORERS: TelemetrySession[] = []
 
 export interface DeskDockProps {
   project: ProjectRecord
@@ -803,6 +811,65 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
     return latestProjectSession(ctx, project.path)?.id ?? ''
   }, [project.path, sessionId, sessions])
 
+  /**
+   * 当前会话的 tokensave_delegate 工具跨度（已完成 + 进行中）。
+   *
+   * 用途：判断「当前这一轮探索是不是本会话发起的」。新记录（有 originSessionId）
+   * 直接比 id；**升级前的旧轮次没有 origin**，只能由本会话自己的 delegate 跨度自证。
+   */
+  const [delegateSpans, setDelegateSpans] = useState<{ startMs: number; endMs: number | null }[]>([])
+  useEffect(() => {
+    if (!sid) {
+      setDelegateSpans((prev) => (prev.length > 0 ? [] : prev))
+      return
+    }
+    return subscribeSessionMetrics(sid, (m) => {
+      const next = [...m.toolSpans, ...m.pendingTools]
+        .filter((s) => s.name === 'tokensave_delegate')
+        .map((s) => ({ startMs: s.startMs, endMs: s.endMs ?? null }))
+      // 指标每次事件都会推：内容没变就复用旧数组，避免无谓重渲染
+      setDelegateSpans((prev) => (
+        prev.length === next.length
+        && prev.every((p, i) => p.startMs === next[i].startMs && p.endMs === next[i].endMs)
+          ? prev
+          : next
+      ))
+    })
+  }, [sid])
+
+  /**
+   * 本轮探索者归属：**只在本会话发起的那一轮里**展示探索者与协作内容。
+   *
+   * 背景（用户反馈）：项目有探索者时，新建会话进入工作台仍带着上一轮的探索者窗口、
+   * 「协作对话」里的历史发言 —— 看起来像新会话继承了旧内容。根因是探索者轮次
+   * 按 workspace 登记（runs.json），不看发起会话。
+   * 判定顺序：
+   *   ① 服务端记了 originSessionId → 权威比较当前会话 id；
+   *   ② 旧记录没记 origin → 用本会话的 delegate 跨度与轮次开始时间比对自证；
+   *   ③ 旧服务端连 startedAtMs 都没返回 → 退回「本会话有没有 delegate 跨度」；
+   */
+  const ownsRun = useMemo(() => {
+    const run = data.run ?? null
+    if (!run) return true
+    if (run.originSessionId) return run.originSessionId === sid
+    if (run.startedAtMs === null) {
+      // 旧服务端（客户端先布、服务端还没重启）：没有开始时间可比对 —— 退回
+      // 「本会话是否用过 delegate」；新会话一个跨度都没有，仍不会继承上一轮内容。
+      return delegateSpans.length > 0
+    }
+    const at = run.startedAtMs
+    // delegate 的 tool/call 先于轮次开始（execute 里才 beginRun），留 5s 余量；
+    // 进行中的跨度没有 endMs，按「至今仍在进行」处理。
+    return delegateSpans.some((s) => (
+      s.startMs - 5_000 <= at && at <= (s.endMs ?? Date.now()) + 5_000
+    ))
+  }, [data.run, sid, delegateSpans])
+  /** 对外只暴露「属于本轮」的探索者：新会话拿到空数组，面板随之移除。 */
+  const explorers = useMemo(
+    () => (ownsRun ? data.explorers : NO_EXPLORERS),
+    [ownsRun, data.explorers],
+  )
+
   const titleFor = useCallback((id: string) => paneTitle(id, project.name), [project.name])
 
   // —— 项目隔离：宿主当前会话必须与工作台显示的那条一致 ——
@@ -933,9 +1000,14 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
   useEffect(() => {
     let alive = true
     const poll = async () => {
-      const next: ProjectData = { explorers: [] }
+      // 用 Partial：网络抖动时**保留上次**的探索者/预览（旧实现先置空数组，
+      // 一次失败就把探索者窗口和协作对话整个抹掉，与注释承诺相反）。
+      const next: Partial<ProjectData> = {}
       try {
-        next.explorers = await fetchExplorers(project.path)
+        const snap = await fetchExplorers(project.path)
+        next.explorers = snap.sessions
+        // 轮次归属（发起会话 / 开始时间）：工作台据此只在本会话发起的那一轮里展示
+        next.run = snap.run
       } catch {
         /* 保留上次 */
       }
@@ -1577,10 +1649,10 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
     } catch (e) {
       console.warn('[desk-dock] 预览归位失败', e)
     }
-    data.explorers.forEach((s) => ensure(paneId(project.id, `exp:${s.id}`)))
+    explorers.forEach((s) => ensure(paneId(project.id, `exp:${s.id}`)))
     // 探索者消失 → 移除其面板；其余面板若被用户关掉，交由 chips / ⋯ 菜单恢复
     const wanted = new Set<string>(
-      data.explorers.map((s) => paneId(project.id, `exp:${s.id}`)),
+      explorers.map((s) => paneId(project.id, `exp:${s.id}`)),
     )
     Object.keys(containersRef.current).forEach((id) => {
       if (id.startsWith(`${project.id}:exp:`) && !wanted.has(id)) {
@@ -1588,7 +1660,7 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
         if (r) apis[r].removePanel(apis[r].getPanel(id))
       }
     })
-  }, [data, hiddenRegions, project.id, regionOf])
+  }, [explorers, data, hiddenRegions, project.id, regionOf])
 
   // —— 输入条停靠进「DSH 主对话」面板 ——
   const chatPaneId = paneId(project.id, 'chat')
@@ -2013,9 +2085,9 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
       if (k === 'preview' && !data.devUrl) return
       ids.push(paneId(project.id, k))
     })
-    data.explorers.forEach((s) => ids.push(paneId(project.id, `exp:${s.id}`)))
+    explorers.forEach((s) => ids.push(paneId(project.id, `exp:${s.id}`)))
     return ids
-  }, [data, project.id])
+  }, [explorers, data.devUrl, project.id])
   const openIds = liveIds.filter((id) => allPaneIds.includes(id))
   const closedIds = allPaneIds.filter((id) => !liveIds.includes(id))
   /**
@@ -2024,8 +2096,8 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
    * 探索者状态角标：跑 / 刚出问题（notice）/ 有新汇报 / 安静。
    * 直接在 dockview 的**标签图标**上画一个小点（CSS ::after），方便一眼定位是哪位。
    */
-  explorersRef.current = data.explorers ?? []
-  const explorerBadges = useExplorerBadges(data.explorers ?? [], seenRef)
+  explorersRef.current = explorers
+  const explorerBadges = useExplorerBadges(explorers, seenRef)
   badgesRef.current = explorerBadges
   /**
    * 把角标画到标签上。
@@ -2139,7 +2211,7 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
    * 宿主 API：sessions.scope(id).get('conversation').cancel()（见 sessions.ts 的 stopSession）。
    */
   const stopAllExplorers = useCallback(async () => {
-    const list = (data.explorers ?? []).filter((e) => e.state === 'running')
+    const list = explorers.filter((e) => e.state === 'running')
     if (!list.length) {
       setStopNote('没有在运行的探索者')
       window.setTimeout(() => setStopNote(''), 2500)
@@ -2151,7 +2223,7 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
     setStopNote(okN === list.length ? `已停止 ${okN} 个探索者` : `已停止 ${okN}/${list.length} 个（其余可能已自行结束）`)
     window.setTimeout(() => setStopNote(''), 4000)
     window.setTimeout(() => setReloadKey((k) => k + 1), 600)
-  }, [data.explorers])
+  }, [explorers])
   stopAllExplorersRef.current = stopAllExplorers
 
   /** 恢复/打开一个面板（chips 与「全部打开」用）。 */
@@ -2205,7 +2277,7 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
         return (
           <TalkColumn
             sessionId={sid}
-            explorers={data.explorers}
+            explorers={explorers}
             actions={
               <>
                 {stopNote ? <span className="ts-talk-note">{stopNote}</span> : null}
@@ -2223,7 +2295,7 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
           />
         )
       }
-      if (kind === 'save') return <SavingsColumn sessionId={sid} explorers={data.explorers} />
+      if (kind === 'save') return <SavingsColumn sessionId={sid} explorers={explorers} />
       if (kind === 'preview') {
         return (
           <PreviewPanel
@@ -2246,7 +2318,7 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
       }
       if (kind.startsWith('exp:')) {
         const esid = kind.slice(4)
-        const es = data.explorers.find((x) => x.id === esid)
+        const es = explorers.find((x) => x.id === esid)
         if (!es) return <div className="ts-dock-empty">探索者已结束</div>
         // 三键接到 dockview：最小化→隐藏面板 / 最大化→组最大化 / 关闭→关面板（可恢复）
         return (
@@ -2275,7 +2347,7 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
       }
       return null
     },
-    [project, sid, data, reloadKey, closePanel, regionOf],
+    [project, sid, data, reloadKey, closePanel, regionOf, explorers],
   )
   return (
     <div
