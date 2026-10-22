@@ -56,19 +56,23 @@ check('emitPendingAlert：与结局告警分开（没有轮次维度，不按 se
 
 check('起音点就在 statuses 循环的 pending 判定处（与黄灯同源）',
   /const isPending = row\?\.pendingInteraction != null/.test(pulse) &&
-  /if \(wasPending === false && isPending\) \{[\s\S]{0,200}?emitPendingAlert\(id,/.test(pulse))
+  /if \(isNewPending\) \{[\s\S]{0,200}?emitPendingAlert\(id,/.test(pulse))
 
 console.log('— B. 只响「刚弹出来」这一拍（不做噪音）—')
-
-check('判据是 false → true 跃迁（首次观测 undefined 不响）',
-  /if \(wasPending === false && isPending\) \{/.test(pulse) &&
+check('判据是「新弹出一张卡」（首次观测 undefined 不响）',
+  // 判据从「false → true 跃迁」放宽为「卡片身份变了」：问答选择题常常在上一张
+  // 还没答完时又来一张，布尔沿一直是 true → 旧判据永远不触发 → 有黄灯没声音。
+  // 首次观测（prevKey === undefined）仍然不响：那是切页面/刷新撞上已有的卡片。
+  /const isNewPending = isPending && \(/.test(pulse) &&
+  /prevKey !== undefined && prevKey !== pendingKey/.test(pulse) &&
+  /wasPending === false/.test(pulse) &&
   !/if \(!wasPending && isPending\) \{[\s\S]{0,200}?emitPendingAlert\(/.test(pulse))
 
 check('同处的「作废已读标注」仍是 !wasPending（不因起音改动而被收窄）',
   /if \(!wasPending && isPending\) \{[\s\S]{0,300}?persistReadMarks\(\)/.test(pulse))
 
-check('只在跃迁这一拍查标题（不在每轮轮询里逐个会话查）',
-  /if \(wasPending === false && isPending\) \{[\s\S]{0,200}?const pendingRow = sessionRow\(ctx, id\)/.test(pulse))
+check('只在起音那一拍查标题（不在每轮轮询里逐个会话查）',
+  /if \(isNewPending\) \{[\s\S]{0,200}?const pendingRow = sessionRow\(ctx, id\)/.test(pulse))
 
 console.log('— C. 落到声音上（有声、标签也对）—')
 
@@ -91,11 +95,30 @@ check('自动继续只认 fail（新增 pending 不会触发自动发消息）',
   /noteUserActivity\(a\.sessionId\)\s*\n\s*return/.test(cont))
 
 check('用户一操作就停（答完弹窗，铃声不会响不停）',
-  // 事件集要覆盖鼠标、触屏、键盘与滚动（部分浏览器 / 触屏设备只发其中几种）
-  /const INTERACTION_EVENTS = \[/.test(sound) &&
+  // 真实输入事件集：鼠标、触屏、键盘 + wheel（部分浏览器只发其中几种）
+  /const GESTURE_EVENTS = \[/.test(sound) &&
   /'pointerdown', 'mousedown', 'click', 'keydown',/.test(sound) &&
-  /'touchstart', 'touchmove', 'wheel', 'scroll',/.test(sound) &&
+  /'touchstart', 'touchmove', 'wheel',/.test(sound) &&
   /function onUserInteraction\(\): void \{[\s\S]{0,240}?stopSoundEverywhere\(\)/.test(sound))
+check('程序化滚动不算用户操作（否则告警刚响就被自动贴底捷杀）',
+  // 用户反馈：「黄色提醒但没声音」。MsgList 每帧写 scrollTop 贴底，而题目卡片弹出 /
+  // 一轮结束恰好就是内容追加那一刻 —— scroll 一律当交互会把提示音当场捷掉。
+  // 判据：scroll 只在紧跟真实输入（SCROLL_INTENT_MS 内）才算。
+  !/'scroll',\n/.test(sound) &&
+  /const SCROLL_INTENT_MS = \d+/.test(sound) &&
+  /function onScroll\(\): void \{[\s\S]{0,140}?lastGestureAt[\s\S]{0,80}?return[\s\S]{0,40}?onUserInteraction\(\)/.test(sound) &&
+  /function onGesture\(\): void \{[\s\S]{0,80}?lastGestureAt = Date\.now\(\)/.test(sound) &&
+  /window\.addEventListener\('scroll', onScroll, true\)/.test(sound))
+check('自己的 stop 广播回声不掐自己（否则刚起音就被自己那条回声停掉）',
+  // 时序：用户点一下 → 本端广播 stop → 几十毫秒后题目卡片到达 → 告警起音 →
+  // 自己那条 stop 回声此刻到达 → 把刚响 20ms 的声音停掉 → 「有黄灯没声音」。
+  /stream\.addEventListener\('stop', \(ev: MessageEvent\) => \{/.test(sound) &&
+  /if \(by && by === deviceId\(\)\) return/.test(sound))
+check('待确认卡片换了身份就重新提醒（问答选择题连着来时布尔沿看不出变化）',
+  /function pendingIdentityOf\(interaction: unknown\): string \{/.test(pulse) &&
+  /for \(const field of \['key', 'callId', 'id'\] as const\)/.test(pulse) &&
+  /prevPendingKey\.set\(id, pendingKey\)/.test(pulse) &&
+  /prevKey !== undefined && prevKey !== pendingKey/.test(pulse))
 
 check('自检已接入 pnpm test 链',
   pkg.scripts['test:pending-alert'] !== undefined && pkg.scripts.test.includes('test:pending-alert'))

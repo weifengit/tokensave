@@ -30,6 +30,17 @@ export interface SoundState {
   updatedAt: number
   /** 谁改的（客户端上报的设备号，仅用于日志与排查） */
   updatedBy: string
+  /**
+   * 最近一次「全体静音」事件的时间戳（毫秒）。
+   *
+   * 为什么它必须**落盘**：手机与电脑可能连的是**不同的 DSH 实例**
+   * （桌面 127.0.0.1:3080，手机走 anynet 网关那个实例）。SSE 长连接只在
+   * **同一实例**内有效，广播跨不过去；而落盘文件是两个实例唯一的公共面。
+   * 客户端靠它判「有没有新的静音事件」（比 rev 合适：它不是设置，不该动 rev）。
+   */
+  stopAt: number
+  /** 那次静音是哪个设备发起的（客户端据此忽略自己的回声） */
+  stopBy: string
   settings: Record<string, unknown>
 }
 
@@ -43,7 +54,7 @@ const MAX_SETTINGS_BYTES = 4096
 const HEARTBEAT_MS = 25_000
 
 function emptyState(): SoundState {
-  return { rev: 0, updatedAt: 0, updatedBy: '', settings: {} }
+  return { rev: 0, updatedAt: 0, updatedBy: '', stopAt: 0, stopBy: '', settings: {} }
 }
 
 /**
@@ -89,19 +100,28 @@ export function createSoundSync(filePath: string): SoundSync {
   let state: SoundState | null = null
   const clients = new Set<any>()
 
+  /**
+   * 读当前状态。
+   *
+   * ⚠️ **每次都重新读盘**（不再只认进程内缓存）：跨实例同步全靠这一份文件 ——
+   * 另一个实例（手机那个 / 电脑这个）改了它，本实例必须马上看到，
+   * 否则「手机一操作，电脑端静音」永远传不过来（用户反馈：「提示音还是各管各的」）。
+   * 文件很小（几百字节），读取只发生在快照请求与写操作上，代价可忽略。
+   */
   const load = (): SoundState => {
-    if (state) return state
     try {
       const data = JSON.parse(fs.readFileSync(filePath, 'utf8'))
       state = {
         rev: Number.isFinite(data?.rev) ? Number(data.rev) : 0,
         updatedAt: Number.isFinite(data?.updatedAt) ? Number(data.updatedAt) : 0,
         updatedBy: typeof data?.updatedBy === 'string' ? data.updatedBy : '',
+        stopAt: Number.isFinite(data?.stopAt) ? Number(data.stopAt) : 0,
+        stopBy: typeof data?.stopBy === 'string' ? data.stopBy : '',
         settings: sanitizeSettingsPayload(data?.settings ?? {}),
       }
     } catch {
-      // 文件不存在 / 损坏：从空状态起，不阻塞插件启动
-      state = emptyState()
+      // 文件不存在 / 损坏：用内存里那份（刚写过的），不阻塞插件启动
+      if (!state) state = emptyState()
     }
     return state
   }
@@ -144,6 +164,9 @@ export function createSoundSync(filePath: string): SoundSync {
         rev: prev.rev + 1,
         updatedAt: Date.now(),
         updatedBy: String(by || '').slice(0, 64),
+        // 设置变更**不**动静音事件（那是另一条互不干扰的路）
+        stopAt: prev.stopAt,
+        stopBy: prev.stopBy,
         settings,
       }
       persist(next)
@@ -190,6 +213,11 @@ export function createSoundSync(filePath: string): SoundSync {
 
     stop(by: string) {
       const payload = { at: Date.now(), by: String(by || '').slice(0, 64) }
+      // ① 落盘：跨实例的唯一通道（手机那个实例写的，电脑这个实例读得到）
+      const prev = load()
+      state = { ...prev, stopAt: payload.at, stopBy: payload.by }
+      persist(state)
+      // ② 同实例内：立刻推给在线客户端（毫秒级，不用等轮询）
       for (const res of [...clients]) {
         if (res.writableEnded || res.destroyed) {
           drop(res)
@@ -197,6 +225,8 @@ export function createSoundSync(filePath: string): SoundSync {
         }
         send(res, 'stop', payload)
       }
+      // ③ 再推一份状态：本实例里靠轮询快照的客户端也能立刻看到（跨实例靠上面的落盘）
+      broadcast(state)
       return payload
     },
 

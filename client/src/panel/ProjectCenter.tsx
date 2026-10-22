@@ -441,7 +441,7 @@ export function ProjectCenter({ sessionId }: Props) {
         {/* 工具条：展示方式切换（卡片/列表）+ 排序方式切换 */}
         {projects.length > 0 && (
           <div className="ts-center-toolbar">
-            <div className="ts-seg" role="group" aria-label="展示方式">
+            <div className="ts-seg ts-seg-mode" role="group" aria-label="展示方式">
               <button
                 className={`ts-seg-btn${prefs.mode === 'card' ? ' active' : ''}`}
                 onClick={() => setPref({ mode: 'card' })}
@@ -453,7 +453,7 @@ export function ProjectCenter({ sessionId }: Props) {
                 title="列表模式：表格展示全部信息（点记录行进工作台，项目介绍可就地编辑）"
               >☰ 列表</button>
             </div>
-            <div className="ts-seg" role="group" aria-label="排序方式">
+            <div className="ts-seg ts-seg-sort" role="group" aria-label="排序方式">
               <span className="ts-seg-label">排序</span>
               <button
                 className={`ts-seg-btn${prefs.sort === 'name' ? ' active' : ''}`}

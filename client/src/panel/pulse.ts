@@ -224,6 +224,24 @@ export interface InterruptInfo {
 }
 
 /** 告警订阅者（sound.ts 的告警桥注册进来） */
+
+/**
+ * 待确认卡片的**身份**（同一张卡 = 同一个 key，换一张 = 新 key）。
+ *
+ * 用途：判定「是不是又弹了一张新卡片」。问答选择题常常在上一张还没答完时又来一张，
+ * 这时布尔沿（pending true → true）看不出变化，只有身份变了才知道该再提醒一次。
+ * 宿主卡片（PendingQuestion）自带 key / callId；其它形态一律取不到 → 返回空串，
+ * 调用方退回「false → true」的旧判据。
+ */
+function pendingIdentityOf(interaction: unknown): string {
+  if (!interaction || typeof interaction !== 'object') return ''
+  const it = interaction as Record<string, unknown>
+  for (const field of ['key', 'callId', 'id'] as const) {
+    const v = it[field]
+    if (typeof v === 'string' && v) return v
+  }
+  return ''
+}
 const alertListeners = new Set<(a: PulseAlert) => void>()
 
 const alertedKeys = new Set<string>()
@@ -617,6 +635,8 @@ export function useActivityPulse(): PulseState {
     const prevRunning = new Map<string, boolean>()
     /** 上一次是否弹着选择框（pending 每出现一次 = 一个新会话期，旧的已读标注要失效） */
     const prevPending = new Map<string, boolean>()
+    /** 上一次看到的待确认**身份**（不是布尔）：换了一张卡片也要重新提醒。 */
+    const prevPendingKey = new Map<string, string>()
 
     const read = () => {
       const projects = loadProjects()
@@ -671,13 +691,31 @@ export function useActivityPulse(): PulseState {
           // 刷新撞上已有的弹窗；对着它响铃就是噪音（黄灯 + 角标已经告诉你在等）。
           // 标题只用于人类可读的展示：状态行（SessionStatusRow）没有标题字段，
           // 要回会话目录里取，取不到就退回 sessionId。只在跃迁这一拍查，不在每轮轮询里逐个查。
-          if (wasPending === false && isPending) {
+          // 新的待确认 → **起音**（不只是亮黄灯）。
+          //
+          // 用户反馈：危险操作卡在「允许一次」那类权限时，呼吸灯变黄了，但一点声音都没有。
+          // 根因：黄灯由「本项目里有 state === 'pending' 的活动」点亮（见下面 activity 循环），
+          // 而提示音原先只挂在 applyOutcome（「观察到的停止」）那条路上 —— 卡在半路等确认的
+          // 这一轮**永远不会结束**，也就永远走不到那里，于是安静地等成了默认行为。
+          //
+          // 判据：**待确认卡片换了**就重新提醒（不只是 false → true 的跃迁）。
+          // 问答选择题（ask_user_question）常常是「上一张卡片还没答完又来一张」，
+          // 布尔沿一直是 true → 旧判据永远不触发 → 有黄灯没声音。
+          // 身份取卡片的 key/callId（host 的 PendingQuestion 都有），没有就退回「有无」判断。
+          const pendingKey = pendingIdentityOf(row?.pendingInteraction)
+          const prevKey = prevPendingKey.get(id)
+          const isNewPending = isPending && (
+            // 有身份：身份变了才算新（首次看到 = undefined 也不触发，见下）
+            pendingKey ? (prevKey !== undefined && prevKey !== pendingKey) : wasPending === false
+          )
+          if (isNewPending) {
             const pendingRow = sessionRow(ctx, id)
             emitPendingAlert(id, String(pendingRow?.title || pendingRow?.displayTitle || id))
           }
           if (!was && isRunning) dropDoneFor(id)
           prevRunning.set(id, isRunning)
           prevPending.set(id, isPending)
+          prevPendingKey.set(id, pendingKey)
         }
       }
 

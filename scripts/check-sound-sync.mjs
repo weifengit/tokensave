@@ -133,8 +133,27 @@ try {
   check('stop 广播到达在线端（另一端当场静音）',
     stopFrames.length === 1 && /"by":"dev-phone"/.test(stopFrames[0]),
     stopFrames[0] ? stopFrames[0].slice(0, 80) : '(无)')
-  check('stop 广播不改设置（不写盘、不动 rev，与设置同步互不干扰）',
+check('stop 广播不改设置（不动 rev，与设置同步互不干扰）',
     c.snapshot().rev === revBefore)
+// —— 跨实例：手机与电脑可能连的是**不同的 DSH 实例** ——
+// 现象：「电脑端响了，我在手机远程里面操作甚至发了消息，电脑端依然在响提示音」。
+// 根因：stop 事件只经**进程内**的 SSE 广播（只在同一实例内有效），
+//      而两个实例之间的唯一公共面是落盘文件 → 静音事件必须**落盘**。
+const revBeforeStop = c.snapshot().rev
+const stopPayload = c.stop('dev-phone')
+check('stop 事件落盘（跨实例的唯一通道）',
+    c.snapshot().stopAt === stopPayload.at && c.snapshot().stopBy === 'dev-phone',
+    `stopAt=${c.snapshot().stopAt} stopBy=${c.snapshot().stopBy}`)
+check('stop 不动 rev（它不是设置，不该污染设置同步）',
+    c.snapshot().rev === revBeforeStop)
+// 另一个实例（= 另一台设备连的那个 DSH 进程）读同一个文件 → 必须看到那次静音
+const other = m.createSoundSync(join(dir, 'sse.json'))
+const otherSnap = other.snapshot()
+check('跨实例读到对方的静音事件（手机写的，电脑那个实例读得到）',
+    otherSnap.stopAt === stopPayload.at && otherSnap.stopBy === 'dev-phone',
+    `other.stopAt=${otherSnap.stopAt} other.stopBy=${otherSnap.stopBy}`)
+check('落盘文件里带着 stopAt/stopBy（重启后也不丢）',
+    (() => { const raw = JSON.parse(readFileSync(join(dir, 'sse.json'), 'utf8')); return raw.stopAt === stopPayload.at && raw.stopBy === 'dev-phone' })())
 
   c.dispose()
   check('dispose 收掉长连接并清空在线表', res2.ended === true && c.clientCount() === 0)
@@ -162,10 +181,14 @@ try {
     /import \{ startSoundSync \} from '\.\/panel\/sound'/.test(entry) &&
     /startSoundSync\(\)/.test(entry))
 
-  check('客户端：长连接 + 断线轮询兜底（后台标签页定时器被节流也有最后一道）',
+
+check('客户端：长连接 + **常驻**快照轮询（跨实例也要靠它读共享文件）',
     /new EventSource\(SYNC_PATH\)/.test(sound) &&
     /addEventListener\('settings'/.test(sound) &&
-    /startPollFallback\(\)/.test(sound) && /FALLBACK_POLL_MS = 5_000/.test(sound))
+    /startSnapshotPoll\(\)/.test(sound) && /SNAPSHOT_POLL_MS = 2_500/.test(sound) &&
+    // 轮询**不能**只在长连接断了时才跑（旧实现：if (streamOpen) return）
+    !/if \(streamOpen\) return/.test(sound))
+
 
   check('客户端：rev 单调守卫（自己的回声不会成环）',
     /let appliedRev = -1/.test(sound) &&
@@ -179,13 +202,27 @@ try {
   check('客户端：本端关掉开关就当场静音（自己的回包被 rev 守卫挡掉，不能指望回包）',
     /const wasEnabled = settings\.enabled/.test(sound) &&
     /if \(wasEnabled && !settings\.enabled\) stopSound\(\)/.test(sound))
-  check('客户端：收到别端的 stop 帧 → stopSound()',
-    /addEventListener\('stop', \(\) => \{\s*stopSound\(\)/.test(sound))
+  check('客户端：收到别端的 stop 帧 → stopSound()（自己的那条要忽略）',
+    /addEventListener\('stop', \(ev: MessageEvent\) => \{/.test(sound) &&
+    /if \(by && by === deviceId\(\)\) return[\s\S]{0,60}?stopSound\(\)/.test(sound))
   check('服务端：POST action=stop 分流到 broadcast（在读 settings 之前）',
     /parsed\.action === 'stop'[\s\S]{0,200}?soundSync\.stop\(/.test(server))
-  check('客户端：本端没在响也广播（同一声告警可能在另一个标签页/设备上响，按 8s 节流）',
-    /IDLE_STOP_BROADCAST_MS = 8_000/.test(sound) &&
+
+check('客户端：本端没在响也广播（同一声告警可能在另一个标签页/设备上响，按 1.5s 节流）',
+    /IDLE_STOP_BROADCAST_MS = 1_500/.test(sound) &&
     /if \(now - lastIdleStopAt < IDLE_STOP_BROADCAST_MS\) return[\s\S]{0,80}?broadcastStop\(\)/.test(sound))
+check('客户端：一开始就挂「用户一操作就停」的监听（不能等本端响过声音才挂）',
+    /export function startSoundSync\(\)[\s\S]{0,600}?armAutoStop\(\)/.test(sound) &&
+    /export function startSoundSync\(\)[\s\S]{0,600}?startSnapshotPoll\(\)/.test(sound))
+check('客户端：静音事件按时间戳去重（不动 rev），且忽略自己的设备号',
+    /let appliedStopAt = 0/.test(sound) &&
+    /function applySnapshot\(state: any\): void/.test(sound) &&
+    /if \(stopAt > appliedStopAt\)/.test(sound) &&
+    /if \(!by \|\| by !== deviceId\(\)\) stopSound\(\)/.test(sound))
+check('服务端：每次读快照都重新读盘（不认进程内缓存，否则看不到另一个实例的改动）',
+    /const load = \(\): SoundState => \{/.test(route) &&
+    !/if \(state\) return state/.test(route) &&
+    /stopAt: Number\.isFinite\(data\?\.stopAt\)/.test(route))
 
   check('客户端：远端关掉 → 立刻 stopSound()（正在响的当场停）',
     /if \(!next\.enabled\) stopSound\(\)/.test(sound))

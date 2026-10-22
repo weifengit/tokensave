@@ -286,25 +286,44 @@ export function stopSoundEverywhere(): void {
 
 // —— 用户一操作就自动停（用户需求：不用每次手动点 ■）——
 /** 页面内哪些事件算“用户在操作”。pointerdown 同时覆盖鼠标与触屏 */
-const INTERACTION_EVENTS = [
+const GESTURE_EVENTS = [
   'pointerdown', 'mousedown', 'click', 'keydown',
-  'touchstart', 'touchmove', 'wheel', 'scroll',
+  'touchstart', 'touchmove', 'wheel',
 ] as const
+/**
+ * 最近一次**真实输入**的时间戳。
+ *
+ * 为什么要把 scroll 从上面那组里拿出来单独算（用户反馈：有黄灯提醒但没声音）：
+ * `scroll` 事件**不只**由用户产生 —— 工作台主对话在内容追加时会自动贴底
+ * （MsgList 直接写 `scrollTop`），回填历史/锚点修正也全是程序化滚动。
+ * 而「题目卡片弹出来 / 一轮结束」恰好就是内容追加的那一刻：
+ * 于是提示音刚起音，就被自己这一下自动滚动当场 stopSound() 掉，
+ * 还会把 stop 广播出去把手机端一起静音 —— 听感就是「有提醒、没声音」。
+ * 所以 scroll 只有**紧跟在真实输入之后**才算用户滚动；
+ * 程序化滚动前面没有任何输入，一律不算。
+ */
+let lastGestureAt = 0
+/** 真实输入之后这段时间内的 scroll 才算「人在滚」（惯性滚动会连着发 touchmove/wheel） */
+const SCROLL_INTENT_MS = 700
 /**
  * 「本端没在响」时的广播节流。
  *
  * 为什么要广播：提示音是**每个客户端各自**播的，告警也来自各端自己的侦测。
  * 用户在 A 页面上点一下，B 标签页 / 另一台设备可能正在响同一轮告警 —— 不给它们
  * 发一条停止，用户就会觉得「点了没反应」。
- * 但也不能把每个 keydown 都发出去：本端没在响时按 8s 一拍广播就够了。
+ *
+ * 为什么从 8s 收到 1.5s（用户反馈：「电脑端响了，我在手机操作甚至发了消息，
+ * 电脑端依然在响」）：8s 的窗口很可能把**那一次真正该停的操作**也吞掉
+ * （用户在手机上刚点过一下 → 8s 内的下一次操作不再广播 → 对端一直没收到静音）。
+ * 1.5s 足以压住连点/滚动的重复广播，又不会漏掉真正的那一次。
  */
-const IDLE_STOP_BROADCAST_MS = 8_000
+const IDLE_STOP_BROADCAST_MS = 1_500
 let lastIdleStopAt = 0
 /** 起音后这段毫秒内的操作不算（避免“正在操作时刚好响了一声”被当场抹掉） */
 const INTERACTION_GRACE_MS = 250
 /** 最近一次起音时间（宽限期用） */
 let lastStartAt = 0
-/** 全局监听是否已挂（惰性挂，首次播放才装） */
+/** 全局监听是否已挂（页面级单例，startSoundSync 时就挂上） */
 let autoStopArmed = false
 
 function onUserInteraction(): void {
@@ -321,13 +340,33 @@ function onUserInteraction(): void {
   broadcastStop()
 }
 
+/** 真实输入：记时间戳（供 scroll 判定），再走统一的拦停逻辑。 */
+function onGesture(): void {
+  lastGestureAt = Date.now()
+  onUserInteraction()
+}
+
+/**
+ * 滚动：只有紧跟真实输入的才算用户在滚。
+ *
+ * 程序化滚动（自动贴底 / 回填历史 / 锚点修正）不会伴随任何输入事件，
+ * 因此在这里被过滤掉 —— 否则每一次消息追加都会把正在响的提示音掐掉。
+ */
+function onScroll(): void {
+  if (Date.now() - lastGestureAt > SCROLL_INTENT_MS) return
+  onUserInteraction()
+}
+
 /** 挂上“一操作就停”的全局监听（只挂一次，capture 阶段先于业务处理） */
 function armAutoStop(): void {
   if (autoStopArmed || typeof window === 'undefined') return
   autoStopArmed = true
-  for (const type of INTERACTION_EVENTS) {
-    window.addEventListener(type, onUserInteraction, true)
+  for (const type of GESTURE_EVENTS) {
+    window.addEventListener(type, onGesture, true)
   }
+  // scroll 用 capture 挂，才能收到内部滚动容器（主对话/黑板/清单）的事件；
+  // 是否属于用户由 onScroll 里按「紧跟在真实输入之后」判定。
+  window.addEventListener('scroll', onScroll, true)
   // 窗口失焦也算「人在操作」：点进项目预览的 iframe、切到另一窗口、点浏览器菜单……
   // 这些操作根本不会在本文档里冒泡出 pointerdown（iframe 内的事件属于它自己的文档），
   // 旧实现只监听本文档事件，于是「点什么都没反应、声音一直响」。
@@ -393,11 +432,26 @@ const SYNC_PATH = '/plugins/dsh-tokensave/sound-settings'
 const DEVICE_KEY = 'tokensave:device.v1'
 /** POST 去抖：音量滑杆拖动会连发 onChange，没必要每格都打一次服务端 */
 const PUSH_DEBOUNCE_MS = 300
-/** 兜底轮询间隔（仅在长连接未建立时运行） */
-const FALLBACK_POLL_MS = 5_000
+/**
+ * 快照轮询间隔（**始终**在跑，不是只在长连接断了时兜底）。
+ *
+ * 为什么必须一直轮询：手机与电脑可能连的是**不同的 DSH 实例**
+ * （桌面 127.0.0.1:3080，手机走 anynet 网关那个实例）—— 两个实例的 SSE 长连接
+ * 互不相通，广播只在**同一实例**内有效；跨实例唯一的公共面是落盘状态文件。
+ * 提示音「各管各的」就是这么来的：手机的操作停在手机那个实例里，
+ * 电脑端永远收不到「全体静音」这一帧。
+ */
+const SNAPSHOT_POLL_MS = 2_500
 
 /** 已应用到的服务端版本号：只在它变大时应用，自己写出去的回声不会成环 */
 let appliedRev = -1
+/**
+ * 已处理过的「全体静音」事件时间戳。
+ *
+ * 静音事件**不动 rev**（它不是设置），所以只能靠时间戳判新旧；
+ * 跨实例时它是从落盘文件里读到的（见 applySnapshot）。
+ */
+let appliedStopAt = 0
 let syncStarted = false
 let streamOpen = false
 let stream: EventSource | null = null
@@ -490,6 +544,30 @@ function applyRemoteState(state: any): boolean {
 }
 
 /**
+ * 应用一份远端快照：**设置**按 rev 守卫，**静音事件**按时间戳去重。
+ *
+ * 两件事必须分开处理：
+ *   - 设置靠 rev 单调递增守卫（自己写出去的回声不会成环）；
+ *   - 静音事件不动 rev（它不是设置），只能靠 stopAt 时间戳判新旧。
+ *
+ * 这一层是「手机一操作，电脑端立刻静音」真正生效的地方：
+ * 手机的 stop 写在**共享文件**里，电脑端轮询拿到 stopAt 变大 → 当场停。
+ */
+function applySnapshot(state: any): void {
+  if (!state || typeof state !== 'object') return
+  // ① 静音事件：另一端（手机/电脑）要求全体安静
+  const stopAt = typeof state.stopAt === 'number' ? state.stopAt : 0
+  if (stopAt > appliedStopAt) {
+    appliedStopAt = stopAt
+    const by = typeof state.stopBy === 'string' ? state.stopBy : ''
+    // 自己发的那条忽略（本地已经停了）；别端发的一律执行。
+    if (!by || by !== deviceId()) stopSound()
+  }
+  // ② 设置：照旧按 rev 守卫
+  applyRemoteState(state)
+}
+
+/**
  * 拉一次快照。
  * 服务端从未写过（rev 0）时把**本端设置当种子**播上去，而不是被默认值覆盖 ——
  * 否则手机上已经关掉的开关会被一次同步重新打开。
@@ -505,19 +583,25 @@ async function refreshSnapshot(): Promise<void> {
       await pushNow()
       return
     }
-    applyRemoteState(state)
+    applySnapshot(state)
   } catch {
     /* 拿不到就继续用本地设置 */
   }
 }
 
-function startPollFallback(): void {
-  if (streamOpen) return // 长连接活着就不必轮询兜底
+/**
+ * 启动快照轮询。
+ *
+ * ⚠️ 与长连接**并行**跑（不是「长连接断了才轮询」）：长连接只覆盖**同一实例**
+ * 内的广播，而手机与电脑常常连的是不同实例 —— 跨实例只能靠这份轮询
+ * 从共享文件里读到对端的静音/设置变化。
+ */
+function startSnapshotPoll(): void {
   if (pollTimer !== null || typeof window === 'undefined') return
-  pollTimer = window.setInterval(() => { void refreshSnapshot() }, FALLBACK_POLL_MS)
+  pollTimer = window.setInterval(() => { void refreshSnapshot() }, SNAPSHOT_POLL_MS)
 }
 
-function stopPollFallback(): void {
+function stopSnapshotPoll(): void {
   if (pollTimer === null) return
   window.clearInterval(pollTimer)
   pollTimer = null
@@ -525,34 +609,45 @@ function stopPollFallback(): void {
 
 function openStream(): void {
   if (typeof EventSource === 'undefined') {
-    startPollFallback()
+    startSnapshotPoll()
     return
   }
   try {
     stream = new EventSource(SYNC_PATH)
     stream.addEventListener('open', () => {
       streamOpen = true
-      stopPollFallback()
     })
     stream.addEventListener('settings', (ev: MessageEvent) => {
       try {
-        applyRemoteState(JSON.parse(String(ev.data)))
+        applySnapshot(JSON.parse(String(ev.data)))
       } catch {
         /* 忽略坏帧 */
       }
     })
     // 「别的一端要求静音」：手机在页面上点了一下 / 按了 ■，电脑端也得当场停。
     // 只停声音，不动设置、不写 rev —— 与 settings 帧是两条互不干扰的路。
-    stream.addEventListener('stop', () => {
+    //
+    // ⚠️ 必须**忽略自己发出去的那一条**（用户反馈：「黄色提醒但没声音」）：
+    // 用户点一下页面 → 本端广播 stop → 几十毫秒后题目卡片到达 → 告警起音 →
+    // 自己那条 stop 回声恰好此刻到达 → 把刚响 20ms 的声音停掉。
+    // 判据用**设备号**（by）：回包里带着发信端 id，等于本机就不是「别人的要求静音」。
+    stream.addEventListener('stop', (ev: MessageEvent) => {
+      let by = ''
+      try {
+        const payload = JSON.parse(String(ev.data))
+        by = typeof payload?.by === 'string' ? payload.by : ''
+      } catch {
+        /* 坏帧：按「不是自己发的」处理 */
+      }
+      if (by && by === deviceId()) return
       stopSound()
     })
     stream.addEventListener('error', () => {
-      // EventSource 自己会按 retry 重连；重连期间用轮询兜底
+      // EventSource 自己会按 retry 重连；轮询一直在跑（跨实例也要靠它）
       streamOpen = false
-      startPollFallback()
     })
   } catch {
-    startPollFallback()
+    // 长连接建不起来：靠轮询
   }
 }
 
@@ -560,7 +655,7 @@ function openStream(): void {
 export function stopSoundSync(): void {
   syncStarted = false
   streamOpen = false
-  stopPollFallback()
+  stopSnapshotPoll()
   if (pushTimer !== null) {
     window.clearTimeout(pushTimer)
     pushTimer = null
@@ -587,6 +682,13 @@ export function isSoundStreamOpen(): boolean {
 export function startSoundSync(): () => void {
   if (syncStarted || typeof window === 'undefined') return stopSoundSync
   syncStarted = true
+  // 「用户一操作就停」必须**一开始就挂上**，不能等本端响过声音才挂：
+  // 手机上往往只负责「看 + 回一句」，它自己没响过 → 旧实现永远不挂监听 →
+  // 手机的操作也就永远不会广播「全体静音」→ 电脑端一直响（用户反馈）。
+  armAutoStop()
+  // 快照轮询**一直**在跑：跨实例（手机走网关那个实例、桌面走本机这个实例）
+  // 只能靠它从共享文件里读到对端的变化。
+  startSnapshotPoll()
   void refreshSnapshot()
   openStream()
   return stopSoundSync

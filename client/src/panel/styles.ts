@@ -1228,6 +1228,28 @@ body.ts-vsplit-dragging .ts-card { transition:none !important; animation:none !i
 .ts-switch.on .ts-switch-knob { transform:translateX(16px); }
 /* 分组开关：蓝色调，与单个探索者的绿色开关区分开 */
 .ts-switch-group.on { background:rgba(96,165,250,.6); border-color:rgba(96,165,250,.9); }
+
+/* —— 移动端（窄视口 ≤900px）：项目中心工具条 + 历史会话浮层 ——
+   问题 1（用户反馈）：排序多出「按完成情况」后，分段控件比手机屏还宽，
+     工具条被撑破 → 页面出现横向滚动条、内容溢出外框（用户反馈：「超出界面…布局有点问题」）。
+     修法：窄屏下排序控件独占一行、内部允许换行、按钮内边距收窄；
+        并给 .ts-seg 加 min-width:0（否则它作为 flex 项不肯收缩，仍会溢出外框）。
+   问题 2（用户反馈）：历史会话浮层左侧被切掉 → 浮层宽度夹在视口内，
+        左缘由 JS 按按钮位置夹回视口（见 SessionPicker.tsx 的 place()）。 */
+@media (max-width: 900px) {
+  .ts-center-inner { padding: 14px; gap: 12px; }
+  .ts-center-toolbar { gap: 8px; padding: 8px; }
+  .ts-seg { min-width: 0; }
+  .ts-center-toolbar .ts-seg { flex-wrap: wrap; }
+  .ts-center-toolbar .ts-seg-sort { flex: 1 1 100%; }
+  .ts-center-toolbar .ts-seg-mode { flex: 0 1 auto; }
+  .ts-center-toolbar .ts-seg-btn { padding: 6px 9px; }
+  .ts-center-toolbar .ts-seg-label { padding: 0 6px 0 7px; }
+  .ts-center-count { margin-left: auto; }
+  /* 历史会话浮层：宽度不超过视口（左右各留 12px） */
+  .ts-sess-pop { width: calc(100vw - 24px); max-width: calc(100vw - 24px); min-width: 0; }
+  .ts-sess-pop-head { max-width: none; }
+}
 `
 
 export function injectProjectCenterStyles(): void {

@@ -12,10 +12,41 @@
 import React from 'react'
 import type { ProjectRecord } from './store'
 
+/** 回环主机名（指向「自己」）。 */
+function isLoopbackHost(host: string): boolean {
+  const h = String(host || '').toLowerCase()
+  return h === '127.0.0.1' || h === 'localhost' || h === '::1' || h === '[::1]' || h.startsWith('127.')
+}
+
+/**
+ * 把 dev server 地址里的**回环主机**换成「当前页面所在的主机」。
+ *
+ * 为什么（用户反馈：「手机上没有项目预览界面」）：dev server 跑在**桌面那台机器**上，
+ * 它的地址是 http://127.0.0.1:3180/ —— 手机打开这个地址时，127.0.0.1 指的是**手机自己**，
+ * 于是 iframe 永远是一片空白（看着就是「没有预览界面」）。
+ * 而手机访问 DSH 的那个主机名（隧道/虚拟网地址，例：10.126.126.11）**在手机上可达**，
+ * 把它换过去，预览就能打开（前提：dev server 监听 0.0.0.0，如 vite --host）。
+ *
+ * 桌面端不动：页面本身就是回环，主机名保持原样。
+ */
+function rewriteLoopbackHost(raw: string): string {
+  if (typeof window === 'undefined') return raw
+  const pageHost = window.location.hostname
+  if (!pageHost || isLoopbackHost(pageHost)) return raw
+  try {
+    const u = new URL(raw)
+    if (!isLoopbackHost(u.hostname)) return raw
+    u.hostname = pageHost
+    return u.href
+  } catch {
+    return raw
+  }
+}
+
 /** 把 devUrl 解析成 iframe 可用的绝对地址（解析失败就用原值，交给浏览器按文档源解析）。 */
 export function absoluteUrl(raw: string): string {
   if (!raw) return ''
-  if (!raw.startsWith('/')) return raw
+  if (!raw.startsWith('/')) return rewriteLoopbackHost(raw)
   try {
     return new URL(raw, window.location.origin).href
   } catch {

@@ -83,7 +83,7 @@ export function SessionPicker({ sessions, currentId, onPick, onNew, onArchived }
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)
   /** 面板位置：向上弹（bottom）或向下弹（top）；maxHeight 保证不出视口 */
-  const [pos, setPos] = useState<{ top?: number; bottom?: number; right: number; maxHeight: number } | null>(null)
+  const [pos, setPos] = useState<{ top?: number; bottom?: number; left: number; maxHeight: number } | null>(null)
   const boxRef = useRef<HTMLSpanElement>(null)
   const popRef = useRef<HTMLDivElement>(null)
   // 展开「⋯」菜单的会话 id（同一时刻只开一个）
@@ -111,7 +111,11 @@ export function SessionPicker({ sessions, currentId, onPick, onNew, onArchived }
       if (!r) return
       const margin = 12
       const gap = 6
-      const right = Math.max(margin, window.innerWidth - r.right)
+      const vw = window.innerWidth
+      // 可用宽度：左右各留 margin —— 浮层**绝不越出视口**。
+      // 手机上按钮往往靠左，单纯「右对齐按钮右缘」会把整块面板推到屏幕外，
+      // 用户看到的就是「弹出来的历史会话窗口左边被切掉了」（用户反馈）。
+      const avail = Math.max(200, vw - margin * 2)
       // portal 与本次 layout effect 在同一个 commit，popRef 已挂上 → 量得到真实高度；
       // 量不到（极端情况）就用一个保守估值决定方向。
       const h = popRef.current?.offsetHeight ?? 340
@@ -120,9 +124,14 @@ export function SessionPicker({ sessions, currentId, onPick, onNew, onArchived }
       const openUp = below < Math.min(h, 340) && above > below
       const room = Math.max(160, openUp ? above : below)
       const maxHeight = Math.min(room, Math.round(window.innerHeight * 0.6))
+      // 宽度随内容走，但夹在视口内（CSS 的 max-width 再兜一层）。
+      const w = Math.min(popRef.current?.offsetWidth || 0, avail)
+      // 优先与按钮右缘对齐；放不下就整体左移回视口内（左缘不再被切掉）。
+      const preferred = r.right - w
+      const left = Math.min(Math.max(margin, preferred), Math.max(margin, vw - margin - w))
       setPos(openUp
-        ? { bottom: Math.max(margin, window.innerHeight - r.top + gap), right, maxHeight }
-        : { top: r.bottom + gap, right, maxHeight })
+        ? { bottom: Math.max(margin, window.innerHeight - r.top + gap), left, maxHeight }
+        : { top: r.bottom + gap, left, maxHeight })
     }
     place()
     window.addEventListener('resize', place)
@@ -274,8 +283,8 @@ export function SessionPicker({ sessions, currentId, onPick, onNew, onArchived }
             // 只靠不写 top 是压不住它的。
             top: pos?.top ?? 'auto',
             bottom: pos?.bottom ?? 'auto',
-            right: pos?.right ?? 12,
-            left: 'auto',
+            right: 'auto',
+            left: pos?.left ?? 12,
             maxHeight: pos?.maxHeight,
             // 首帧（还没量出坐标）先隐形，layout effect 会在绘制前把真坐标写好。
             visibility: pos ? undefined : 'hidden',
