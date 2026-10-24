@@ -37,7 +37,6 @@ export interface ExplorerConfig {
 }
 
 export const EXPLORER_PRESETS: ExplorerConfig[] = [
-  { model: 'deepseek-web/deepseek-chat', label: 'DeepSeek探索者', focus: '整体方案可行性' },
   { model: 'our-free-model/mimo-v2.6-flash-free', label: 'MiMo探索者', focus: '边界条件与异常处理' },
   { model: 'our-free-model/nemotron-3-ultra-free', label: 'Nemotron探索者', focus: '性能与实现复杂度' },
 ]

@@ -43,7 +43,7 @@ export interface ExplorerCandidate {
 }
 
 /** 免费 provider 路由（与 parallel-explorer / MAINTENANCE 冻结口径一致）；其余归「收费」。 */
-export const FREE_PROVIDERS: readonly string[] = ['deepseek-web', 'our-free-model', 'opencode-zen']
+export const FREE_PROVIDERS: readonly string[] = ['our-free-model', 'opencode-zen']
 
 /**
  * 已知 provider 的模型清单（兜底 + 主用）。
@@ -53,7 +53,6 @@ export const FREE_PROVIDERS: readonly string[] = ['deepseek-web', 'our-free-mode
  * 快且确定。新增 provider / 模型时同步维护本表即可。
  */
 export const KNOWN_MODELS: Record<string, string[]> = {
-  'deepseek-web': ['deepseek-chat', 'deepseek-reasoner'],
   'our-free-model': ['mimo-v2.6-flash-free', 'nemotron-3-ultra-free'],
   'opencode-zen': ['deepseek-v4-flash-free'],
   'deepseek-official': ['deepseek-v4-pro', 'deepseek-flash'],
@@ -61,7 +60,6 @@ export const KNOWN_MODELS: Record<string, string[]> = {
 
 /** 非预设模型的默认侧重点（保证 focus 非空，探索者提示词用它）。 */
 const FOCUS_BY_PROVIDER: Record<string, string> = {
-  'deepseek-web': '整体方案可行性',
   'our-free-model': '边界条件与异常处理',
   'opencode-zen': '性能与实现复杂度',
   'deepseek-official': '整体方案与正确性',

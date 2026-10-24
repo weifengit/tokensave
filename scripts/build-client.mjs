@@ -2,8 +2,7 @@
 // 产物必须是 __ModuleLoader__ 注册格式的 classic-script（Step 02 已知问题约定）：
 //   window.__ModuleLoader__.load({ id, factory(require) → exports })
 // esbuild 以 CJS 格式打包（外部包经 factory 的 require 走运行时模块表：react 等平台种子），
-// 外层信封提供 module/exports 变量并返回 module.exports —— 与 dsh-deepseek-web-login
-// 等官方插件产物结构一致。
+// 外层信封提供 module/exports 变量并返回 module.exports —— 与官方插件产物结构一致。
 import { build } from 'esbuild'
 import { mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs'
 

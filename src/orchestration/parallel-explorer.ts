@@ -61,8 +61,8 @@ function resolveExplorerCwd(agent?: Agent): string {
 /**
  * 已注册 provider 的 id 集合（探测失败/llm 未就绪返回 null = 无法判断，维持原行为）。
  *
- * 预设/用户选择里的 `provider/model` 来自第三方 provider 插件（deepseek-web /
- * our-free-model / opencode-zen…）：插件没装或凭据未配时 provider 未注册，
+ * 预设/用户选择里的 `provider/model` 来自第三方 provider 插件（our-free-model /
+ * opencode-zen…）：插件没装或凭据未配时 provider 未注册，
  * session_create 会创建出死模型会话。这里用 llm.listProviders()（同步目录，
  * 与 explorer-settings 面板同一口径）在建会话前收敛，未注册的一律降级剔除。
  */
