@@ -38,6 +38,22 @@ function serviceOf(ctx: Context, name: string): any {
   }
 }
 
+/**
+ * 本进程创建的探索者会话 id。
+ *
+ * 探索者是**普通 root 会话**（不带 origin/parentSession，见文件头注），无法靠
+ * session header 与用户对话区分；自动提交（auto-commit.ts）必须跳过它们——
+ * 探索者只做只读分析，不该替用户提交主工作区。跨重启会丢，但旧会话不会再
+ * 结束轮次，所以不需要持久化。
+ */
+const explorerSessionIds = new Set<string>()
+
+/** 这个 session 是不是 tokensave 建的探索者会话（自动提交据此跳过）。 */
+export function isExplorerSession(sessionId: string): boolean {
+  if (!sessionId) return false
+  return explorerSessionIds.has(sessionId)
+}
+
 export interface CreateExplorerSessionOptions {
   /** 探索者工作区（绝对路径；meta.cwd 官方校验必须是绝对路径）。 */
   cwd: string
@@ -120,6 +136,7 @@ export async function createExplorerSession(
   await persistTitle(ctx, agent, opts.title)
 
   console.log(`[dsh-tokensave] 探索者会话已创建(官方原语): ${sessionId} model=${opts.model} cwd=${opts.cwd}`)
+  explorerSessionIds.add(sessionId)
   return sessionId
 }
 

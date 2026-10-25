@@ -11,7 +11,8 @@
 2. **客户端源码改动必须重建。** `pnpm build:client` 重建 `dist/client.js`；
    源码改动不热重载，产物不刷新 = 用户看到的还是旧行为。
    判断「修了没生效」先对 `dist/client.js` 的 mtime。
-3. **收尾必发版。** 确认 `pnpm check` + `pnpm test` 全绿、产物已重建后，执行：
+3. **收尾必发版。** 改动的 **commit 已由宿主自动完成**（见下节「自动提交」），
+   版本号仍需手动递增：确认 `pnpm check` + `pnpm test` 全绿、产物已重建后，执行：
 
    ```bash
    pnpm release patch   # 修 bug
@@ -22,6 +23,33 @@
    脚本自动完成：semver 递增 → 收集上个 tag 以来的提交按「新增/修复/改进/文档」
    分组写入 CHANGELOG.md → git commit `release: v<x.y.z>` + 打同名 tag。
    需要人工补充上下文时加 `--notes "一句话"`。
+
+## 自动提交（宿主侧，2026-10-25）
+
+用户要求：**每次会话执行之后，只要改过代码就自动提交**，不再靠模型每轮记得执行。
+
+实现：`src/auto-commit.ts` 监听 `agent/turn-stopping`（每轮结束、工具副作用已落地），
+在**后台**跑 git：仓库判定 → `git status --porcelain` → `git add -A` →
+`git commit -m "chore(auto): …"`。同一仓库串行排队（避免抢 index.lock）；
+子代理 / 探索者会话、非 git 目录、工作区干净、存在未解决合并冲突时一律跳过。
+
+配置 `~/.dsh/tokensave/auto-commit.json`（首次启动自动生成，改完下一轮即生效）：
+
+| 字段 | 默认 | 说明 |
+| --- | --- | --- |
+| `enabled` | `true` | 总开关 |
+| `mode` | `"commit"` | `commit` 只提交；`release` 提交后跑 `scripts/release.mjs patch`（= info_report 的自动发版） |
+| `push` | `false` | 提交后是否 `git push` |
+| `timeoutMs` | `60000` | 单条 git 命令超时 |
+
+日志：`~/.dsh/tokensave/auto-commit.log`（超过 512 KB 只留最后 200 行）。
+自检：`pnpm test:auto-commit`（临时仓库端到端验证有改动/无改动/开关/非 git/子代理）。
+
+> 自动提交只负责 **commit**；版本档位（patch/minor/major）要看改动性质，仍由人/AI 判断。
+> 想连版本号一起自动递增，把配置的 `mode` 改成 `"release"`。
+
+> 注意：自动提交会把**工作区全部改动**一并提交（含你手动改了一半的文件），
+> 这是「每轮一提交」的代价；需要拆分历史时用 `git reset --soft` 重来。
 
 ## 档位怎么选（AI 判断标准）
 

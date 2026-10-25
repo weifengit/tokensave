@@ -4,6 +4,7 @@ import { registerSystemPrompt } from './prompt/system-prompt.ts'
 import { createTokensaveDelegateTool } from './tools/smart-delegator.ts'
 import { mountTokensaveWebRoutes } from './board-web-route.ts'
 import { registerBlackboardTools } from './blackboard/tools.ts'
+import { registerAutoCommit } from './auto-commit.ts'
 
 export const name = 'dsh-tokensave'
 
@@ -27,4 +28,7 @@ export function apply(ctx: Context) {
   try {
     fs.writeFileSync('/tmp/tokensave-apply.marker', `${new Date().toISOString()} tools_ok=${reg.ok}/3 errors=${JSON.stringify(reg.errors)}\n`)
   } catch { /* 标记失败不影响插件 */ }
+
+  // 会话轮次结束自动提交（见 src/auto-commit.ts；配置 ~/.dsh/tokensave/auto-commit.json）
+  registerAutoCommit(ctx)
 }

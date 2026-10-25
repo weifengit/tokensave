@@ -65,6 +65,7 @@
 | 路径 | 内容 |
 | --- | --- |
 | `src/` | 插件服务端（cordis）：`tokensave_delegate` 委派工具、黑板三工具、系统提示词注入、编排 workflow、探索者会话创建、模型路由、场景识别、Web 路由 |
+| `src/auto-commit.ts` | 会话轮次结束自动提交（`agent/turn-stopping` → `git add -A && git commit`），配置 `~/.dsh/tokensave/auto-commit.json` |
 | `client/src/` | 工作台前端（React）：项目中心、DeskDock 布局、主对话 / 预览 / 探索者 / 黑板 / 时间轴 / 收益各面板、主题皮肤、提示音、滚动记忆 |
 | `dist/client.js` | esbuild 打包产物（`__ModuleLoader__` 注册格式，宿主直接加载它）。已被 `.gitignore` 忽略，克隆后需 `pnpm install && pnpm build:client` 生成 |
 | `scripts/check-*.mjs` | 自检断言（对源码做文本正则断言，不需要浏览器），`pnpm test` 全量跑 |
@@ -118,6 +119,10 @@ pnpm release major   # 破坏性变更
 ```
 
 脚本自动：递增版本 → 收集上个 tag 以来的 git 提交按「新增 / 修复 / 改进 / 文档」分组写入 `CHANGELOG.md` → 提交并打 `v<x.y.z>` tag。可加 `--notes "补充说明"` 追加人工备注。
+
+改动提交是**自动**的：插件监听会话轮次结束（`agent/turn-stopping`），只要工作区有改动就在后台
+`git add -A && git commit -m "chore(auto): …"`，不再依赖模型记得执行。开关 / 发版模式 / 日志位置
+见 [docs/MAINTENANCE.md](docs/MAINTENANCE.md) 的「自动提交」一节（配置文件 `~/.dsh/tokensave/auto-commit.json`）。
 
 ## 兼容性说明
 
