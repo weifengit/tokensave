@@ -102,13 +102,10 @@ check('写通道自行鉴权（不套 makeGuard，否则非 GET 全 405）',
   /const rejection = rejectionFor\(ctx, req\)/.test(route) &&
   /registerAll\(writeRoutes, false\)/.test(route))
 
-check('clone 路由已登记进 writeRoutes 与启动日志',
+check('clone 路由已登记进 writeRoutes，repos 路由在 readRoutes',
   /\[CLONE_ROUTE_PATH, cloneStartGuard\],/.test(route) &&
-  // 启动日志现在一行列全部路由（末尾还有 REPOS），故只查“日志里出现过”
-  (() => {
-    const logLine = route.split('\n').find((l) => l.includes('路由已挂载')) || ''
-    return logLine.includes('${CLONE_ROUTE_PATH}') && logLine.includes('${REPOS_ROUTE_PATH}')
-  })())
+  // 启动日志已移除（门面重挂会打两遍，属噪音）；改为直接断言两条路由表的登记行
+  /\[REPOS_ROUTE_PATH, \(req, res\) => handleRepos\(ctx, req, res\)\],/.test(route))
 
 check('输出按 \\r 与 \\n 双分隔符切（git 进度行用 \\r 刷新）',
   /text\.split\(\/\[\\r\\n\]\+\/\)/.test(route))

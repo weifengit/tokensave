@@ -1979,7 +1979,8 @@ export function mountTokensaveWebRoutes(ctx: Context): void {
     }
     registerAll(readRoutes, true)
     registerAll(writeRoutes, false)
-    console.log(`[dsh-tokensave] 路由已挂载: ${BOARD_ROUTE_PATH}, ${FS_ROUTE_PATH}, ${EXPLORERS_ROUTE_PATH}, ${PROJECT_INFO_ROUTE_PATH}, ${PROJECTS_ROUTE_PATH}, ${EXPLORER_SETTINGS_ROUTE_PATH}, ${CLONE_ROUTE_PATH}, ${REPOS_ROUTE_PATH}, ${PROJECT_DELETE_ROUTE_PATH}, ${SOUND_SETTINGS_ROUTE_PATH}`)
+    // 挂载成功保持静默：webServer/httpServer/connection 三个门面身份不同，启动期会触发
+    // dispose+重挂（上面注释的身份制注册），打日志必然出现重复行；失败路径自有 warn/throw。
     const registration = {
       server,
       dispose: () => {

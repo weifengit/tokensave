@@ -324,6 +324,6 @@ export function registerBlackboardTools(ctx: Context): BlackboardToolRegistratio
       console.warn(`[dsh-tokensave] 黑板工具 ${name} 注册失败（若 dsh-call-session 仍安装，卸载后重启即可由本插件接管）:`, error)
     }
   }
-  if (ok > 0) console.log(`[dsh-tokensave] 黑板工具已注册 ${ok}/3: board_post / board_list / board_clear（自建存储）`)
+  // 成功不打扰启动终端：单工具失败已在上方逐个 warn；注册数仍经 /tmp/tokensave-apply.marker 诊断
   return { ok, errors }
 }

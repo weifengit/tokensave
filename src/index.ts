@@ -16,7 +16,6 @@ export const inject = {
 }
 
 export function apply(ctx: Context) {
-  console.log('[dsh-tokensave] plugin loaded!')
   registerSystemPrompt(ctx)
   ctx.tools.register(createTokensaveDelegateTool(ctx))
   mountTokensaveWebRoutes(ctx)
