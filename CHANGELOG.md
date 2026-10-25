@@ -3,6 +3,21 @@
 > 本文件由 `scripts/release.mjs` 自动维护：每次发版把 git 提交按
 > 「新增/修复/改进/文档」分组追加到顶部。人工补充用 --notes。
 
+## v0.4.0 — 2026-10-25
+
+### 新增
+- feat(auto-commit): 会话轮次结束自动提交（agent/turn-stopping）
+- ``` feat(client): 修复移动端预览和音频同步问题
+- ``` feat(panel): 统一跨端提示音停止机制并修复探索者归属问题
+- feat(panel): 提示音跨端同步、移动端 sheet 布局与项目卡片状态翻牌
+- ``` feat(tokensave): 添加项目移除墓碑机制和删除源代码功能
+
+### 改进
+- ``` refactor(explorer): 移除已废弃的 deepseek-web provider 相关配置
+
+> 本文件由 `scripts/release.mjs` 自动维护：每次发版把 git 提交按
+> 「新增/修复/改进/文档」分组追加到顶部。人工补充用 --notes。
+
 ## v0.3.2 — 2026-10-18
 
 ### 修复
