@@ -47,12 +47,10 @@ function dispatchExplorerMessage(ctx: Context, sessionId: string, text: string):
 function resolveExplorerCwd(agent?: Agent): string {
   const scope = readProjectScope()
   if (scope.workspace) {
-    console.log(`[dsh-tokensave] 探索者工作区跟随当前工作台项目: ${scope.workspace}`)
     return scope.workspace
   }
   const callerCwd = (agent as any)?.session?.header?.cwd
   if (typeof callerCwd === 'string' && callerCwd) {
-    console.log('[dsh-tokensave] 无工作台项目作用域，探索者工作区跟随发起会话')
     return callerCwd
   }
   throw new Error('tokensave: 无法确定探索者工作区（无工作台项目作用域，调用方会话也无 cwd）')
@@ -110,9 +108,7 @@ export async function parallelExplore(
       )
     }
   }
-  console.log(
-    `[dsh-tokensave] 探索者集合(${saved ? '用户设置' : '内置默认'}，provider 探测${live ? '已启用' : '不可用'}): ${presets.map((p) => p.label).join(', ')}`
-  )
+  // 常规路径静默：provider 降级有上面 warn，集合构成变化不值得刷屏
 
   // 探索者工作区：优先当前打开的工作台项目，其次发起会话 cwd（官方 meta.cwd 直传）。
   const cwd = resolveExplorerCwd(agent)
@@ -120,7 +116,7 @@ export async function parallelExplore(
   // 建完探索者后登记本轮会话，/explorers 路由据此过滤 → 旧轮窗口 8s 内消失。
   // 把发起会话记进轮次登记：新会话不该看到上一轮的探索者/协作对话。
   const run = beginRun(cwd, originSessionId)
-  if (run.archived > 0) console.log(`[dsh-tokensave] 轮次隔离：已归档上一轮 ${run.archived} 条黑板帖（${run.runId}）`)
+  // 轮次归档属常规内部维护，不刷屏（archived>0 也可从 runs 登记处追）
   // 1. 并行创建探索者会话——官方原语直建（agents.create + 预设装配 + 标题事件），
   //    见 src/session/create-explorer-session.ts；不再依赖 dsh-call-session 的 session_create。
   const created = await Promise.all(

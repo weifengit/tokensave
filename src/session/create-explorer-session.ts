@@ -135,7 +135,7 @@ export async function createExplorerSession(
   } catch { /* 冻结/只读——忽略，下面还有持久化通道 */ }
   await persistTitle(ctx, agent, opts.title)
 
-  console.log(`[dsh-tokensave] 探索者会话已创建(官方原语): ${sessionId} model=${opts.model} cwd=${opts.cwd}`)
+  // 创建成功不逐条刷屏（5 个探索者 = 5 行）；失败路径上方均已 throw/warn
   explorerSessionIds.add(sessionId)
   return sessionId
 }
