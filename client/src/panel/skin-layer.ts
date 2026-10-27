@@ -45,21 +45,23 @@ html[data-ts-skin]:not([data-ts-skin="none"]) body {
   background-attachment: fixed !important;
 }
 
-/* ② 会话根容器所在的整条祖先链：把宿主背景 token 改透明，
-   让 ① 的皮肤底透上来。
+/* ② 会话页的祖先链：把这些**元素自己的底**直接清掉，
+   让 ① 的皮肤从底下透上来（会话根 / 中栏 / 整窗框架，它们都用 bg-base 刷底）。
 
-   为什么是「祖先链」而不是只改会话根一层：会话根（.wSkVaW_root）外面还有
-   宿主的中栏（.pI_x6G_centerCol）与整窗框架（.pI_x6G_frame），它们也用
-   bg-base 刷底 —— 只改一层的话，上一层的底仍然是实心的，皮肤到不了顶部。
-   :has() 从 body 一路匹配到会话根，**每一层**都变透明。
+   ⚠️ 这里**绝不能改背景 token**：token 会被后代继承，而宿主的「设置」浮层是
+   body 的**直接子节点**（VOzbGW_overlay → body）—— 在 body 或祖先上改 token，
+   设置面板的底也一起变透明，面板就看不清了（用户反馈）。
+   改元素自身的 background 不参与继承，所以只影响被命中的那几层。 */
+html[data-ts-skin]:not([data-ts-skin="none"]) body *:has([data-conversation-content]) {
+  background-color: transparent !important;
+  background-image: none !important;
+}
 
-   为什么只清 bg-* 而不清 --dsw-alias-bg-layer-* 之外的 token：
-   bg-base / bg-layer-1..3 也被卡片、气泡等「内容块」引用；这里让它们变透，
-   内容块就跟皮肤走了（用户要的就是「整页都是这个皮」）。
-   代码块、行内代码、引用块用的是 --dsw-alias-markdown-* 另一组 token，不受影响，
-   所以即使文字压在花纹上，代码区仍然是自己的不透明底。 */
-html[data-ts-skin]:not([data-ts-skin="none"]) body:has([data-conversation-content]),
-html[data-ts-skin]:not([data-ts-skin="none"]) body:has([data-conversation-content]) *:has([data-conversation-content]) {
+/* ③ 会话**内部**（轨迹表格 / 工具条 / 绘图区 / 输入条座位…）跟着皮肤走：
+   只在会话子树根上改背景 token，靠继承只影响会话子树，不影响外面的宿主弹层。
+   代码块、行内代码、引用块用的是 --dsw-alias-markdown-* 另一组 token，
+   不在这里，所以它们保留自己的不透明底。 */
+html[data-ts-skin]:not([data-ts-skin="none"]) [data-conversation-content] {
   --dsw-alias-bg-base: transparent !important;
   --dsw-alias-bg-layer-1: transparent !important;
   --dsw-alias-bg-layer-2: transparent !important;

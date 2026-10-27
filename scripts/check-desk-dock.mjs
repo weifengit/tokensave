@@ -716,8 +716,13 @@ check('皮肤铺满整页：body 承载皮肤 + 会话祖先链背景 token 透�
   // ① body 上铺皮肤（fixed 附着：滚动时纹样不跟着跑）
   /html\[data-ts-skin\]:not\(\[data-ts-skin="none"\]\) body \{/.test(skinLayerSrc) &&
   /background-attachment: fixed !important;/.test(skinLayerSrc) &&
-  // ② 会话祖先链：四个背景 token 全部透明（宿主各层让位）
-  /body:has\(\[data-conversation-content\]\) \*:has\(\[data-conversation-content\]\)/.test(skinLayerSrc) &&
+  // ② 会话祖先链：只清**元素自己的 background**（不能改 token —— token 会继承到
+  //    宿主的「设置」浮层，导致那个面板变透明看不见，用户反馈过）
+  /body \*:has\(\[data-conversation-content\]\) \{[^}]*background-color: transparent !important;/.test(skinLayerSrc) &&
+  //    token 只能在会话子树根上改（靠继承只影响会话内部）
+  /\[data-conversation-content\] \{[^}]*--dsw-alias-bg-base: transparent !important;/.test(skinLayerSrc) &&
+  //    祖先选择器里不能给 token 赋值（否则又会拖垮设置面板）
+  !/body:has\(\[data-conversation-content\]\)[^}]*--dsw-alias/.test(skinLayerSrc) &&
   ['bg-base', 'bg-layer-1', 'bg-layer-2', 'bg-layer-3']
     .every((t) => new RegExp(`--dsw-alias-${t}: transparent !important;`).test(skinLayerSrc)) &&
   // ③ 没皮肤时一条不生效（不能把宿主底改成透明 → 白底/黑底全崩）
