@@ -25,6 +25,7 @@ import {
 import { ControlRoom } from './panel/ControlRoom'
 import { ProjectCenter } from './panel/ProjectCenter'
 import { ControlRoomEntry } from './panel/ControlRoomEntry'
+import { MaskSettings } from './panel/MaskSettings'
 import { applyDockkitPatch } from './dockkit-patch'
 import { installComposerResize } from './composer-resize'
 import { installScrollMemory } from './scroll-memory'
@@ -290,6 +291,15 @@ export function apply(ctx: Context) {
       slots.register(
         { name: 'shell.overlay', id: 'tokensave-dock-spike', order: 95 },
         DockSpikeGate
+      )
+    )
+    // 6. sidebar.settings → settings.section —— 「脱敏」设置页（docmask 开关）。
+    //    宿主设置浮层由 ui-settings-general 声明 sidebar.settings，我们只往里加一页；
+    //    页面参数落 ~/.dsh/tokensave/docmask/runtime.json，Python 端热加载同一份文件。
+    slots?.inject('settings.section', () =>
+      slots.register(
+        { name: 'settings.section', id: 'tokensave-docmask', order: 40, label: '脱敏' },
+        MaskSettings
       )
     )
   } catch (e) {

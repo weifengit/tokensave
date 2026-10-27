@@ -25,6 +25,8 @@ import {
   createSoundSync, sanitizeSettingsPayload, SOUND_SETTINGS_ROUTE_PATH,
 } from './sound-sync.ts'
 import { currentRun } from './blackboard/runs.ts'
+import { methodNotAllowed, rejectionFor, writeJson } from './web/http-json.ts'
+import { createMaskSettingsGuard, MASK_SETTINGS_ROUTE_PATH } from './mask/mask-route.ts'
 
 export const BOARD_ROUTE_PATH = '/plugins/dsh-tokensave/board'
 export const FS_ROUTE_PATH = '/plugins/dsh-tokensave/fs'
@@ -219,10 +221,6 @@ function handleExplorerSettingsWrite(ctx: Context, req: any, res: any): void {
     }
   })
 }
-const JSON_HEADERS = Object.freeze({
-  'content-type': 'application/json; charset=utf-8',
-  'cache-control': 'no-store'
-})
 
 // 中文主题标签映射（黑板四个业务主题）
 const TOPIC_LABELS_ZH: Record<string, string> = {
@@ -303,31 +301,6 @@ function fsParent(displayPath: string): string | null {
   return parent === displayPath ? null : parent
 }
 
-function writeJson(res: any, status: number, body: unknown): void {
-  try {
-    res.writeHead(status, JSON_HEADERS)
-    res.end(JSON.stringify(body))
-  } catch {
-    /* 客户端可能已断开 */
-  }
-}
-
-function methodNotAllowed(res: any): void {
-  writeJson(res, 405, { error: 'method not allowed' })
-}
-
-// —— 鉴权栅栏 ————————————————————————————————————————
-
-function rejectionFor(ctx: Context, req: any): number | undefined {
-  try {
-    const gate = typeof ctx.get === 'function' ? ctx.get('connection') : undefined
-    if (gate === undefined) return 503
-    if (typeof gate.requestRejection === 'function') return gate.requestRejection(req)
-    return undefined
-  } catch {
-    return 503
-  }
-}
 
 // —— 黑板条目 ————————————————————————————————————————
 
@@ -1957,6 +1930,8 @@ export function mountTokensaveWebRoutes(ctx: Context): void {
       [MKDIR_ROUTE_PATH, mkdirGuard],
       [PROJECT_DELETE_ROUTE_PATH, projectDeleteGuard],
       [EXPLORER_SETTINGS_ROUTE_PATH, explorerSettingsGuard],
+      // 脱敏设置：GET 快照 / POST 合并写入 runtime.json（自行鉴权）
+      [MASK_SETTINGS_ROUTE_PATH, createMaskSettingsGuard(ctx)],
       [CLONE_ROUTE_PATH, cloneStartGuard],
       [CLONE_STATUS_ROUTE_PATH, cloneStatusGuard],
       // 提示音设置：GET 快照 / GET+SSE 长连接 / POST 写入 —— 自行鉴权 + 方法判定
