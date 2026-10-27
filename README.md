@@ -60,16 +60,6 @@
 
 - **响应式窄屏工作台**（断点 900px，与远程插件 mobile presets 一致）：中部永远整宽，左右侧栏变覆盖式抽屉（同时只开一个，三键开关 + 遮罩点击收起）；触屏上把手隐藏、标题行 / 状态栏 / 标签按触屏放大（按钮 ≥ 32px），状态栏换行两行；窄屏默认「一个窗口占满编辑区」——进手机即自动最大化主对话，转回宽屏只还原自动最大化的那个；手机上的抽屉开关不污染桌面端布局配置。
 - **跨设备数据同步**：手机端经 dsh-remote-mobile 网关以局域网 / 虚拟网 IP 访问，与桌面端 127.0.0.1 不同 origin、localStorage 互相读不到——项目注册表真相源改为宿主服务端文件落库（`~/.dsh/tokensave/`），所有来源读写同一份，桌面与手机项目列表自动一致（服务端水合 + 广播重渲染，首次拉取延后不与首帧抢资源）。
-### 脱敏设置（docmask）
-
-左侧边栏「设置」浮层里新增一页**脱敏**：对话/文档送给模型前把敏感信息换成本地占位符（`<<PER_1>>`、`<<PROJECT_2>>`…），回答回来后再在本地还原。识别全程不调云端大模型（正则 → 自定义词表 → GLiNER-small）。
-
-- **8 个开关 + 1 个阈值滑块**：总开关、结构化识别（正则）、自定义词表、语义识别（GLiNER-small）、识别缓存、脱敏后漏检检查、配置热加载、会话映射自动加密落盘；滑块调 GLiNER 命中阈值（0.05–0.95）。改动即时保存，Python 侧下一次调用热加载，无需重启。
-- **落盘位置**：`~/.dsh/tokensave/docmask/runtime.json`（面板只写 `runtime` 段；实体类型 / 词表 / 模型路径仍在 `mask/config/docmask.json`，面板只读展示路径）。
-- **路由**：`/plugins/dsh-tokensave/mask-settings`（GET 快照 / POST 合并写入，原子落盘，保留手写未知键）。
-- **Python 工程**：`mask/`（`DocMasker` 门面 + CLI + 示例 + 测试），安装 / 权重 / 断网说明见 `mask/README.md`。
-- **风险边界 R1**：映射表与明文不出本机；发给 Harness 的只有占位符文本，面板与路由都不读写映射内容。
-- **自检**：`pnpm test:mask`（三处路径一致 + 开关字段与 Python 默认值逐项对比 + 真跑一次读写）。
 
 ## 架构
 
@@ -77,7 +67,6 @@
 | --- | --- |
 | `src/` | 插件服务端（cordis）：`tokensave_delegate` 委派工具、黑板三工具、系统提示词注入、编排 workflow、探索者会话创建、模型路由、场景识别、Web 路由 |
 | `src/auto-commit.ts` | 会话轮次结束自动提交（`agent/turn-stopping` → `git add -A && git commit`），配置 `~/.dsh/tokensave/auto-commit.json` |
-| `src/mask/` | 脱敏设置：runtime.json 读写（合并 / 原子落盘）+ `/plugins/dsh-tokensave/mask-settings` 路由 |
 | `client/src/` | 工作台前端（React）：项目中心、DeskDock 布局、主对话 / 预览 / 探索者 / 黑板 / 时间轴 / 收益各面板、主题皮肤、提示音、滚动记忆 |
 | `dist/client.js` | esbuild 打包产物（`__ModuleLoader__` 注册格式，宿主直接加载它）。已被 `.gitignore` 忽略，克隆后需 `pnpm install && pnpm build:client` 生成 |
 | `scripts/check-*.mjs` | 自检断言（对源码做文本正则断言，不需要浏览器），`pnpm test` 全量跑 |
@@ -85,7 +74,7 @@
 | `scripts/release.mjs` | 版本递增 + CHANGELOG 生成 + git tag |
 | `docs/MAINTENANCE.md` | 维护约定：铁律、发版档位、commit 规范、接口冻结、排错备忘 |
 
-服务端通过 `cordis.patch.yml` 以组合包（bundle）形式挂载，注册宿主能力：`tools`（4 个工具）、`systemPrompt`（一段委派指引）、Web 路由（`/plugins/dsh-tokensave/board|fs|explorers|scope|project-info|mkdir|explorer-settings|clone|clone-status|mask-settings`）。
+服务端通过 `cordis.patch.yml` 以组合包（bundle）形式挂载，注册宿主能力：`tools`（4 个工具）、`systemPrompt`（一段委派指引）、Web 路由（`/plugins/dsh-tokensave/board|fs|explorers|scope|project-info|mkdir|explorer-settings|clone|clone-status`）。
 
 插件数据存放在 `~/.dsh/tokensave/`（探索者选择等）；黑板数据由插件自建存储管理。
 

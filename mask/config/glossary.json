@@ -1,6 +1,0 @@
-{
-  "_comment": "外部固定词表：热加载，改完下一次调用即生效；键 = 占位符类型，值 = 词数组",
-  "PROJECT": ["北斗迁移", "Project Aurora"],
-  "CLIENT": ["星辰科技", "Acme Corp"],
-  "INTERNAL_CODE": ["XJ-77", "INT-8842"]
-}
