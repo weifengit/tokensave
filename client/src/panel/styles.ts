@@ -103,20 +103,21 @@ body:has(.ts-dock) [data-composer-card] button[aria-haspopup="listbox"]:hover:no
    （同在 [data-conversation-scroll] 内），且它自带不透明渐变底。
    因此把网格与光晕铺到共享容器上，并把输入条座位改透明。 */
 body.ts-center-open [data-conversation-scroll] {
-  /* 皮肤（--ts-skin-bg / --ts-skin-color，见 skins.ts）垫在最底层：
-     用户要求「项目中心页面也能自由换皮肤」，换皮肤时工作台与这里同时变。
-     无皮肤时 --ts-skin-bg = none、--ts-skin-color = transparent，就是原来的中性底。 */
-  background-color: var(--ts-skin-color, transparent);
+  /* 皮肤不再在这里铺：它已经由 skin-layer.ts 铺在整页（body）上了。
+     这里铺会导致「页面级渐变」与「容器级渐变」几何不一致 —— 容器内的渐变会
+     在自己的盒子里重新起算，标签行下方出现一道可见的接缝（用户反映的就是
+     「只有 tab 下面那块被覆盖」）。所以这里只留项目中心自己的装饰层，
+     底色保持透明，让页面级皮肤从底下透上来。 */
+  background-color: transparent;
   background-image:
-    var(--ts-skin-bg, none),
     /* 用户反馈：原来那层紫/粉/青彩光太跳，跟工作台不一个调子 → 改成极淡的中性冷光，
        让「项目中心」看着还是同一个界面的一个页，而不是另一个产品。 */
     radial-gradient(circle at 12% 6%, rgba(96,165,250,.10), transparent 46%),
     radial-gradient(circle at 84% 96%, rgba(96,165,250,.07), transparent 50%),
     linear-gradient(rgba(127,127,127,.055) 1px, transparent 1px),
     linear-gradient(90deg, rgba(127,127,127,.055) 1px, transparent 1px);
-  background-size: auto, auto, auto, 30px 30px, 30px 30px;
-  background-repeat: no-repeat, no-repeat, no-repeat, repeat, repeat;
+  background-size: auto, auto, 30px 30px, 30px 30px;
+  background-repeat: no-repeat, no-repeat, repeat, repeat;
 }
 /* —— 项目中心（列表态）：**整条隐藏**宿主输入条 ——
    用户要求：项目中心页不该出现聊天输入框及其状态信息（模型名 · 费用 · 上下文占比 ·

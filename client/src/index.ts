@@ -32,6 +32,7 @@ import { installSidebarCollapse } from './sidebar-collapse'
 import { installComposerFocus } from './composer-focus'
 import { DockSpikeGate } from './panel/dock-spike'
 import { startSoundSync } from './panel/sound'
+import { installSkinLayerCss } from './panel/skin-layer'
 
 export const inject = { slots: true }
 
@@ -173,6 +174,13 @@ function wrapOpenSession(ui: any): boolean {
 
 export function apply(ctx: Context) {
   setClientContext(ctx)
+  // 皮肤覆盖层：让背景皮肤铺满整页（【对话/轨迹/项目中心/工作台】四个 tab 一起变），
+  // 而不是只覆盖工作台台面。与视图无关，插件加载即装。
+  try {
+    installSkinLayerCss()
+  } catch (e) {
+    console.warn('[skin-layer] install failed:', e)
+  }
   // 宿主原生输入条增强：自动加高（一眼看全长文本）+ 上沿抓手手动拉高（松手固定）。
   // 与 slots/uiWorkspace 无关，因此在最前面挂，任何视图（含默认纯对话窗）都生效。
   try {

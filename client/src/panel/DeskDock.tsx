@@ -52,9 +52,10 @@ import { SessionPicker } from './SessionPicker'
 import { loadProjects, rememberOpenedProject } from './store'
 import { useProjectsActivity, useProjectLastActivity } from './activity'
 import {
-  SKIN_GROUPS, readSkinId, chooseSkin, applySkin as applySkinVars, bootSkin, currentThemeMode,
+  SKINS, SKIN_GROUPS, readSkinId, chooseSkin, applySkin as applySkinVars, bootSkin, currentThemeMode,
 } from './skins'
 import { startThemeWatch } from './theme'
+import { installSkinLayerCss } from './skin-layer'
 import { getClientContext, subscribeSession, subscribeSessionMetrics } from '../session-subscribe'
 import { KINDS, paneId, parsePaneId, paneTitle, paneIcon, type Kind } from './desk-panes'
 import type { ProjectRecord } from './store'
@@ -205,11 +206,20 @@ const DOCK_CSS_ID = 'tokensave-desk-dock-css'
 const DOCK_CSS = `
 /* 主题调色板（外壳/皮肤/弹层三组变量）统一在 client/src/panel/theme.ts 的 THEME_CSS 里，
    工作台、项目中心、浮动面板共用一份；这里只留外壳自己的规则。 */
-.ts-dock { position: absolute; inset: 0; display: grid; grid-template-rows: 42px minmax(0,1fr) auto; grid-template-columns: minmax(0,var(--ts-side-l,220px)) minmax(0,1fr) minmax(0,var(--ts-side-r,260px)); grid-template-areas: "title title title" "left center right" "status status status"; color: var(--ts-fg); font-size:var(--ts-fs, 12.5px); font-family:var(--ts-font, inherit); background-color: var(--ts-skin-color, var(--ts-surface)); background-image: var(--ts-skin-bg, none); }
+/* 皮肤不画在 .ts-dock 上：它已由 skin-layer.ts 铺在整页（body，fixed 附着）。
+   画在这里会与页面级渐变几何不一致 —— 台面内的渐变以自己的盒子重新起算，
+   标签行与台面之间就会露出一道接缝（用户反映的「只有 tab 下面那块变了」）。 */
+.ts-dock { position: absolute; inset: 0; display: grid; grid-template-rows: 42px minmax(0,1fr) auto; grid-template-columns: minmax(0,var(--ts-side-l,220px)) minmax(0,1fr) minmax(0,var(--ts-side-r,260px)); grid-template-areas: "title title title" "left center right" "status status status"; color: var(--ts-fg); font-size:var(--ts-fs, 12.5px); font-family:var(--ts-font, inherit); background: transparent; }
 /* 皮肤格子里的「无皮肤」+ 分组标题 */
 .ts-skin-none { flex: 1 1 100%; min-width: 0; }
 .ts-skin-group { flex: 1 1 100%; display: flex; flex-direction: column; gap: 4px; margin-top: 2px; }
 .ts-skin-glabel { font-size: calc(var(--ts-fs, 12.5px) * 0.8); color: var(--ts-fg-mute); letter-spacing: .04em; }
+/* 皮肤列表：限高 + 内部滚动。22 套皮全展开有 695px 高，而设置面板一屏只有 ~415px，
+   不限高的话下面「字体」块要被顶出面板，得滚很久才找得到。 */
+.ts-skin-scroll { display: flex; flex-direction: column; gap: 6px; max-height: 196px; overflow-y: auto; padding: 2px 4px 2px 2px; scrollbar-width: thin; scrollbar-color: rgba(127,127,127,.4) transparent; }
+.ts-skin-scroll::-webkit-scrollbar { width: 8px; }
+.ts-skin-scroll::-webkit-scrollbar-thumb { background: rgba(127,127,127,.35); border-radius: 4px; }
+.ts-skin-note { padding: 0 4px; line-height: 1.5; }
 .ts-dock[data-hide-left] { --ts-side-l: 0px; }
 .ts-dock[data-hide-right] { --ts-side-r: 0px; }
 /* 编辑区/面板区（center）也能收起：列宽塌陷到 0 + 区域内隐藏（面板不销毁，展开即回）。 */
@@ -603,6 +613,9 @@ applyFont(readFont(), readFontFamily())
 
 /** 皮肤同理：写到 :root 变量，工作台与项目中心同时生效（换皮肤不需要重挂组件）。 */
 bootSkin()
+
+/** 皮肤覆盖层样式（让皮肤铺满整页，四个 tab 一起变）：全局一份，装一次即可。 */
+installSkinLayerCss()
 
 /**
  * 主题：宿主切深/浅色时把 <html data-ts-theme> 更新掉（浅色下外壳要换成浅底深字，
@@ -2616,36 +2629,47 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
 
           {/* ② 背景皮肤（分组 + 分类，参考 info_report 的皮肤目录；点了不关面板方便连着试） */}
           <div className="ts-set-block" data-desk-set-block="skin">
-            {/* 极简：只留标题。当前只列出「当前主题模式」对应的那一栏皮（跟随系统自动切），
-                所以不需要任何状态说明文字。 */}
-            <div className="ts-set-head"><span className="ts-set-title">背景皮肤</span></div>
-            <button
-              className="ts-skin-cell ts-skin-none"
-              data-desk-skin="无"
-              data-on={skin ? undefined : '1'}
-              onClick={() => applySkin('')}
-            >
-              无皮肤
-            </button>
-            {SKIN_GROUPS.filter((g) => (skinMode === 'light' ? g.group.includes('浅色') : g.group.includes('深色'))).map((g) => (
-              <div className="ts-skin-group" key={g.group}>
-                <span className="ts-skin-glabel">{g.group}</span>
-                <div className="ts-set-grid">
-                  {g.items.map((s2) => (
-                    <button
-                      key={s2.id}
-                      className="ts-skin-cell"
-                      data-desk-skin={s2.label}
-                      data-on={skin === s2.id ? '1' : undefined}
-                      style={{ background: s2.image ?? s2.color ?? undefined }}
-                      onClick={() => applySkin(s2.id)}
-                    >
-                      {s2.label}
-                    </button>
-                  ))}
+            {/* 标题行右侧直接显示「当前选了哪套 + 属于哪种主题」：皮肤现在覆盖整页，
+                用户需要一眼确认到底生效的是哪一套（以前只有格子高亮，列表一长就看不见）。 */}
+            <div className="ts-set-head">
+              <span className="ts-set-title">背景皮肤</span>
+              <span className="ts-set-hint" data-desk-skin-status="">
+                {skin ? `${SKINS.find((s2) => s2.id === skin)?.label ?? skin} · ${skinMode === 'light' ? '浅色' : '深色'}主题` : '无皮肤'}
+              </span>
+            </div>
+            {/* 列表限高 + 内部滚动：22 套皮排开会把下面的「字体」块顶出面板（实测皮肤块 695px、
+                面板只有 415px，字体要滚很久才看得到）。限高后三块一眼都在。 */}
+            <div className="ts-skin-scroll" data-desk-skin-scroll="">
+              <button
+                className="ts-skin-cell ts-skin-none"
+                data-desk-skin="无"
+                data-on={skin ? undefined : '1'}
+                onClick={() => applySkin('')}
+              >
+                无皮肤
+              </button>
+              {SKIN_GROUPS.filter((g) => (skinMode === 'light' ? g.group.includes('浅色') : g.group.includes('深色'))).map((g) => (
+                <div className="ts-skin-group" key={g.group}>
+                  <span className="ts-skin-glabel">{g.group}</span>
+                  <div className="ts-set-grid">
+                    {g.items.map((s2) => (
+                      <button
+                        key={s2.id}
+                        className="ts-skin-cell"
+                        data-desk-skin={s2.label}
+                        data-on={skin === s2.id ? '1' : undefined}
+                        style={{ background: s2.image ?? s2.color ?? undefined }}
+                        onClick={() => applySkin(s2.id)}
+                      >
+                        {s2.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
-              </div>
-            ))}
+              ))}
+            </div>
+            {/* 一句说明：这套皮同时盖住四个 tab（对话/轨迹/项目中心/工作台）的整页。 */}
+            <div className="ts-set-hint ts-skin-note">跟随系统深浅自动切换 · 四个页面一起生效</div>
           </div>
 
           {/* ③ 字体：字号档位 + 字族 */}

@@ -39,6 +39,7 @@ const crCenter = readFileSync(join(root, 'client/src/panel/ProjectCenter.tsx'), 
 const explorerStatus = readFileSync(join(root, 'client/src/panel/explorer-status.ts'), 'utf8')
 const sessionsSrc = readFileSync(join(root, 'client/src/panel/sessions.ts'), 'utf8')
 const themeSrc = readFileSync(join(root, 'client/src/panel/theme.ts'), 'utf8')
+const skinLayerSrc = readFileSync(join(root, 'client/src/panel/skin-layer.ts'), 'utf8')
 const activitySrc = readFileSync(join(root, 'client/src/panel/activity.ts'), 'utf8')
 
 /**
@@ -217,7 +218,9 @@ check('皮肤：目录在 skins.ts（分组 + 分类，参考 info_report）+ �
   /export function applySkin/.test(skinsSrc) &&
   /--ts-skin-color/.test(skinsSrc) && /--ts-skin-bg/.test(skinsSrc) &&
   /data-desk-set-block="skin"/.test(dock) &&
-  /background-color: var\(--ts-skin-color, var\(--ts-surface\)\); background-image: var\(--ts-skin-bg, none\)/.test(dock) &&
+  // 皮肤不再画在 .ts-dock 上：改由 skin-layer.ts 铺在整页（避免页面级/容器级渐变不一致导致接缝）
+  /background: transparent; }/.test(dock) &&
+  /皮肤不画在 \.ts-dock 上/.test(dock) &&
   /SKIN_GROUPS\.filter\(\(g\) =>/.test(dock) &&
   // 没有开关：皮肤永远按当前主题取对应那一栏（用户明确要求）
   !/data-desk-skin-adapt/.test(dock) && !/readAdapt/.test(dock))
@@ -614,7 +617,9 @@ check('项目中心不再单独设皮肤（皮肤只在工作台里选，两处�
   !/data-desk-center-skin/.test(crCenter) &&
   !/SKIN_GROUPS/.test(crCenter) &&
   /installThemeCss\(\)/.test(crCenter) &&
-  /background-color: var\(--ts-skin-color, transparent\);/.test(styles))
+  // 项目中心页也不再自己铺皮肤：同一份皮肤由 skin-layer.ts 铺在整页
+  /background-color: transparent;/.test(styles) &&
+  /皮肤不再在这里铺/.test(styles))
 
 // —— 13. 浅色模式适配 + 手机端收尾（2026-10-14 第三批）——
 check('主题探测：读 color-scheme → 退化到底色亮度 → 写 <html data-ts-theme>',
@@ -627,7 +632,9 @@ check('浅色模式：外壳换浅底深字（原来写死浅色前景 + 透明�
   /html\[data-ts-theme="light"\] \{/.test(themeSrc) &&
   /--ts-fg: #1f2328;/.test(themeSrc) && /--ts-surface: #f7f8fa;/.test(themeSrc) &&
   /color: var\(--ts-fg\);/.test(dock) &&
-  /background-color: var\(--ts-skin-color, var\(--ts-surface\)\)/.test(dock))
+  // 皮肤底色改由 skin-layer.ts 铺在 body 上（不再画在外壳上）
+  /html\[data-ts-skin\]:not\(\[data-ts-skin="none"\]\) body \{/.test(skinLayerSrc) &&
+  /background-color: var\(--ts-skin-color, transparent\) !important;/.test(skinLayerSrc))
 check('深色皮肤不跟随宿主浅色主题（否则深底 + 深字 = 看不见）',
   /root\.setAttribute\('data-ts-skin'/.test(skinsSrc) &&
   /html\[data-ts-skin="dark"\] \{/.test(themeSrc) &&
@@ -698,3 +705,36 @@ check('状态栏**真实占一行**（不浮在内容上），但视觉上悬浮
   !/padding-bottom:calc\(var\(--ts-composer-h, 72px\) \+ var\(--ts-sb-h, 28px\)/.test(styles) &&
   // 输入条也不再为它让位（状态栏已不在自己上方）
   !/const overlap = Math\.max\(0, r\.bottom - \(window\.innerHeight - sbH\)\)/.test(composerDock))
+
+// —— 17. 皮肤铺满整页（2026-10 反馈：以前只覆盖工作台台面 / 项目中心列表页）——
+//
+// 用户看到的：齿轮里换皮肤，实际变色的永远只有 tab 下面那块；标签行、解析器/轨迹表格、
+// 对话正文区都还是宿主本身的底色。根因是宿主每层用 --dsw-alias-bg-base / bg-layer-1..3
+// 刷不透明的底，插件画在外壳上的皮肤根本透不上来。
+// 现在改成：皮肤铺在 body（整页），把会话祖先链上的那几个背景 token 局部改透明。
+check('皮肤铺满整页：body 承载皮肤 + 会话祖先链背景 token 透明（不再只盖台面）',
+  // ① body 上铺皮肤（fixed 附着：滚动时纹样不跟着跑）
+  /html\[data-ts-skin\]:not\(\[data-ts-skin="none"\]\) body \{/.test(skinLayerSrc) &&
+  /background-attachment: fixed !important;/.test(skinLayerSrc) &&
+  // ② 会话祖先链：四个背景 token 全部透明（宿主各层让位）
+  /body:has\(\[data-conversation-content\]\) \*:has\(\[data-conversation-content\]\)/.test(skinLayerSrc) &&
+  ['bg-base', 'bg-layer-1', 'bg-layer-2', 'bg-layer-3']
+    .every((t) => new RegExp(`--dsw-alias-${t}: transparent !important;`).test(skinLayerSrc)) &&
+  // ③ 没皮肤时一条不生效（不能把宿主底改成透明 → 白底/黑底全崩）
+  !/html\[data-ts-skin\] \{/.test(skinLayerSrc) &&
+  // ④ 代码/引用块走 --dsw-alias-markdown-* 另一组 token，不该被一起清成透明
+  !/--dsw-alias-markdown-code-block: transparent/.test(skinLayerSrc) &&
+  // ⑤ 入口与两个视图都装一次（谁先加载谁注入，幂等）
+  /installSkinLayerCss\(\)/.test(dock) &&
+  /installSkinLayerCss\(\)/.test(crCenter) &&
+  /installSkinLayerCss\(\)/.test(readFileSync(join(root, 'client/src/index.ts'), 'utf8')))
+
+check('皮肤覆盖层的注入是幂等的（按 id 去重，重复调用不重复插 style）',
+  /const SKIN_LAYER_CSS_ID = 'tokensave-skin-layer-css'/.test(skinLayerSrc) &&
+  /if \(document\.getElementById\(SKIN_LAYER_CSS_ID\)\) return/.test(skinLayerSrc))
+
+check('皮肤设置面板：限高滚动 + 当前皮肤状态行（22 套皮不再把字体块顶出面板）',
+  /data-desk-skin-scroll=""/.test(dock) &&
+  /\.ts-skin-scroll \{[^}]*max-height: 196px;[^}]*overflow-y: auto;/.test(dock) &&
+  /data-desk-skin-status=""/.test(dock) &&
+  /ts-skin-note/.test(dock))
