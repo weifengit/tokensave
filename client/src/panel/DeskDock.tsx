@@ -63,6 +63,7 @@ import { startThemeWatch } from './theme'
 import { installSkinLayerCss } from './skin-layer'
 import { getClientContext, subscribeSession, subscribeSessionMetrics } from '../session-subscribe'
 import { KINDS, paneId, parsePaneId, paneTitle, paneIcon, type Kind } from './desk-panes'
+import { POP_MIN_BOUNDS_WIDTH } from './pop-anchor'
 import {
   CHROME_POSITIONS, CHROME_HINT, CHROME_LABEL, RAIL_W,
   effectiveChrome, popPlacement, readChromePosition, writeChromePosition,
@@ -2545,7 +2546,20 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
           ))}
           <span className="ts-tg-sep" aria-hidden="true" />
           {/* 探索者设置：恢复到右上角（用户要求），图标式触发 + 计数徽标 */}
-          <ExplorerSettings variant="icon" />
+          {/* 探索者设置：图标式触发 + 计数徽标。
+              面板必须待在自己那一栏里（用户要求：别压过侧栏伸进编辑区）：
+              顶置时按钮在标题行右端 = 辅助侧栏上方；竖轨时按轨在哪侧取相邻那一栏。
+              栏被收起时退回整个工作台，至少不越出台面。 */}
+          <ExplorerSettings
+            variant="icon"
+            bounds={() => {
+              const region = chromePos === 'left' ? 'left' : 'right'
+              const el = dockRootRef.current?.querySelector<HTMLElement>(`.ts-region[data-region="${region}"]`)
+              const rect = el?.getBoundingClientRect()
+              if (rect && rect.width >= POP_MIN_BOUNDS_WIDTH) return rect
+              return dockRootRef.current?.getBoundingClientRect() ?? null
+            }}
+          />
           <span className="ts-tg-sep" aria-hidden="true" />
           {/* 右上角只剩一个「设置」齿轮：显示/隐藏窗口 + 标题栏位置 + 皮肤 + 字体都在它里面
               （用户要求把原来的 ⋯ 与皮肤两个按钮合成一个）。 */}

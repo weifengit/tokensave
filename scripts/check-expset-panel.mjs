@@ -90,6 +90,52 @@ try {
   const blind = A.anchorPopup({ anchor: topBtn, viewport: vp, size: { width: 0, height: 0 }, heightCap: 576 })
   check('首帧（尺寸未知）也有合法落点', Number.isFinite(blind.left) && blind.top >= 0 && blind.maxHeight > 0)
 
+  // —— 夹在所属侧栏内（用户要求：面板不要超出边栏）——
+  // 顶置：按钮在标题行右端，它那一栏是右侧辅助侧栏（desk 右边 260px）
+  const desk = { left: 56, right: 1440, top: 40, bottom: 880 }
+  const rightSide = { left: desk.right - 260, right: desk.right, top: desk.top + 42, bottom: desk.bottom - 28 }
+  const sideBtn = { left: desk.right - 92, right: desk.right - 36, top: 48, bottom: 72 }
+  const inSide = A.anchorPopup({
+    anchor: sideBtn,
+    viewport: vp,
+    size: { width: 386, height: 480 },
+    bounds: rightSide,
+    heightCap: 576,
+  })
+  check('右栏内：面板整块被夹在侧栏里（不再压进编辑区）',
+    inSide.withinBounds && inSide.left >= rightSide.left + 8 &&
+    inSide.left + inSide.width <= rightSide.right - 8,
+    `left=${inSide.left} w=${inSide.width} side=${rightSide.left}..${rightSide.right}`)
+  check('右栏内：宽度最多占满栏（260 - 两侧留白）', inSide.width <= 260 - 16, `w=${inSide.width}`)
+  check('右栏内：仍然向右缘对齐按钮', Math.abs(inSide.left + inSide.width - (sideBtn.right - 8)) <= 1, `right=${inSide.left + inSide.width}`)
+  check('右栏内：竖向也不越出栏（上下留白）',
+    inSide.top >= rightSide.top + 8 && inSide.top + Math.min(480, inSide.maxHeight) <= rightSide.bottom - 8)
+
+  // 左侧竖轨：按钮在轨里，面板该待到相邻的主侧栏里（44..264）
+  const leftSide = { left: 44, right: 264, top: 40, bottom: 852 }
+  const inLeft = A.anchorPopup({
+    anchor: railBtn,
+    viewport: vp,
+    size: { width: 386, height: 420 },
+    bounds: leftSide,
+    heightCap: 576,
+  })
+  check('左轨：面板整块在左栏内（不越到编辑区）',
+    inLeft.withinBounds && inLeft.left >= leftSide.left && inLeft.left + inLeft.width <= leftSide.right,
+    `left=${inLeft.left} w=${inLeft.width}`)
+  check('左轨：仍然向上翻、不出栏', inLeft.placement === 'above' && inLeft.top >= leftSide.top)
+
+  // 栏被收起（只剩把手）：退回按视口夹位，不能把面板压成一条缝
+  const collapsed = A.anchorPopup({
+    anchor: sideBtn,
+    viewport: vp,
+    size: { width: 0, height: 420 },
+    bounds: { left: desk.right - 4, right: desk.right, top: 40, bottom: 852 },
+    heightCap: 576,
+  })
+  check('栏收起时不硬塞（withinBounds=false 且宽度恢复）',
+    !collapsed.withinBounds && collapsed.width >= 300, `w=${collapsed.width}`)
+
   // —— B. 加载（api.ts，假 fetch + 假存储）——
   globalThis.window = { localStorage: fakeStorage() }
   const apiOut = join(dir, 'api.mjs')
@@ -157,10 +203,22 @@ try {
   const panel = readFileSync(join(root, 'client/src/panel/ExplorerSettings.tsx'), 'utf8')
   const styles = readFileSync(join(root, 'client/src/panel/styles.ts'), 'utf8')
   const apiSrc = readFileSync(join(root, 'client/src/panel/api.ts'), 'utf8')
+  const dockSrc = readFileSync(join(root, 'client/src/panel/DeskDock.tsx'), 'utf8')
   check('面板落点走 pop-anchor 的纯函数', /from '\.\/pop-anchor'/.test(panel) && /anchorPopup\(\{/.test(panel))
   check('面板不再自己用 right 硬贴（会算出负值 / 出视口）',
     !/right: Math\.max\(margin, window\.innerWidth - r\.right\)/.test(panel) &&
     /left: pos\?\.left/.test(panel) && /top: pos\?\.top/.test(panel))
+  check('面板把「所属那一栏」传给落点函数',
+    /bounds: bounds \? bounds\(\) : null/.test(panel) && /bounds\?: \(\) => AnchorRect \| null/.test(panel))
+  check('面板宽度/最小宽跟着落点走（否则 CSS min-width 会把宽顶回去）',
+    /width: pos \? pos\.width : undefined/.test(panel) &&
+    /minWidth: pos \? 0 : undefined/.test(panel) &&
+    /maxWidth: pos \? pos\.width : undefined/.test(panel))
+  check('工作台接线：取按钮所属侧栏（顶置→右栏，左侧竖轨→左栏）',
+    /from '\.\/pop-anchor'/.test(dockSrc) &&
+    /chromePos === 'left' \? 'left' : 'right'/.test(dockSrc) &&
+    /\.ts-region\[data-region="\$\{region\}"\]/.test(dockSrc) &&
+    /POP_MIN_BOUNDS_WIDTH/.test(dockSrc))
   check('面板高度跟着可用空间走（内部滚动，不被屏幕裁）', /maxHeight: pos \? pos\.maxHeight : undefined/.test(panel))
   check('打开时先亮本地快照，再后台刷新',
     /readCachedExplorerSettings\(\)/.test(panel) && /setFromCache\(true\)/.test(panel))

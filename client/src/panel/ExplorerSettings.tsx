@@ -19,13 +19,13 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { fetchExplorerSettings, readCachedExplorerSettings, saveExplorerSettings } from './api'
 import type { ExplorerSettingGroup, ExplorerSettingItem, ExplorerSettingsPayload } from './api'
-import { anchorPopup } from './pop-anchor'
+import { anchorPopup, type AnchorRect } from './pop-anchor'
 
 /** 提交/本地状态用的最小选择单位（label/focus 由目录带回，保证持久化的一致）。 */
 type Sel = Pick<ExplorerSettingItem, 'model' | 'label' | 'focus'>
 
 /** 面板落点：left/top 是 fixed 坐标，maxHeight 是这一侧真正可用的高度（面板内部滚动）。 */
-type PopPos = { left: number; top: number; maxHeight: number }
+type PopPos = { left: number; top: number; width: number; maxHeight: number }
 
 /** 目录 → 已选列表（从目录里回填 label/focus）。 */
 function selectionsFrom(payload: ExplorerSettingsPayload): Sel[] {
@@ -64,7 +64,18 @@ function Switch({
   )
 }
 
-export function ExplorerSettings({ variant = 'text' }: { variant?: 'text' | 'icon' } = {}) {
+export function ExplorerSettings({
+  variant = 'text',
+  bounds,
+}: {
+  variant?: 'text' | 'icon'
+  /**
+   * 面板必须待着的范围（按钮所属的那一栏，一般是侧栏）。给了就整块夹在栏内、宽度最多占满栏
+   * —— 否则 380~420px 的面板会压过侧栏伸进编辑区。栏被收起（宽 < 180）时由 pop-anchor
+   * 自动退回按视口夹位。
+   */
+  bounds?: () => AnchorRect | null
+} = {}) {
   const [open, setOpen] = useState(false)
   const [pos, setPos] = useState<PopPos | null>(null)
   const [data, setData] = useState<ExplorerSettingsPayload | null>(null)
@@ -97,12 +108,14 @@ export function ExplorerSettings({ variant = 'text' }: { variant?: 'text' | 'ico
         anchor: r,
         viewport: { width: window.innerWidth, height: window.innerHeight },
         size: { width: el ? el.offsetWidth : 0, height: el ? el.scrollHeight : 0 },
+        bounds: bounds ? bounds() : null,
         heightCap: Math.round(window.innerHeight * 0.64),
       })
       setPos((prev) =>
-        prev && prev.left === next.left && prev.top === next.top && prev.maxHeight === next.maxHeight
+        prev && prev.left === next.left && prev.top === next.top &&
+        prev.width === next.width && prev.maxHeight === next.maxHeight
           ? prev
-          : { left: next.left, top: next.top, maxHeight: next.maxHeight },
+          : { left: next.left, top: next.top, width: next.width, maxHeight: next.maxHeight },
       )
     }
     place()
@@ -262,6 +275,10 @@ export function ExplorerSettings({ variant = 'text' }: { variant?: 'text' | 'ico
             left: pos?.left ?? -10000,
             top: pos?.top ?? -10000,
             right: 'auto',
+            // 宽度由落点算出（夹在所属侧栏内）；同时盖掉 CSS 的 min-width:300px，否则窄栏里会被顶回去
+            width: pos ? pos.width : undefined,
+            minWidth: pos ? 0 : undefined,
+            maxWidth: pos ? pos.width : undefined,
             maxHeight: pos ? pos.maxHeight : undefined,
             // 首帧还没算出落点：先藏起来，等 layout effect 定位好再显（否则会闪在左上角）
             visibility: pos ? 'visible' : 'hidden',
