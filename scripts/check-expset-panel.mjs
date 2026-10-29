@@ -113,6 +113,35 @@ try {
   check('右栏内：竖向也不越出栏（上下留白）',
     inSide.top >= rightSide.top + 8 && inSide.top + Math.min(480, inSide.maxHeight) <= rightSide.bottom - 8)
 
+  // 面板从侧栏的**标签条下方**开始（标签条 118..151）：不压住侧栏自己的标签
+  const sideTabbed = A.anchorPopup({
+    anchor: sideBtn,
+    viewport: vp,
+    size: { width: 386, height: 480 },
+    bounds: { ...rightSide, top: rightSide.top + 33 + 6 },
+    heightCap: 576,
+  })
+  // 标签条 = 栏顶 + 33；面板顶边必须落在它下面（侧栏自己的标签要留着能点）
+  const tabsBottom = rightSide.top + 33
+  check('不盖住侧栏标签条（面板顶边在标签条之下）', sideTabbed.top >= tabsBottom,
+    `top=${sideTabbed.top} tabsBottom=${tabsBottom}`)
+
+  // 侧栏很窄（用户拖到最小附近）：也必须在栏内，不能又拉宽到 300+ 压出去
+  const skinny = { left: 1180, right: 1340, top: 118, bottom: 871 }
+  const inSkinny = A.anchorPopup({
+    anchor: sideBtn,
+    viewport: vp,
+    size: { width: 386, height: 480 },
+    bounds: skinny,
+    heightCap: 576,
+  })
+  check('窄栏（160）也整块夹在栏内',
+    inSkinny.withinBounds && inSkinny.left >= skinny.left && inSkinny.left + inSkinny.width <= skinny.right,
+    `left=${inSkinny.left} w=${inSkinny.width}`)
+  check('窄栏里宽度缩到栏内宽（160 - 16）', inSkinny.width <= 160 - 16, `w=${inSkinny.width}`)
+  check('栏窄到 140 以下才退回视口口径',
+    !A.anchorPopup({ anchor: sideBtn, viewport: vp, size: { width: 386, height: 480 }, bounds: { left: 1180, right: 1320, top: 118, bottom: 871 }, heightCap: 576 }).withinBounds)
+
   // 左侧竖轨：按钮在轨里，面板该待到相邻的主侧栏里（44..264）
   const leftSide = { left: 44, right: 264, top: 40, bottom: 852 }
   const inLeft = A.anchorPopup({
@@ -221,6 +250,11 @@ try {
     /chromePos === 'left' \? 'left' : 'right'/.test(dockSrc) &&
     /\.ts-region\[data-region="\$\{region\}"\]/.test(dockSrc) &&
     /POP_MIN_BOUNDS_WIDTH/.test(dockSrc))
+  check('面板从侧栏标签条下方开始（不压住侧栏自己的标签）',
+    /dv-tabs-and-actions-container/.test(dockSrc) && /SIDEBAR_TABS_GAP/.test(dockSrc))
+  check('窄栏换紧凑版式（data-compact + 对应 CSS）',
+    /data-compact=\{pos && pos\.width < 300/.test(panel) &&
+    /\.ts-expset-pop\[data-compact\] \{ padding:8px/.test(styles))
   check('面板高度跟着可用空间走（内部滚动，不被屏幕裁）', /maxHeight: pos \? pos\.maxHeight : undefined/.test(panel))
   check('打开时先亮本地快照，再后台刷新',
     /readCachedExplorerSettings\(\)/.test(panel) && /setFromCache\(true\)/.test(panel))

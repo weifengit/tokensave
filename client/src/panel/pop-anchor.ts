@@ -71,10 +71,10 @@ export const POP_MARGIN_PX = 8
 export const POP_PREFERRED_HEIGHT = 240
 /** 按钮贴着视口左缘这么近时，面板改为从按钮右侧展开（侧置竖轨就是这种情况）。 */
 export const POP_EDGE_PX = 72
-/** 栏窄于这个宽度就别硬塞（侧栏收起时矩阵宽度是 0）：退回按视口夹位。 */
-export const POP_MIN_BOUNDS_WIDTH = 180
-/** 面板再挤也不至于更窄（栏本身 180 时内宽约 164）。 */
-export const POP_MIN_WIDTH = 150
+/** 栏宽于这个才当作可用范围（侧栏收起时宽度是 0）：再窄就退回按视口夹位。 */
+export const POP_MIN_BOUNDS_WIDTH = 150
+/** 面板再挤也不至于更窄（150 的栏，内宽还有 134）。 */
+export const POP_MIN_WIDTH = 140
 
 const clamp = (v: number, min: number, max: number): number =>
   Math.min(Math.max(v, min), Math.max(min, max))
@@ -98,7 +98,8 @@ export function anchorPopup(input: PopAnchorInput): PopAnchorResult {
 
   // —— 可用范围：所属侧栏（若够宽）→ 否则视口 ——
   const b = input.bounds
-  const boundsWidth = b ? b.right - b.left - margin * 2 : 0
+  // 门槛看**整栏宽度**（不是减完留白的）：与调用方同一个常量，避免两边口径差一截
+  const boundsWidth = b ? b.right - b.left : 0
   const withinBounds = !!b && boundsWidth >= POP_MIN_BOUNDS_WIDTH
   const spanLeft = withinBounds ? b!.left : 0
   const spanRight = withinBounds ? b!.right : vw

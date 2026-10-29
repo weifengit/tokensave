@@ -1208,6 +1208,14 @@ body.ts-vsplit-dragging .ts-card { transition:none !important; animation:none !i
 /* 面板：portal 挂 body（避开 .ts-cr 的 overflow:hidden），宽度跟随内容但有限，列表内部滚动 */
 /* box-sizing:border-box：宽度由落点算（要整块夹在侧栏内），含 padding/border 才不会把面板撞出栏外 */
 .ts-expset-pop { z-index:46; box-sizing:border-box; width:max-content; min-width:300px; max-width:min(420px, calc(100vw - 32px)); max-height:64vh; overflow:auto; display:flex; flex-direction:column; gap:8px; padding:10px 12px; border-radius:12px; border:1px solid var(--ts-pop-line); background:var(--ts-pop-bg); color:var(--ts-pop-fg); box-shadow:var(--ts-pop-shadow); backdrop-filter:blur(12px) saturate(1.2); }
+/* 面板被侧栏夹窄时（data-compact）：内边距与间距收一档 —— 380~420 的宽松版式塞进 200 宽会挤成一团。
+   宽度、最小宽仍由落点函数写在行内样式上（含 padding，靠 box-sizing）。 */
+.ts-expset-pop[data-compact] { padding:8px 8px 6px; gap:6px; border-radius:10px; }
+.ts-expset-pop[data-compact] .ts-expset-head { flex-wrap:wrap; row-gap:2px; }
+.ts-expset-pop[data-compact] .ts-expset-head-tip { margin-left:0; flex:1 1 100%; }
+.ts-expset-pop[data-compact] .ts-expset-group { padding:6px; gap:4px; }
+.ts-expset-pop[data-compact] .ts-expset-row { gap:6px; }
+.ts-expset-pop[data-compact] .ts-expset-err { flex-wrap:wrap; }
 .ts-expset-head { display:flex; align-items:baseline; gap:8px; font-size:var(--ts-fs, 12.5px); font-weight:600; }
 .ts-expset-head-tip { margin-left:auto; font-size:calc(var(--ts-fs, 12.5px) * 0.84); font-weight:400; opacity:.6; }
 .ts-expset-err { display:flex; align-items:flex-start; gap:8px; font-size:calc(var(--ts-fs, 12.5px) * 0.92); color:#fca5a5; }

@@ -213,6 +213,13 @@ function relAge(ms: number): string {
 }
 
 const DOCK_CSS_ID = 'tokensave-desk-dock-css'
+/**
+ * 侧栏标签条下沿与浮层之间留多少呼吸位。
+ *
+ * 侧栏的标签条本身 33px（`.dv-tabs-and-actions-container`，见下面 DOCK_CSS），给探索者设置面板当
+ * 「内容区上边界」用：面板从标签条下方开始，不压住侧栏自己的标签（用户反馈：面板把侧栏盖住了）。
+ */
+const SIDEBAR_TABS_GAP = 6
 /** 外壳 + 主题（透明 + 线条标签 + 落点高亮）。 */
 const DOCK_CSS = `
 /* 主题调色板（外壳/皮肤/弹层三组变量）统一在 client/src/panel/theme.ts 的 THEME_CSS 里，
@@ -2556,7 +2563,13 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
               const region = chromePos === 'left' ? 'left' : 'right'
               const el = dockRootRef.current?.querySelector<HTMLElement>(`.ts-region[data-region="${region}"]`)
               const rect = el?.getBoundingClientRect()
-              if (rect && rect.width >= POP_MIN_BOUNDS_WIDTH) return rect
+              if (rect && rect.width >= POP_MIN_BOUNDS_WIDTH) {
+                // 侧栏自己的标签条要留着看得见（用户反馈：面板把侧栏盖住了）：
+                // 面板从标签条下方开始，读起来是「侧栏内容区里的一张卡片」。
+                const tabs = el?.querySelector<HTMLElement>('.dv-tabs-and-actions-container')?.getBoundingClientRect()
+                const top = rect.top + (tabs ? tabs.height + SIDEBAR_TABS_GAP : SIDEBAR_TABS_GAP)
+                return { left: rect.left, right: rect.right, top, bottom: rect.bottom }
+              }
               return dockRootRef.current?.getBoundingClientRect() ?? null
             }}
           />

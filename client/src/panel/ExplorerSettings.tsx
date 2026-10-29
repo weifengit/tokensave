@@ -270,6 +270,7 @@ export function ExplorerSettings({
           role="dialog"
           aria-label="探索者设置"
           data-desk-explorers-panel=""
+          data-compact={pos && pos.width < 300 ? '' : undefined}
           ref={popRef}
           style={{
             position: 'fixed',
