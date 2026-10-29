@@ -4,14 +4,19 @@
  * 骨架（三个 dockview 实例 + 标题行 + 状态栏）：
  *
  *   ┌──────────────────────────────────────────────────────────────┐
- *   │ 标题行：[图标] 项目名 │ 已关闭 chips        │ 区域键 ⋯ 皮肤   │
+ *   │ 标题行： │ [图标] 项目名 · 已关闭 chips  │ 区域键 探索者 设置│
  *   ├──────────┬──────────────────────────────┬─────────────────┤
  *   │ 主侧栏   │ 编辑区（预览/主对话/探索者）  │ 辅助侧栏        │
  *   │ dockview ├──────────────────────────────┤ dockview        │
  *   │          │ 面板区（黑板/协作对话/收益）  │                 │
  *   ├──────────┴──────────────────────────────┴─────────────────┤
- *   │ 状态栏：当前面板 · 面板数 · 锁 · 保存布局 · 默认布局        │
+ *   │ 状态栏：当前面板 · 面板数 · 保存/恢复布局 · 会话切换         │
  *   └──────────────────────────────────────────────────────────────┘
+ *
+ * 标题行位置可换（顶部 / 左侧 / 右侧，见 chrome-position.ts）：侧置时上图顶部那一行变成
+ * 一条 44px 竖轨（图标 + 竖排项目名在上，区域键 / 探索者设置 / 设置齿轮在底部），网格从
+ * 三行变两行（工作区 / 状态栏），把整行高度让给内容。位置落在 `.ts-dock[data-chrome]`，
+ * 浮层落点也按位置重算 —— 齿轮在竖轨最底部，「按钮底 + 6」会把设置面板甩到屏幕外。
  *
  * 为什么编辑区与面板区**共用一个实例**（同 info_report）：面板区「向上扩充」
  * 调 maximizeGroup 时只盖住编辑区、两侧侧栏不受影响；两者之间的横向把手是
@@ -58,6 +63,11 @@ import { startThemeWatch } from './theme'
 import { installSkinLayerCss } from './skin-layer'
 import { getClientContext, subscribeSession, subscribeSessionMetrics } from '../session-subscribe'
 import { KINDS, paneId, parsePaneId, paneTitle, paneIcon, type Kind } from './desk-panes'
+import {
+  CHROME_POSITIONS, CHROME_HINT, CHROME_LABEL, RAIL_W,
+  effectiveChrome, popPlacement, readChromePosition, writeChromePosition,
+  type ChromePosition,
+} from './chrome-position'
 import type { ProjectRecord } from './store'
 
 const SNAPSHOT_KEY = (projectId: string) => `tokensave:desk-dock.v2:${projectId}`
@@ -251,6 +261,55 @@ const DOCK_CSS = `
 .ts-tg-sep { width: 1px; height: 16px; background: rgba(127,127,127,.24); margin: 0 2px; }
 .ts-closed-chip { display: inline-flex; align-items: center; gap: 4px; border: 1px solid rgba(127,127,127,.28); border-radius: 999px; background: rgba(127,127,127,.1); color: inherit; font: inherit; font-size:calc(var(--ts-fs, 12.5px) * 0.92); padding: 2px 8px; cursor: pointer; white-space: nowrap; flex: none; }
 .ts-closed-chip:hover { border-color: #4f8ef7; }
+/* ── 标题栏位置：顶部（默认）/ 左侧 / 右侧 ──────────────────────────
+   为什么做这件事：顶部那整整一行（42px）拿掉后，省下的高度就是**一整行内容** ——
+   用户要的就是这个。侧置时标题行收成一条 ${RAIL_W}px 竖轨，所以轨必须窄：
+   轨宽一档，省下来的横向空间就还回去一档。
+   位置落在 .ts-dock[data-chrome] 上（不是 <html>）：工作台只是插件里的一块，
+   写到 <html> 会把宿主页面一起改了；偏好与浮层落点在 chrome-position.ts。
+   窄屏（≤900px）两侧栏是覆盖式抽屉，竖轨无从放置 → 一律按顶部渲染。 */
+.ts-dock { --ts-rail-w: ${RAIL_W}px; }
+/* 侧置后顶部没有标题行：两行（工作区 / 状态栏），竖轨占一列 */
+.ts-dock[data-chrome="left"],
+.ts-dock[data-chrome="right"] { grid-template-rows: minmax(0,1fr) auto; }
+.ts-dock[data-chrome="left"] { grid-template-columns: var(--ts-rail-w) minmax(0,var(--ts-side-l,220px)) minmax(0,1fr) minmax(0,var(--ts-side-r,260px)); grid-template-areas: "title left center right" "status status status status"; }
+.ts-dock[data-chrome="right"] { grid-template-columns: minmax(0,var(--ts-side-l,220px)) minmax(0,1fr) minmax(0,var(--ts-side-r,260px)) var(--ts-rail-w); grid-template-areas: "left center right title" "status status status status"; }
+/* 中区收起时列数跟着变（两条都比基础的 data-hide-center 更具体，否则它那套三列会赢） */
+.ts-dock[data-chrome="left"][data-hide-center] { grid-template-columns: var(--ts-rail-w) minmax(0,var(--ts-side-l,220px)) 0px minmax(0,var(--ts-side-r,260px)); }
+.ts-dock[data-chrome="right"][data-hide-center] { grid-template-columns: minmax(0,var(--ts-side-l,220px)) 0px minmax(0,var(--ts-side-r,260px)) var(--ts-rail-w); }
+/* 竖轨本体：从「横条」改成「竖条」——图标与竖排项目名在上、区域键与设置贴底部。
+   注意 position/left/right/top/height 全部复位：基础规则是「横向铺满 + 绝对定位」
+   （那样是为了摆脱列宽约束），竖轨是网格里的一列，必须回到正常流。 */
+.ts-dock[data-chrome="left"] .ts-titlebar,
+.ts-dock[data-chrome="right"] .ts-titlebar {
+  position: relative; left: auto; right: auto; top: auto; width: auto; height: auto;
+  grid-area: title;
+  flex-direction: column; align-items: center; justify-content: flex-start;
+  gap: 8px; padding: 8px 0;
+  /* 它真的是一条栏：极淡一层底 + 一道分隔线（不加圆角/投影，整体仍是一体，不是另一张卡片） */
+  background: var(--ts-hover);
+}
+.ts-dock[data-chrome="left"] .ts-titlebar { border-right: 1px solid var(--ts-line); }
+.ts-dock[data-chrome="right"] .ts-titlebar { border-left: 1px solid var(--ts-line); }
+.ts-dock[data-chrome="left"] .ts-title-left,
+.ts-dock[data-chrome="right"] .ts-title-left { flex-direction: column; align-items: center; gap: 8px; flex: 0 0 auto; overflow: visible; }
+.ts-dock[data-chrome="left"] .ts-title-right,
+.ts-dock[data-chrome="right"] .ts-title-right { flex-direction: column; align-items: center; gap: 4px; margin-top: auto; flex: 0 0 auto; }
+/* 竖轨里分隔线要横过来 */
+.ts-dock[data-chrome="left"] .ts-tg-sep,
+.ts-dock[data-chrome="right"] .ts-tg-sep { width: 18px; height: 1px; margin: 3px 0; }
+/* 项目名竖排（横向只要 15px）：44px 的轨里横排一定被截成「受…」，竖排是唯一不截断的写法 */
+.ts-dock[data-chrome="left"] .ts-title-proj,
+.ts-dock[data-chrome="right"] .ts-title-proj { writing-mode: vertical-rl; font-size: calc(var(--ts-fs, 12.5px) * 1.06); letter-spacing: .18em; line-height: 1; max-height: 34vh; overflow: hidden; text-overflow: ellipsis; }
+/* 项目切换按钮只留图标：小箭头在 44px 里会把按钮撑出轨宽（被 overflow:hidden 裁掉） */
+.ts-dock[data-chrome="left"] .ts-title-switch .ts-title-caret,
+.ts-dock[data-chrome="right"] .ts-title-switch .ts-title-caret { display: none; }
+/* 「已关闭」chips 每枚至少 60px 宽，44px 的轨里放不下 → 侧置时收起；
+   要找回关掉的窗口走设置面板的「全部打开」。 */
+.ts-dock[data-chrome="left"] .ts-closed-chip,
+.ts-dock[data-chrome="right"] .ts-closed-chip,
+.ts-dock[data-chrome="left"] .ts-title-left .ts-sb-sep,
+.ts-dock[data-chrome="right"] .ts-title-left .ts-sb-sep { display: none; }
 .ts-region { min-width: 0; min-height: 0; overflow: visible; position: relative; }
 /* 内容裁切放在 host 上：区域本身要 visible，否则把手（贴在边界上）会被裁掉，
    实测 elementFromPoint 命中的是区域而不是把手 → 拖不动。 */
@@ -297,7 +356,7 @@ body.ts-resizing { cursor: col-resize !important; user-select: none !important; 
 /* 侧栏收起后把手仍留在原位（可从窄缝拉出来）：左区的把手贴右缘、右区的贴左缘 */
 .ts-dock[data-hide-left] .ts-region[data-region="left"] .ts-resizer { right: -5px; z-index: 101; }
 .ts-dock[data-hide-right] .ts-region[data-region="right"] .ts-resizer { left: -5px; z-index: 101; }
-/* ── 右上角「设置」浮层：三块（显示/隐藏窗口 · 皮肤 · 字体） ──────────── */
+/* ── 右上角「设置」浮层：四块（显示/隐藏窗口 · 标题栏位置 · 皮肤 · 字体） ────── */
 /* 宽度按内容定：比旧版窄一截（用户反馈太宽），且不再被 .ts-pop 的 min-width 撑开 */
 .ts-pop.ts-set { min-width: 0; }
 /* box-sizing:border-box：宽度含 padding/border，否则 238+内边距+描边会超出面板锚定算出的右边缘 */
@@ -755,7 +814,7 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
   /** 由挂载 effect 赋值的「输入条要不要藏」判定：hiddenRegions 变化（收起编辑区）时也要重跑。 */
   const syncChatSeatRef = useRef<() => void>(() => {})
   const [layoutDirty, setLayoutDirty] = useState(false)
-  /** 右上角「设置」面板（显示/隐藏窗口 + 皮肤 + 字体，三块合一）。 */
+  /** 右上角「设置」面板（显示/隐藏窗口 + 标题栏位置 + 皮肤 + 字体，四块合一）。 */
   const [settingsOpen, setSettingsOpen] = useState(false)
   /** 标题行左侧「项目切换」面板。 */
   const [projOpen, setProjOpen] = useState(false)
@@ -765,7 +824,8 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
   const [skin, setSkin] = useState<string>(readSkinId)
   /** 当前宿主主题模式（皮肤面板里按它显示对应的那一栏）。 */
   const [skinMode, setSkinMode] = useState<'dark' | 'light'>(currentThemeMode)
-  const [popPos, setPopPos] = useState<{ left: number; top: number } | null>(null)
+  /** 浮动面板落点：顶置给 top，侧置给 bottom（向上长）。见 chrome-position.ts 的 popPlacement()。 */
+  const [popPos, setPopPos] = useState<{ left: number; top?: number; bottom?: number } | null>(null)
   /** 侧栏宽度（可拖拽；同 info_report 的 --side-l / --side-r）。 */
   const [sideW, setSideW] = useState<{ left: number; right: number }>(() => {
     try {
@@ -1902,7 +1962,17 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
   //   窄屏下三栏根本放不下（实测 393px 被压成 196/0/196，中间对话宽度 0），
   //   所以中间永远整宽，左右两侧由这里控制抽屉开关；桌面端行为不变。
   const [drawer, setDrawer] = useState<Region | null>(null)
-  const [narrow, setNarrow] = useState(false)
+  /**
+   * 窄屏判定。初值直接取自 matchMedia（不再先 false 一帧）：侧置竖轨在手机上要立刻让位，
+   * 否则会闪一下竖轨再跳回顶部。
+   */
+  const [narrow, setNarrow] = useState(
+    () => typeof window !== 'undefined' && !!window.matchMedia && window.matchMedia('(max-width: 900px)').matches,
+  )
+  /** 标题栏位置偏好（全局一份，与皮肤 / 字体同）；窄屏一律按顶部渲染，偏好本身保留。 */
+  const [chrome, setChrome] = useState<ChromePosition>(readChromePosition)
+  /** 真正生效的位置（窄屏 → 顶部）。JS 里判断浮层落点、给 .ts-dock 写 data-chrome 都用它。 */
+  const chromePos = effectiveChrome(chrome, narrow)
   /**
    * 悬浮状态栏的高度 → `--ts-sb-h`。
    * 状态栏脱离网格行（行高 0）、内容从它底下穿过，所以聊天底部留白与输入条位置
@@ -2038,21 +2108,48 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
   }, [])
 
   /**
-   * 把浮动面板定位到触发按钮下方（同 info_report 的 openWinMenu 思路）。
+   * 把浮动面板定位到触发按钮旁边（同 info_report 的 openWinMenu 思路）。
    *
-   * **左右都夹在工作台内部**：左侧按钮（项目切换器）原来会算出负值 → 被夹到页面 x=8，
-   * 看着像「弹到宿主侧边栏上去了」（用户反馈）。现在下限用工作台自身的左/右边缘。
+   * 几何全在 chrome-position.ts 的 popPlacement()（纯函数，可自检）：
+   *   · 顶置：右对齐按钮、挂在按钮下方 6px，**左右都夹在工作台内部** ——
+   *     左侧按钮（项目切换器）原来会算出负值 → 被夹到页面 x=8，看着像弹到宿主
+   *     侧边栏上去了（用户反馈），所以下限用工作台自身的左右边缘；
+   *   · 侧置：挂在竖轨内侧，靠下的按钮（齿轮）改成**向上长** —— 照旧「按钮底 + 6」
+   *     会把整块面板甩到屏幕外（info_report 踩过同一个坑）。
+   * position 可显式传入：切换位置的瞬间 chromePos 还是旧值，必须按新位置算。
    */
-  const placePop = (anchor: HTMLElement | null, width: number) => {
-    const r = anchor?.getBoundingClientRect()
-    const dock = dockRootRef.current?.getBoundingClientRect()
-    const minLeft = (dock ? dock.left : 0) + 8
-    const maxLeft = Math.min(window.innerWidth - width - 8, (dock ? dock.right : window.innerWidth) - width - 8)
-    const left = r
-      ? Math.max(minLeft, Math.min(r.right - width, Math.max(minLeft, maxLeft)))
-      : minLeft
-    const top = r ? r.bottom + 6 : 48
-    setPopPos({ left, top })
+  const placePop = (
+    anchor: HTMLElement | null,
+    width: number,
+    position: ChromePosition = chromePos,
+  ) => {
+    setPopPos(
+      popPlacement({
+        chrome: position,
+        anchor: anchor?.getBoundingClientRect() ?? null,
+        dock: dockRootRef.current?.getBoundingClientRect() ?? null,
+        viewport: { width: window.innerWidth, height: window.innerHeight },
+        width,
+      }),
+    )
+  }
+
+  /**
+   * 切换标题栏位置（顶部 / 左侧 / 右侧）。
+   *
+   * 位置只是外观偏好（全局一份），但换完**必须重排开着的浮层**：齿轮从标题行右端
+   * 变成竖轨最底部，旧坐标会把整块面板甩到屏幕外。宽度沿用打开时那套口径，
+   * 免得切换后宽度跳一下。
+   */
+  const switchChrome = (next: ChromePosition) => {
+    writeChromePosition(next)
+    setChrome(next)
+    const rail = effectiveChrome(next, narrow)
+    window.requestAnimationFrame(() => {
+      const panelW = (desktop: number) => (narrow ? Math.min(window.innerWidth - 20, 340) : desktop)
+      if (settingsOpen) placePop(settingsBtnRef.current, panelW(238), rail)
+      if (projOpen) placePop(projBtnRef.current, panelW(272), rail)
+    })
   }
 
   /**
@@ -2370,6 +2467,7 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
       data-hide-left={hiddenRegions.includes('left') ? '' : undefined}
       data-hide-right={hiddenRegions.includes('right') ? '' : undefined}
       data-hide-center={hiddenRegions.includes('center') ? '' : undefined}
+      data-chrome={chromePos}
       data-ts-drawer={drawer ?? undefined}
       style={{
         // 皮肤不在这里写：由 :root 的 --ts-skin-color / --ts-skin-bg 提供（skins.ts），
@@ -2407,7 +2505,8 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
             <span aria-hidden="true" dangerouslySetInnerHTML={{ __html: iconSvg('zone', 19) }} />
             <span className="ts-title-caret" aria-hidden="true" dangerouslySetInnerHTML={{ __html: iconSvg('chevron', 13) }} />
           </button>
-          <span className="ts-title-proj" data-desk-title="">
+          {/* 竖轨里项目名是竖排、窄到头会省略号 —— 全名放 title 里截断也不丢信息 */}
+          <span className="ts-title-proj" data-desk-title="" title={project.name}>
             {project.name}
           </span>
           {closedIds.length ? <span className="ts-sb-sep" aria-hidden="true" /> : null}
@@ -2448,14 +2547,14 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
           {/* 探索者设置：恢复到右上角（用户要求），图标式触发 + 计数徽标 */}
           <ExplorerSettings variant="icon" />
           <span className="ts-tg-sep" aria-hidden="true" />
-          {/* 右上角只剩一个「设置」齿轮：显示/隐藏窗口 + 皮肤 + 字体三块都在它里面
+          {/* 右上角只剩一个「设置」齿轮：显示/隐藏窗口 + 标题栏位置 + 皮肤 + 字体都在它里面
               （用户要求把原来的 ⋯ 与皮肤两个按钮合成一个）。 */}
           <button
             ref={settingsBtnRef}
             className="ts-tg"
             data-desk-settings=""
             data-on={settingsOpen ? '1' : undefined}
-            title="设置：显示/隐藏窗口 · 皮肤 · 字体"
+            title="设置：窗口 · 标题栏 · 皮肤 · 字体"
             onClick={() => {
               const next = !settingsOpen
               if (next) {
@@ -2572,7 +2671,7 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
         </span>
       </footer>
 
-      {/* 设置面板：三块 —— 显示/隐藏窗口 · 皮肤 · 字体 */}
+      {/* 设置面板：四块 —— 显示/隐藏窗口 · 标题栏位置 · 皮肤 · 字体 */}
       {settingsOpen ? (
         <div
           className="ts-pop ts-set"
@@ -2627,7 +2726,35 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
             })}
           </div>
 
-          {/* ② 背景皮肤（分组 + 分类，参考 info_report 的皮肤目录；点了不关面板方便连着试） */}
+          {/* ② 标题栏位置：顶部横排 / 左侧窄轨 / 右侧窄轨。
+              窄屏两侧栏是覆盖式抽屉，竖轨无从放置 → 整块不显示（偏好仍保留，回宽屏即生效）。 */}
+          {narrow ? null : (
+            <div className="ts-set-block" data-desk-set-block="chrome">
+              <div className="ts-set-head">
+                <span className="ts-set-title">标题栏</span>
+                <span className="ts-set-hint">{CHROME_LABEL[chrome]}</span>
+              </div>
+              <div className="ts-set-row">
+                <span className="ts-set-k">位置</span>
+                <span className="ts-set-seg">
+                  {CHROME_POSITIONS.map((p) => (
+                    <button
+                      key={p}
+                      className="ts-set-opt"
+                      data-desk-chrome={p}
+                      data-on={chrome === p ? '1' : undefined}
+                      title={CHROME_HINT[p]}
+                      onClick={() => switchChrome(p)}
+                    >
+                      {CHROME_LABEL[p]}
+                    </button>
+                  ))}
+                </span>
+              </div>
+            </div>
+          )}
+
+          {/* ③ 背景皮肤（分组 + 分类，参考 info_report 的皮肤目录；点了不关面板方便连着试） */}
           <div className="ts-set-block" data-desk-set-block="skin">
             {/* 标题行右侧直接显示「当前选了哪套 + 属于哪种主题」：皮肤现在覆盖整页，
                 用户需要一眼确认到底生效的是哪一套（以前只有格子高亮，列表一长就看不见）。 */}
@@ -2638,7 +2765,7 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
               </span>
             </div>
             {/* 列表限高 + 内部滚动：22 套皮排开会把下面的「字体」块顶出面板（实测皮肤块 695px、
-                面板只有 415px，字体要滚很久才看得到）。限高后三块一眼都在。 */}
+                面板只有 415px，字体要滚很久才看得到）。限高后四块一眼都在。 */}
             <div className="ts-skin-scroll" data-desk-skin-scroll="">
               <button
                 className="ts-skin-cell ts-skin-none"
@@ -2672,7 +2799,7 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
             <div className="ts-set-hint ts-skin-note">跟随系统深浅自动切换 · 四个页面一起生效</div>
           </div>
 
-          {/* ③ 字体：字号档位 + 字族 */}
+          {/* ④ 字体：字号档位 + 字族 */}
           <div className="ts-set-block" data-desk-set-block="font">
             <div className="ts-set-head">
               <span className="ts-set-title">字体</span>

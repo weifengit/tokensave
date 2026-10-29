@@ -254,11 +254,13 @@ check('开启根级落点容器（dndOverlayMounting；不设则浮层永不显�
   /dndOverlayMounting: 'absolute'/.test(dock) && /dndPanelOverlay: 'group'/.test(dock))
 check('顶部「项目中心」超链接已移除（恢复入口在项目中心 tab）',
   !/data-desk-back=""/.test(dock))
-check('设置浮层锚定在齿轮按钮下方，且**夹在工作台内部**（不会弹到侧边栏上）',
-  /const placePop = \(anchor: HTMLElement \| null, width: number\) => \{/.test(dock) &&
-  /const minLeft = \(dock \? dock\.left : 0\) \+ 8/.test(dock) &&
-  /const left = r/.test(dock) &&
-  /const top = r \? r\.bottom \+ 6 : 48/.test(dock) &&
+check('设置浮层贴齿轮按钮，且**夹在工作台内部**（不会弹到侧边栏上）',
+  // 几何已搬进 chrome-position.ts 的 popPlacement()（纯函数；顶置/左轨/右轨的落点与夹具
+  // 由 check-chrome-position.mjs 逐条钉死）。这里只钉**接线**：两处浮层共用同一个入口，
+  // 锚点与工作台矩形都取活节点（不缓存坐标），否则收起侧栏/切位置后浮层会停在老地方。
+  /const placePop = \(\n    anchor: HTMLElement \| null,/.test(dock) &&
+  /popPlacement\(\{/.test(dock) &&
+  /dock: dockRootRef\.current\?\.getBoundingClientRect\(\) \?\? null/.test(dock) &&
   /style=\{popPos \?\? \{ left: 12, top: 48 \}\}/.test(dock))
 check('⋯ 菜单：每窗口一行 + 三个区域按钮（当前区高亮，再点收起）+ 全部打开',
   /data-desk-pop-row=\{id\}/.test(dock) && /data-desk-move=\{id\}/.test(dock) &&

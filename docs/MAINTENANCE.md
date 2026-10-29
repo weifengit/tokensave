@@ -71,9 +71,9 @@
 
 | 路径 | 内容 |
 | --- | --- |
-| `client/src/panel/` | 工作台前端（React）：DeskDock 布局、MsgList 主对话、主题、样式 |
+| `client/src/panel/` | 工作台前端（React）：DeskDock 布局、MsgList 主对话、主题、样式；`chrome-position.ts` 是标题栏位置偏好与浮层落点的纯函数模块 |
 | `src/` | 插件服务端（cordis）：tokensave_delegate 工具、编排、黑板 |
-| `scripts/check-*.mjs` | 自检断言（纯文本，不需要浏览器） |
+| `scripts/check-*.mjs` | 自检断言（多数纯文本，不需要浏览器；`check-chrome-geometry.mjs` 要真浏览器量网格，单跑、不进默认链） |
 | `scripts/build-client.mjs` | esbuild 打包客户端 → dist/client.js |
 | `scripts/release.mjs` | 版本递增 + CHANGELOG + tag |
 | `src/types.ts` / 各模块头注释 | 接口契约的唯一权威源（原 docs/CONTRACTS.md 已于 2026-10-16 删除，内容均为代码镜像或已过时） |
