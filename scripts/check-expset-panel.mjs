@@ -103,7 +103,16 @@ try {
   globalThis.fetch = async () => { calls++; throw new TypeError('Failed to fetch') }
   let netErr = null
   try { await api.fetchExplorerSettings() } catch (e) { netErr = e }
-  check('网络全失败：重试到上限（2 次请求）', calls === 2, `calls=${calls}`)
+  check('网络全失败：按退避重试到上限（1 次 + 3 次重试）', calls === 4, `calls=${calls}`)
+  calls = 0
+  globalThis.fetch = async () => {
+    calls++
+    if (calls <= 2) throw new TypeError('Failed to fetch')
+    return okRes
+  }
+  const lateOk = await api.fetchExplorerSettings()
+  check('连续失败两次后第三次成功（插件重挂窗口）', calls === 3 && lateOk.groups.length === 3, `calls=${calls}`)
+
   check('网络全失败：错误里带接口地址与原因',
     !!netErr && netErr.message.includes(api.EXPLORER_SETTINGS_URL) && /Failed to fetch/.test(netErr.message),
     netErr ? netErr.message : 'no error')
@@ -159,6 +168,19 @@ try {
   check('失败有「重试」入口（不是只剩一行错误）',
     /data-desk-explorers-err/.test(panel) && /ts-expset-retry/.test(panel) && /setAttempt\(\(n\) => n \+ 1\)/.test(panel))
   check('重试会重跑加载 effect', /\}, \[open, attempt, place\]\)/.test(panel))
+  check('网络层失败会自动再试（0.8s 起翻倍，共 3 次）',
+    /const AUTO_RETRY_LIMIT = 3/.test(panel) &&
+    /if \(isNetworkFailure\(e\) && autoTriesRef\.current < AUTO_RETRY_LIMIT\)/.test(panel) &&
+    /800 \* 2 \*\* \(autoTriesRef\.current - 1\)/.test(panel))
+  check('标签页回到前台 / 网络恢复也会自动再拉一次',
+    /document\.addEventListener\('visibilitychange', onVisible\)/.test(panel) &&
+    /window\.addEventListener\('online', again\)/.test(panel))
+  check('失败文案是人话（原文留在 title 里）',
+    /function friendlyLoadError/.test(panel) && /title=\{err\}/.test(panel) &&
+    /点「重试」再试/.test(panel))
+  check('重试节奏与「网络层失败」判定在 api 层集中一份',
+    /export const EXPLORER_RETRY_DELAYS = \[120, 350, 800\]/.test(apiSrc) &&
+    /export function isNetworkFailure/.test(apiSrc))
   check('接口地址是一个常量（错误提示与自检共用）',
     /export const EXPLORER_SETTINGS_URL = '\/plugins\/dsh-tokensave\/explorer-settings'/.test(apiSrc))
   check('请求带 no-store（不被中间缓存 / 代理卡住）', /cache: 'no-store'/.test(apiSrc))

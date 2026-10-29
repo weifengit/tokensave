@@ -494,14 +494,25 @@ function pickExplorerSettings(data: any): ExplorerSettingsPayload {
 const sleep = (ms: number) => new Promise<void>((resolve) => { setTimeout(resolve, ms) })
 
 /**
+ * 重试节奏（毫秒）。为什么是这几个值：这类失败几乎都是「插件刚重挂 / DSH 刚重启 / 网关刚断」
+ * 的瞬时窗口（实测重挂窗口 0.3~2s），按 120→350→800 退避一共盖住约 1.3s，
+ * 再加面板自己的自动重试就能跨过重启。4xx（鉴权 / 路径不对）不重试 —— 重试也是同样结果。
+ */
+export const EXPLORER_RETRY_DELAYS = [120, 350, 800] as const
+
+/** 这条错误是不是「网络层失败」（浏览器里就是 TypeError: Failed to fetch）。 */
+export function isNetworkFailure(error: unknown): boolean {
+  if (!(error instanceof Error)) return false
+  return error instanceof TypeError || /Failed to fetch|NetworkError|Load failed|network/i.test(error.message)
+}
+
+/**
  * 读探索者目录 + 当前选择。
  *
- * 网络层失败（TypeError: Failed to fetch）与 5xx 值得重试一次 —— 这类失败往往是
- * 插件刚重挂完 / 网关刚重启的瞬时窗口，重试就好；4xx（鉴权、路径不对）重试没意义，
- * 直接报出状态码让用户看见问题。成功后顺手把快照写进本地缓存。
+ * 成功后顺手把快照写进本地缓存（面板下次打开先亮它）。
  */
 export async function fetchExplorerSettings(opts: { retries?: number } = {}): Promise<ExplorerSettingsPayload> {
-  const retries = Math.max(0, opts.retries ?? 1)
+  const retries = Math.max(0, opts.retries ?? EXPLORER_RETRY_DELAYS.length)
   let last: unknown = null
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
@@ -519,10 +530,9 @@ export async function fetchExplorerSettings(opts: { retries?: number } = {}): Pr
     } catch (e) {
       last = e
       const message = e instanceof Error ? e.message : String(e)
-      // 只重试「拿不到应答」与 5xx：鉴权 / 路径类错误重试两次也是一样的结果
-      const retryable = e instanceof TypeError || /HTTP 5\d\d/.test(message)
+      const retryable = isNetworkFailure(e) || /HTTP 5\d\d/.test(message)
       if (attempt >= retries || !retryable) break
-      await sleep(200)
+      await sleep(EXPLORER_RETRY_DELAYS[Math.min(attempt, EXPLORER_RETRY_DELAYS.length - 1)])
     }
   }
   const detail = last instanceof Error ? last.message : String(last)

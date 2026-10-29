@@ -20,7 +20,7 @@
  */
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { fetchExplorerSettings, readCachedExplorerSettings, saveExplorerSettings } from './api'
+import { fetchExplorerSettings, isNetworkFailure, readCachedExplorerSettings, saveExplorerSettings } from './api'
 import type { ExplorerSettingGroup, ExplorerSettingItem, ExplorerSettingsPayload } from './api'
 import type { PopPlacement } from './chrome-position'
 
@@ -32,6 +32,17 @@ type PopPos = { left: number; top?: number; bottom?: number }
 
 /** 面板宽度：与齿轮设置面板一样是固定宽度（狭长一列，不随内容忽宽忽窄）。 */
 const POP_WIDTH = 300
+
+/** 把浏览器原文翻成人话（原文留在 title 里 —— 排查时 URL 与状态码仍看得到）。 */
+function friendlyLoadError(message: string): string {
+  if (/Failed to fetch|NetworkError|Load failed/i.test(message)) {
+    return '接口暂时连不上（插件可能在重载，或网络刚断）· 点「重试」再试'
+  }
+  return message
+}
+
+/** 自动重试次数上限（配合 0.8s 起翻倍的退避，覆盖插件重挂 / DSH 重启那几秒） */
+const AUTO_RETRY_LIMIT = 3
 
 /** 没注入落点时的退路（组件被单独复用）：挂在按钮下方、右缘对齐、夹在视口内。 */
 function defaultPlace(anchor: DOMRect, width: number): PopPlacement {
@@ -100,6 +111,8 @@ export function ExplorerSettings({
   const [busy, setBusy] = useState(false)
   /** 重试计数：自增即重跑加载 effect（比手写一套 loading 状态机稳） */
   const [attempt, setAttempt] = useState(0)
+  /** 自动重试预算（网络层失败时用掉一个，成功清零；手动点「重试」也重新给满） */
+  const autoTriesRef = useRef(0)
   const boxRef = useRef<HTMLSpanElement>(null)
   const popRef = useRef<HTMLDivElement>(null)
 
@@ -140,9 +153,14 @@ export function ExplorerSettings({
   }, [open, attempt, place])
 
   // 打开（或重试）时：先亮本地快照 → 再拉真目录。接口挂了也不会白屏。
+  //
+  // 自动重试：接口失败若是**网络层**（Failed to fetch），多半是插件正在重挂 / DSH 刚重启 /
+  // 网关刚断的瞬时窗口 —— 间隔 0.8s / 1.6s / 3.2s 再试 3 次，用户什么都不用点。
+  // 重试预算按「一次打开」计（手动点重试会重新给一次预算），成功即清零。
   useEffect(() => {
     if (!open) return
     let alive = true
+    let timer: number | undefined
     if (!data) {
       const cached = readCachedExplorerSettings()
       if (cached) {
@@ -152,7 +170,8 @@ export function ExplorerSettings({
       }
     }
     setLoading(true)
-    setErr(null)
+    // 首次打开 / 手动重试时清掉旧错误；**自动重试**时保留错误横幅，免得它一闪一闪
+    if (autoTriesRef.current === 0) setErr(null)
     void (async () => {
       try {
         const payload = await fetchExplorerSettings()
@@ -160,14 +179,37 @@ export function ExplorerSettings({
         setData(payload)
         setSelected(selectionsFrom(payload))
         setFromCache(false)
+        autoTriesRef.current = 0
       } catch (e) {
-        if (alive) setErr(e instanceof Error ? e.message : '探索者设置加载失败')
+        if (!alive) return
+        setErr(e instanceof Error ? e.message : '探索者设置加载失败')
+        if (isNetworkFailure(e) && autoTriesRef.current < AUTO_RETRY_LIMIT) {
+          autoTriesRef.current += 1
+          const delay = 800 * 2 ** (autoTriesRef.current - 1)
+          timer = window.setTimeout(() => { if (alive) setAttempt((n) => n + 1) }, delay)
+        }
       } finally {
         if (alive) setLoading(false)
       }
     })()
-    return () => { alive = false }
+    return () => {
+      alive = false
+      if (timer) window.clearTimeout(timer)
+    }
   }, [open, attempt])
+
+  // 兜底：面板开着却停在错误上时，标签页切回来 / 网络恢复就自动再拉一次
+  useEffect(() => {
+    if (!open || !err) return
+    const again = () => setAttempt((n) => n + 1)
+    const onVisible = () => { if (document.visibilityState === 'visible') again() }
+    document.addEventListener('visibilitychange', onVisible)
+    window.addEventListener('online', again)
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible)
+      window.removeEventListener('online', again)
+    }
+  }, [open, err])
 
   // 点击外部 / Esc 关闭
   useEffect(() => {
@@ -238,7 +280,10 @@ export function ExplorerSettings({
   }
 
   const total = selected.length
-  const retry = () => setAttempt((n) => n + 1)
+  const retry = () => {
+    autoTriesRef.current = 0
+    setAttempt((n) => n + 1)
+  }
 
   return (
     <span className="ts-expset" ref={boxRef}>
@@ -295,7 +340,7 @@ export function ExplorerSettings({
           </div>
           {err && (
             <div className="ts-expset-err" data-desk-explorers-err="">
-              <span className="ts-expset-err-text">⚠️ {err}</span>
+              <span className="ts-expset-err-text" title={err}>⚠️ {friendlyLoadError(err)}</span>
               <button className="ts-expset-retry" type="button" onClick={retry} disabled={loading}>
                 {loading ? '重试中…' : '重试'}
               </button>
