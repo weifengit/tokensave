@@ -47,7 +47,8 @@
     "test:mobile": "node scripts/check-mobile-layout.mjs",
     "test:chrome": "node scripts/check-chrome-position.mjs",
     "test:chrome-geo": "node scripts/check-chrome-geometry.mjs",
-    "test": "pnpm check && pnpm test:auto-commit && pnpm test:continue && pnpm test:width && pnpm test:hover && pnpm test:sound && pnpm test:sound-sync && pnpm test:pending-alert && pnpm test:todo && pnpm test:chrome && pnpm test:sidebar && pnpm test:composer-focus && pnpm test:dockview && pnpm test:desk && pnpm test:desk-dock && pnpm test:chat-scroll && pnpm test:msg-queue && pnpm test:clone && pnpm test:project-remove && pnpm test:card-flip && pnpm test:card-layout && pnpm test:mobile && pnpm test:ui"
+    "test:expset": "node scripts/check-expset-panel.mjs",
+    "test": "pnpm check && pnpm test:auto-commit && pnpm test:continue && pnpm test:width && pnpm test:hover && pnpm test:sound && pnpm test:sound-sync && pnpm test:pending-alert && pnpm test:todo && pnpm test:chrome && pnpm test:expset && pnpm test:sidebar && pnpm test:composer-focus && pnpm test:dockview && pnpm test:desk && pnpm test:desk-dock && pnpm test:chat-scroll && pnpm test:msg-queue && pnpm test:clone && pnpm test:project-remove && pnpm test:card-flip && pnpm test:card-layout && pnpm test:mobile && pnpm test:ui"
   },
   "dependencies": {
     "@deepseek-ai/dsh-brand": "0.2.0-rc.2",

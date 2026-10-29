@@ -5,16 +5,27 @@
  * 至少保留 1 个选中（最后一个不允许取消）。选择即时 POST 到宿主侧持久化
  * （~/.dsh/tokensave/explorers.json），此后 parallelExplore 完全按这份选择跑。
  *
- * 面板用 portal 挂 body：卡片链路上有 overflow:hidden（.ts-cr），就地渲染会被裁掉；
- * 坐标按按钮位置算成 fixed（右对齐），与 SessionPicker 同款。
+ * 面板用 portal 挂 body：卡片链路上有 overflow:hidden（.ts-cr），就地渲染会被裁掉。
+ * 落点交给 pop-anchor.ts（纯函数）：默认挂在按钮下方、右缘对齐；下方放不下就翻到
+ * 按钮上方，横向纵向都夹在视口内 —— 这个按钮既可能在标题行右端，也可能在侧置竖轨
+ * **最底部**（旧实现「按钮底 + 6」会把整块面板甩到屏幕外）。
+ *
+ * 加载：**先亮上次成功的快照，再后台刷新**。这份目录要先问宿主探测 provider 模型
+ * （首次可能要几秒），插件重挂 / 网关重启时接口还可能整个拿不到（浏览器里就是
+ * `Failed to fetch`）。以前失败只剩一行错误、面板等于是废的；现在有本地快照兜底，
+ * 失败也留在原地给一枚「重试」，不白屏、也不丢已经加载出来的内容。
  */
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { fetchExplorerSettings, saveExplorerSettings } from './api'
+import { fetchExplorerSettings, readCachedExplorerSettings, saveExplorerSettings } from './api'
 import type { ExplorerSettingGroup, ExplorerSettingItem, ExplorerSettingsPayload } from './api'
+import { anchorPopup } from './pop-anchor'
 
 /** 提交/本地状态用的最小选择单位（label/focus 由目录带回，保证持久化的一致）。 */
 type Sel = Pick<ExplorerSettingItem, 'model' | 'label' | 'focus'>
+
+/** 面板落点：left/top 是 fixed 坐标，maxHeight 是这一侧真正可用的高度（面板内部滚动）。 */
+type PopPos = { left: number; top: number; maxHeight: number }
 
 /** 目录 → 已选列表（从目录里回填 label/focus）。 */
 function selectionsFrom(payload: ExplorerSettingsPayload): Sel[] {
@@ -55,36 +66,73 @@ function Switch({
 
 export function ExplorerSettings({ variant = 'text' }: { variant?: 'text' | 'icon' } = {}) {
   const [open, setOpen] = useState(false)
-  const [pos, setPos] = useState<{ top: number; right: number } | null>(null)
+  const [pos, setPos] = useState<PopPos | null>(null)
   const [data, setData] = useState<ExplorerSettingsPayload | null>(null)
   const [selected, setSelected] = useState<Sel[]>([])
   const [err, setErr] = useState<string | null>(null)
+  /** 当前显示的是不是本地快照（接口还没回来 / 回不来） */
+  const [fromCache, setFromCache] = useState(false)
+  const [loading, setLoading] = useState(false)
   const [busy, setBusy] = useState(false)
+  /** 重试计数：自增即重跑加载 effect（比手写一套 loading 状态机稳） */
+  const [attempt, setAttempt] = useState(0)
   const boxRef = useRef<HTMLSpanElement>(null)
   const popRef = useRef<HTMLDivElement>(null)
 
-  // 下拉定位：卡片链路上有 overflow:hidden（.ts-cr），就地渲染会被裁掉 → portal + fixed。
+  /**
+   * 落点：按钮矩形 + 视口 + 面板实测尺寸 → pop-anchor.ts。
+   *
+   * 两段式：首帧面板还没挂上（pos 为空）量不到尺寸，先按保守高度摆一次；挂上之后这个
+   * layout effect 会带着真实尺寸再算一遍 —— 两段都在同一帧 paint 之前完成，看不到跳。
+   * ResizeObserver 兜住内容高度变化（目录拉回来、分组变多）；算出来一样就不 setState，
+   * 不会自己触发自己。
+   */
   useLayoutEffect(() => {
     if (!open) return
     const place = () => {
       const r = boxRef.current?.getBoundingClientRect()
       if (!r) return
-      const margin = 12
-      setPos({ top: r.bottom + 6, right: Math.max(margin, window.innerWidth - r.right) })
+      const el = popRef.current
+      const next = anchorPopup({
+        anchor: r,
+        viewport: { width: window.innerWidth, height: window.innerHeight },
+        size: { width: el ? el.offsetWidth : 0, height: el ? el.scrollHeight : 0 },
+        heightCap: Math.round(window.innerHeight * 0.64),
+      })
+      setPos((prev) =>
+        prev && prev.left === next.left && prev.top === next.top && prev.maxHeight === next.maxHeight
+          ? prev
+          : { left: next.left, top: next.top, maxHeight: next.maxHeight },
+      )
     }
     place()
     window.addEventListener('resize', place)
     window.addEventListener('scroll', place, true)
+    let ro: ResizeObserver | undefined
+    if (typeof ResizeObserver !== 'undefined' && popRef.current) {
+      ro = new ResizeObserver(place)
+      ro.observe(popRef.current)
+    }
     return () => {
       window.removeEventListener('resize', place)
       window.removeEventListener('scroll', place, true)
+      ro?.disconnect()
     }
-  }, [open])
+  }, [open, data, err, loading, attempt])
 
-  // 打开即拉目录 + 当前选择
+  // 打开（或重试）时：先亮本地快照 → 再拉真目录。接口挂了也不会白屏。
   useEffect(() => {
     if (!open) return
     let alive = true
+    if (!data) {
+      const cached = readCachedExplorerSettings()
+      if (cached) {
+        setData(cached)
+        setSelected(selectionsFrom(cached))
+        setFromCache(true)
+      }
+    }
+    setLoading(true)
     setErr(null)
     void (async () => {
       try {
@@ -92,12 +140,15 @@ export function ExplorerSettings({ variant = 'text' }: { variant?: 'text' | 'ico
         if (!alive) return
         setData(payload)
         setSelected(selectionsFrom(payload))
+        setFromCache(false)
       } catch (e) {
         if (alive) setErr(e instanceof Error ? e.message : '探索者设置加载失败')
+      } finally {
+        if (alive) setLoading(false)
       }
     })()
     return () => { alive = false }
-  }, [open])
+  }, [open, attempt])
 
   // 点击外部 / Esc 关闭
   useEffect(() => {
@@ -123,12 +174,14 @@ export function ExplorerSettings({ variant = 'text' }: { variant?: 'text' | 'ico
       const payload = await saveExplorerSettings(next)
       setData(payload)
       setSelected(selectionsFrom(payload))
+      setFromCache(false)
     } catch (e) {
       setErr(e instanceof Error ? e.message : '保存失败')
       try {
         const fresh = await fetchExplorerSettings()
         setData(fresh)
         setSelected(selectionsFrom(fresh))
+        setFromCache(false)
       } catch { /* 回滚也失败：保留乐观值 */ }
     } finally {
       setBusy(false)
@@ -166,6 +219,7 @@ export function ExplorerSettings({ variant = 'text' }: { variant?: 'text' | 'ico
   }
 
   const total = selected.length
+  const retry = () => setAttempt((n) => n + 1)
 
   return (
     <span className="ts-expset" ref={boxRef}>
@@ -188,28 +242,47 @@ export function ExplorerSettings({ variant = 'text' }: { variant?: 'text' | 'ico
         </button>
       ) : (
         <button
-        className={`ts-btn ts-expset-btn${open ? ' active' : ''}`}
-        onClick={() => setOpen((v) => !v)}
-        title="探索者设置：自行选择哪些探索者参与（默认 / 免费 / 收费，可逐个或整组开关，至少保留 1 个）"
-      >
-        ⚙️ 探索者设置{total ? `（${total}）` : ''}
+          className={`ts-btn ts-expset-btn${open ? ' active' : ''}`}
+          onClick={() => setOpen((v) => !v)}
+          title="探索者设置：自行选择哪些探索者参与（默认 / 免费 / 收费，可逐个或整组开关，至少保留 1 个）"
+        >
+          ⚙️ 探索者设置{total ? `（${total}）` : ''}
         </button>
       )}
 
-      {open && pos && createPortal((
+      {open && createPortal((
         <div
           className="ts-expset-pop"
           role="dialog"
           aria-label="探索者设置"
+          data-desk-explorers-panel=""
           ref={popRef}
-          style={{ position: 'fixed', top: pos.top, right: pos.right, left: 'auto' }}
+          style={{
+            position: 'fixed',
+            left: pos?.left ?? -10000,
+            top: pos?.top ?? -10000,
+            right: 'auto',
+            maxHeight: pos ? pos.maxHeight : undefined,
+            // 首帧还没算出落点：先藏起来，等 layout effect 定位好再显（否则会闪在左上角）
+            visibility: pos ? 'visible' : 'hidden',
+          }}
         >
           <div className="ts-expset-head">
             探索者设置
-            <span className="ts-expset-head-tip">至少保留 1 个；选择即时保存</span>
+            <span className="ts-expset-head-tip">
+              {fromCache ? '上次加载 · 正在刷新' : '至少保留 1 个；选择即时保存'}
+            </span>
           </div>
-          {err && <div className="ts-expset-err">⚠️ {err}</div>}
-          {!data && !err && <div className="ts-expset-empty">加载中…</div>}
+          {err && (
+            <div className="ts-expset-err" data-desk-explorers-err="">
+              <span className="ts-expset-err-text">⚠️ {err}</span>
+              <button className="ts-expset-retry" type="button" onClick={retry} disabled={loading}>
+                {loading ? '重试中…' : '重试'}
+              </button>
+            </div>
+          )}
+          {loading && !data && <div className="ts-expset-empty">加载中…</div>}
+          {!loading && !data && !err && <div className="ts-expset-empty">（暂无目录）</div>}
 
           {data?.groups.map((g) => {
             const usable = g.items.filter((i) => i.available)

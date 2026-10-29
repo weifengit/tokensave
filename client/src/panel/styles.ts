@@ -1209,7 +1209,12 @@ body.ts-vsplit-dragging .ts-card { transition:none !important; animation:none !i
 .ts-expset-pop { z-index:46; width:max-content; min-width:300px; max-width:min(420px, calc(100vw - 32px)); max-height:64vh; overflow:auto; display:flex; flex-direction:column; gap:8px; padding:10px 12px; border-radius:12px; border:1px solid var(--ts-pop-line); background:var(--ts-pop-bg); color:var(--ts-pop-fg); box-shadow:var(--ts-pop-shadow); backdrop-filter:blur(12px) saturate(1.2); }
 .ts-expset-head { display:flex; align-items:baseline; gap:8px; font-size:var(--ts-fs, 12.5px); font-weight:600; }
 .ts-expset-head-tip { margin-left:auto; font-size:calc(var(--ts-fs, 12.5px) * 0.84); font-weight:400; opacity:.6; }
-.ts-expset-err { font-size:calc(var(--ts-fs, 12.5px) * 0.92); color:#fca5a5; }
+.ts-expset-err { display:flex; align-items:flex-start; gap:8px; font-size:calc(var(--ts-fs, 12.5px) * 0.92); color:#fca5a5; }
+.ts-expset-err-text { flex:1; min-width:0; overflow-wrap:anywhere; line-height:1.4; }
+/* 失败重试：不再只有一行错就完事，面板里直接给按钮（接口瞬时挂了不用关重开） */
+.ts-expset-retry { flex:none; border:1px solid rgba(252,165,165,.45); border-radius:6px; background:rgba(252,165,165,.12); color:inherit; font:inherit; font-size:calc(var(--ts-fs, 12.5px) * 0.88); padding:1px 8px; cursor:pointer; }
+.ts-expset-retry:hover:not(:disabled) { border-color:#fca5a5; background:rgba(252,165,165,.2); }
+.ts-expset-retry:disabled { opacity:.55; cursor:default; }
 .ts-expset-empty { font-size:calc(var(--ts-fs, 12.5px) * 0.92); opacity:.55; padding:2px 0; }
 .ts-expset-busy { font-size:calc(var(--ts-fs, 12.5px) * 0.88); opacity:.6; }
 .ts-expset-group { display:flex; flex-direction:column; gap:5px; padding:7px 8px; border:1px solid rgba(127,127,127,.24); border-radius:9px; background:rgba(127,127,127,.07); }

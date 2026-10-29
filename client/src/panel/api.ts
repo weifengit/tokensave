@@ -416,6 +416,21 @@ export async function fetchRepos(): Promise<ReposPayload> {
   }
 }
 
+
+/**
+ * 探索者目录接口地址。抽成常量：错误文案与自检断言都要引用它，
+ * 免得面板报「加载失败」时用户不知道是哪条请求挂了。
+ */
+export const EXPLORER_SETTINGS_URL = '/plugins/dsh-tokensave/explorer-settings'
+
+/**
+ * 上一次成功的目录快照（浏览器本地）。
+ *
+ * 为什么缓存：这份目录靠宿主探测 provider 模型（首次可能要 2~4s），而插件重挂 / 断网 /
+ * 网关重启时接口会整个拿不到。以前面板只会在原地转「加载中…」然后变成一行错，等于废掉。
+ * 缓存后打开面板**先亮上次那份**，再后台刷新，失败也不会白屏。
+ */
+export const EXPLORER_SETTINGS_CACHE_KEY = 'tokensave:explorer-settings.v1'
 // —— 探索者设置（默认 / 免费 / 收费 三组开关）——————————————
 //
 // 面板可逐个（或整组）开关探索者，至少保留 1 个选中。选择由宿主持久化
@@ -475,18 +490,71 @@ function pickExplorerSettings(data: any): ExplorerSettingsPayload {
   }
 }
 
-/** 读探索者目录 + 当前选择。 */
-export async function fetchExplorerSettings(): Promise<ExplorerSettingsPayload> {
-  const res = await fetch('/plugins/dsh-tokensave/explorer-settings')
-  if (!res.ok) throw new Error(`探索者设置加载失败（HTTP ${res.status}）`)
-  return pickExplorerSettings(await res.json())
+
+const sleep = (ms: number) => new Promise<void>((resolve) => { setTimeout(resolve, ms) })
+
+/**
+ * 读探索者目录 + 当前选择。
+ *
+ * 网络层失败（TypeError: Failed to fetch）与 5xx 值得重试一次 —— 这类失败往往是
+ * 插件刚重挂完 / 网关刚重启的瞬时窗口，重试就好；4xx（鉴权、路径不对）重试没意义，
+ * 直接报出状态码让用户看见问题。成功后顺手把快照写进本地缓存。
+ */
+export async function fetchExplorerSettings(opts: { retries?: number } = {}): Promise<ExplorerSettingsPayload> {
+  const retries = Math.max(0, opts.retries ?? 1)
+  let last: unknown = null
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const res = await fetch(EXPLORER_SETTINGS_URL, {
+        cache: 'no-store',
+        headers: { accept: 'application/json' },
+      })
+      if (!res.ok) {
+        const hint = await res.text().catch(() => '')
+        throw new Error(`探索者设置加载失败（HTTP ${res.status}）${hint ? ` · ${hint.slice(0, 120)}` : ''}`)
+      }
+      const payload = pickExplorerSettings(await res.json())
+      cacheExplorerSettings(payload)
+      return payload
+    } catch (e) {
+      last = e
+      const message = e instanceof Error ? e.message : String(e)
+      // 只重试「拿不到应答」与 5xx：鉴权 / 路径类错误重试两次也是一样的结果
+      const retryable = e instanceof TypeError || /HTTP 5\d\d/.test(message)
+      if (attempt >= retries || !retryable) break
+      await sleep(200)
+    }
+  }
+  const detail = last instanceof Error ? last.message : String(last)
+  throw new Error(`${detail}（${EXPLORER_SETTINGS_URL}）`)
+}
+
+/** 读上次成功的目录快照；没有 / 坏了 / 读不到时返回 null（面板退回纯在线）。 */
+export function readCachedExplorerSettings(): ExplorerSettingsPayload | null {
+  try {
+    const raw = window.localStorage.getItem(EXPLORER_SETTINGS_CACHE_KEY)
+    if (!raw) return null
+    const payload = pickExplorerSettings(JSON.parse(raw))
+    return payload.groups.length ? payload : null
+  } catch {
+    return null
+  }
+}
+
+/** 落一份目录快照（隐私模式写不进去就只当这次没缓存，不影响功能）。 */
+export function cacheExplorerSettings(payload: ExplorerSettingsPayload): void {
+  try {
+    window.localStorage.setItem(EXPLORER_SETTINGS_CACHE_KEY, JSON.stringify(payload))
+  } catch {
+    /* 忽略 */
+  }
 }
 
 /** 保存选择（至少 1 个；宿主侧会再校验一次）。 */
 export async function saveExplorerSettings(
   selected: Array<Pick<ExplorerSettingItem, 'model' | 'label' | 'focus'>>
 ): Promise<ExplorerSettingsPayload> {
-  const res = await fetch('/plugins/dsh-tokensave/explorer-settings', {
+  const res = await fetch(EXPLORER_SETTINGS_URL, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ selected }),

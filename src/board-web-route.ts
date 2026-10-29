@@ -186,12 +186,64 @@ async function buildExplorerSettings(ctx: Context): Promise<Record<string, unkno
   return { timestamp: Date.now(), configured: configured !== null, groups, selected }
 }
 
+/**
+ * 最近一份完整目录（进程内）。
+ *
+ * 让「再次打开面板」变成 O(1)：组装目录要问 ctx.llm（可能打到网路），而设置面板是
+ * 高频开合的。10s 内的重复打开直接回这一份，选择变更后由写通道与 TTL 自然收敛。
+ */
+let lastExplorerSettingsPayload: { at: number; payload: Record<string, unknown> } | null = null
+const EXPLORER_SETTINGS_FRESH_MS = 10_000
+
+/**
+ * 应答死线：探测 provider 模型最多 4s，万一某个 provider 卡住，浏览器/网关会先把连接
+ * 掉 — 前端看到的就是 `Failed to fetch`）。到点就先用上一份（或内置清单）回一版，
+ * 绝不让请求悬着；真正的结果回来后再把缓存刷新。
+ */
+const EXPLORER_SETTINGS_DEADLINE_MS = 6_000
+
+/** 卡住/失败时的像样回退：优先上一份，否则用内置清单（标 degraded，留给日志与排查）。 */
+function fallbackExplorerSettings(): Record<string, unknown> {
+  if (lastExplorerSettingsPayload) return { ...lastExplorerSettingsPayload.payload, degraded: true }
+  const entries: ProviderEntry[] = Object.keys(KNOWN_MODELS).map((provider) => ({
+    provider,
+    displayName: provider,
+    available: true,
+    models: (KNOWN_MODELS[provider] ?? []).map((id) => ({ id })),
+  }))
+  const candidates = buildCatalog(entries)
+  const groups = EXPLORER_GROUPS.map((g) => ({ ...g, items: candidates.filter((c) => c.group === g.id) }))
+  const configured = readExplorerSelection()
+  const selected = (configured ?? defaultSelection()).map((s) => s.model)
+  return { timestamp: Date.now(), configured: configured !== null, groups, selected, degraded: true }
+}
+
 function handleExplorerSettingsRead(ctx: Context, res: any): void {
+  // 快路径：10s 内刚组出来过就直回，重开面板不再等模型探测
+  if (lastExplorerSettingsPayload && Date.now() - lastExplorerSettingsPayload.at < EXPLORER_SETTINGS_FRESH_MS) {
+    writeJson(res, 200, { ...lastExplorerSettingsPayload.payload, timestamp: Date.now() })
+    return
+  }
+  let replied = false
+  let deadline: ReturnType<typeof setTimeout> | null = null
+  const reply = (status: number, payload: Record<string, unknown>) => {
+    if (replied) return
+    replied = true
+    if (deadline) clearTimeout(deadline)
+    writeJson(res, status, payload)
+  }
+  deadline = setTimeout(() => {
+    console.warn('[dsh-tokensave] explorer-settings 组装超过死线，先回上一份/内置清单')
+    reply(200, fallbackExplorerSettings())
+  }, EXPLORER_SETTINGS_DEADLINE_MS)
   buildExplorerSettings(ctx).then(
-    (payload) => writeJson(res, 200, payload),
+    (payload) => {
+      lastExplorerSettingsPayload = { at: Date.now(), payload }
+      reply(200, payload)
+    },
     (error) => {
       console.error('[dsh-tokensave] explorer-settings 读取失败:', error)
-      writeJson(res, 500, { error: 'explorer settings unavailable' })
+      reply(500, { error: 'explorer settings unavailable' })
     },
   )
 }
@@ -209,7 +261,10 @@ function handleExplorerSettingsWrite(ctx: Context, req: any, res: any): void {
       const sel = writeExplorerSelection(parsed?.selected)
       console.log(`[dsh-tokensave] 探索者选择已保存（${sel.length} 个）: ${sel.map((s) => s.model).join(', ')}`)
       buildExplorerSettings(ctx).then(
-        (payload) => writeJson(res, 200, payload),
+        (payload) => {
+          lastExplorerSettingsPayload = { at: Date.now(), payload }
+          writeJson(res, 200, payload)
+        },
         () => writeJson(res, 500, { error: 'explorer settings unavailable' }),
       )
     } catch (error) {
