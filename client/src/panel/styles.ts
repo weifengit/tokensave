@@ -1205,17 +1205,14 @@ body.ts-vsplit-dragging .ts-card { transition:none !important; animation:none !i
 .ts-expset { flex:none; display:inline-flex; align-items:center; }
 .ts-expset-btn { display:inline-flex; align-items:center; gap:6px; white-space:nowrap; }
 .ts-expset-btn.active { border-color:rgba(96,165,250,.7); background:rgba(96,165,250,.18); }
-/* 面板：portal 挂 body（避开 .ts-cr 的 overflow:hidden），宽度跟随内容但有限，列表内部滚动 */
-/* box-sizing:border-box：宽度由落点算（要整块夹在侧栏内），含 padding/border 才不会把面板撞出栏外 */
-.ts-expset-pop { z-index:46; box-sizing:border-box; width:max-content; min-width:300px; max-width:min(420px, calc(100vw - 32px)); max-height:64vh; overflow:auto; display:flex; flex-direction:column; gap:8px; padding:10px 12px; border-radius:12px; border:1px solid var(--ts-pop-line); background:var(--ts-pop-bg); color:var(--ts-pop-fg); box-shadow:var(--ts-pop-shadow); backdrop-filter:blur(12px) saturate(1.2); }
-/* 面板被侧栏夹窄时（data-compact）：内边距与间距收一档 —— 380~420 的宽松版式塞进 200 宽会挤成一团。
-   宽度、最小宽仍由落点函数写在行内样式上（含 padding，靠 box-sizing）。 */
-.ts-expset-pop[data-compact] { padding:8px 8px 6px; gap:6px; border-radius:10px; }
-.ts-expset-pop[data-compact] .ts-expset-head { flex-wrap:wrap; row-gap:2px; }
-.ts-expset-pop[data-compact] .ts-expset-head-tip { margin-left:0; flex:1 1 100%; }
-.ts-expset-pop[data-compact] .ts-expset-group { padding:6px; gap:4px; }
-.ts-expset-pop[data-compact] .ts-expset-row { gap:6px; }
-.ts-expset-pop[data-compact] .ts-expset-err { flex-wrap:wrap; }
+/* 面板：与齿轮「设置」面板同款落点与体量（固定 300 宽、最高 72vh，内容内部滚动）。
+   滚动条**内嵌**：细到 10px、上下圆头、左右留 3px 透明边（background-clip:content-box），
+   看起来是浮在面板里的一条，而不是贴在面板外沿的一条灰边（用户反馈：滚动条一直在外面）。 */
+.ts-expset-pop { z-index:46; box-sizing:border-box; width:300px; max-width:calc(100vw - 24px); max-height:72vh; overflow-y:auto; overflow-x:hidden; overscroll-behavior:contain; scrollbar-width:thin; scrollbar-color:rgba(127,127,127,.55) transparent; display:flex; flex-direction:column; gap:8px; padding:10px 12px; border-radius:12px; border:1px solid var(--ts-pop-line); background:var(--ts-pop-bg); color:var(--ts-pop-fg); box-shadow:var(--ts-pop-shadow); backdrop-filter:blur(12px) saturate(1.2); }
+.ts-expset-pop::-webkit-scrollbar { width:10px; height:10px; }
+.ts-expset-pop::-webkit-scrollbar-track { background:transparent; }
+.ts-expset-pop::-webkit-scrollbar-thumb { background:rgba(127,127,127,.55); border-radius:999px; border:3px solid transparent; background-clip:content-box; }
+.ts-expset-pop::-webkit-scrollbar-thumb:hover { background:rgba(127,127,127,.8); border:3px solid transparent; background-clip:content-box; }
 .ts-expset-head { display:flex; align-items:baseline; gap:8px; font-size:var(--ts-fs, 12.5px); font-weight:600; }
 .ts-expset-head-tip { margin-left:auto; font-size:calc(var(--ts-fs, 12.5px) * 0.84); font-weight:400; opacity:.6; }
 .ts-expset-err { display:flex; align-items:flex-start; gap:8px; font-size:calc(var(--ts-fs, 12.5px) * 0.92); color:#fca5a5; }

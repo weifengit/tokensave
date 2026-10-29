@@ -63,7 +63,6 @@ import { startThemeWatch } from './theme'
 import { installSkinLayerCss } from './skin-layer'
 import { getClientContext, subscribeSession, subscribeSessionMetrics } from '../session-subscribe'
 import { KINDS, paneId, parsePaneId, paneTitle, paneIcon, type Kind } from './desk-panes'
-import { POP_MIN_BOUNDS_WIDTH } from './pop-anchor'
 import {
   CHROME_POSITIONS, CHROME_HINT, CHROME_LABEL, RAIL_W,
   effectiveChrome, popPlacement, readChromePosition, writeChromePosition,
@@ -213,13 +212,6 @@ function relAge(ms: number): string {
 }
 
 const DOCK_CSS_ID = 'tokensave-desk-dock-css'
-/**
- * 侧栏标签条下沿与浮层之间留多少呼吸位。
- *
- * 侧栏的标签条本身 33px（`.dv-tabs-and-actions-container`，见下面 DOCK_CSS），给探索者设置面板当
- * 「内容区上边界」用：面板从标签条下方开始，不压住侧栏自己的标签（用户反馈：面板把侧栏盖住了）。
- */
-const SIDEBAR_TABS_GAP = 6
 /** 外壳 + 主题（透明 + 线条标签 + 落点高亮）。 */
 const DOCK_CSS = `
 /* 主题调色板（外壳/皮肤/弹层三组变量）统一在 client/src/panel/theme.ts 的 THEME_CSS 里，
@@ -2554,24 +2546,18 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
           <span className="ts-tg-sep" aria-hidden="true" />
           {/* 探索者设置：恢复到右上角（用户要求），图标式触发 + 计数徽标 */}
           {/* 探索者设置：图标式触发 + 计数徽标。
-              面板必须待在自己那一栏里（用户要求：别压过侧栏伸进编辑区）：
-              顶置时按钮在标题行右端 = 辅助侧栏上方；竖轨时按轨在哪侧取相邻那一栏。
-              栏被收起时退回整个工作台，至少不越出台面。 */}
+              落点**与齿轮「设置」面板一字不差**（用户要求「照抄作业」）：同一个 popPlacement、
+              同样的「按钮下方 6px、右缘对齐按钮、夹在工作台内」，竖轨模式同样从轨内侧向上长。
+              不再自己算「夹进侧栏」那套 —— 那版会把侧栏盖住，反而更难看。 */}
           <ExplorerSettings
             variant="icon"
-            bounds={() => {
-              const region = chromePos === 'left' ? 'left' : 'right'
-              const el = dockRootRef.current?.querySelector<HTMLElement>(`.ts-region[data-region="${region}"]`)
-              const rect = el?.getBoundingClientRect()
-              if (rect && rect.width >= POP_MIN_BOUNDS_WIDTH) {
-                // 侧栏自己的标签条要留着看得见（用户反馈：面板把侧栏盖住了）：
-                // 面板从标签条下方开始，读起来是「侧栏内容区里的一张卡片」。
-                const tabs = el?.querySelector<HTMLElement>('.dv-tabs-and-actions-container')?.getBoundingClientRect()
-                const top = rect.top + (tabs ? tabs.height + SIDEBAR_TABS_GAP : SIDEBAR_TABS_GAP)
-                return { left: rect.left, right: rect.right, top, bottom: rect.bottom }
-              }
-              return dockRootRef.current?.getBoundingClientRect() ?? null
-            }}
+            place={(anchor, width) => popPlacement({
+              chrome: chromePos,
+              anchor,
+              dock: dockRootRef.current?.getBoundingClientRect() ?? null,
+              viewport: { width: window.innerWidth, height: window.innerHeight },
+              width,
+            })}
           />
           <span className="ts-tg-sep" aria-hidden="true" />
           {/* 右上角只剩一个「设置」齿轮：显示/隐藏窗口 + 标题栏位置 + 皮肤 + 字体都在它里面

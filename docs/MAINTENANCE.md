@@ -71,7 +71,7 @@
 
 | 路径 | 内容 |
 | --- | --- |
-| `client/src/panel/` | 工作台前端（React）：DeskDock 布局、MsgList 主对话、主题、样式；`chrome-position.ts`（标题栏位置偏好 + 工作台浮层落点）、`pop-anchor.ts`（按钮锚定浮层的落点：翻上 / 夹视口）是两个纯函数模块 |
+| `client/src/panel/` | 工作台前端（React）：DeskDock 布局、MsgList 主对话、主题、样式；`chrome-position.ts` 是标题栏位置偏好 + 浮层落点（齿轮「设置」与「探索者设置」共用同一套 popPlacement） |
 | `src/` | 插件服务端（cordis）：tokensave_delegate 工具、编排、黑板 |
 | `scripts/check-*.mjs` | 自检断言（多数纯文本，不需要浏览器；`check-chrome-geometry.mjs` 要真浏览器量网格，单跑、不进默认链） |
 | `scripts/build-client.mjs` | esbuild 打包客户端 → dist/client.js |

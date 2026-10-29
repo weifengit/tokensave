@@ -6,10 +6,12 @@
  * （~/.dsh/tokensave/explorers.json），此后 parallelExplore 完全按这份选择跑。
  *
  * 面板用 portal 挂 body：卡片链路上有 overflow:hidden（.ts-cr），就地渲染会被裁掉。
- * 落点交给 pop-anchor.ts（纯函数）：默认挂在按钮下方；下方放不下就翻到按钮上方，
- * 并且**整块夹在按钮所属的那一栏里**（由 bounds 传进去）—— 这个按钮既可能在
- * 标题行右端（它那一栏是辅助侧栏），也可能在侧置竖轨最底部（旧实现「按钮底 + 6」
- * 会把面板甩到屏幕外；380~420px 的面板还会压过侧栏伸进编辑区）。
+ * 落点**与齿轮「设置」面板一字不差**（用户要求「照抄作业」）：DeskDock 把同一个
+ * popPlacement 注进来 —— 挂在按钮下方 6px、右缘对齐按钮、夹在工作台内；
+ * 侧置竖轨时从轨内侧向上长。以前自己算过一套「夹进侧栏」的落点，那版反而把侧栏
+ * 盖住、挤成一条窄缝，已经删了。
+ *
+ * 外观：固定 300 宽、最高 72vh；滚动条内嵌（细、圆头、留透明边），不是贴在面板外沿的灰边。
  *
  * 加载：**先亮上次成功的快照，再后台刷新**。这份目录要先问宿主探测 provider 模型
  * （首次可能要几秒），插件重挂 / 网关重启时接口还可能整个拿不到（浏览器里就是
@@ -20,13 +22,23 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { fetchExplorerSettings, readCachedExplorerSettings, saveExplorerSettings } from './api'
 import type { ExplorerSettingGroup, ExplorerSettingItem, ExplorerSettingsPayload } from './api'
-import { anchorPopup, type AnchorRect } from './pop-anchor'
+import type { PopPlacement } from './chrome-position'
 
 /** 提交/本地状态用的最小选择单位（label/focus 由目录带回，保证持久化的一致）。 */
 type Sel = Pick<ExplorerSettingItem, 'model' | 'label' | 'focus'>
 
-/** 面板落点：left/top 是 fixed 坐标，maxHeight 是这一侧真正可用的高度（面板内部滚动）。 */
-type PopPos = { left: number; top: number; width: number; maxHeight: number }
+/** 面板落点：顶置给 top、侧置给 bottom（向上长）。算法与齿轮设置面板共用。 */
+type PopPos = { left: number; top?: number; bottom?: number }
+
+/** 面板宽度：与齿轮设置面板一样是固定宽度（狭长一列，不随内容忽宽忽窄）。 */
+const POP_WIDTH = 300
+
+/** 没注入落点时的退路（组件被单独复用）：挂在按钮下方、右缘对齐、夹在视口内。 */
+function defaultPlace(anchor: DOMRect, width: number): PopPlacement {
+  const margin = 8
+  const left = Math.max(margin, Math.min(anchor.right - width, window.innerWidth - width - margin))
+  return { left, top: anchor.bottom + 6 }
+}
 
 /** 目录 → 已选列表（从目录里回填 label/focus）。 */
 function selectionsFrom(payload: ExplorerSettingsPayload): Sel[] {
@@ -67,15 +79,15 @@ function Switch({
 
 export function ExplorerSettings({
   variant = 'text',
-  bounds,
+  place,
 }: {
   variant?: 'text' | 'icon'
   /**
-   * 面板必须待着的范围（按钮所属的那一栏，一般是侧栏）。给了就整块夹在栏内、宽度最多占满栏
-   * —— 否则 380~420px 的面板会压过侧栏伸进编辑区。栏被收起（宽 < 180）时由 pop-anchor
-   * 自动退回按视口夹位。
+   * 浮层落点。**与齿轮「设置」面板用同一个函数**（DeskDock 传 popPlacement 进来）：
+   * 挂在按钮下方 6px、右缘对齐按钮、夹在工作台内；侧置竖轨时从轨内侧向上长。
+   * 自己不再算一套（之前那套“夹进侧栏”的写法反而把侧栏盖住了一用户反馈不好看）。
    */
-  bounds?: () => AnchorRect | null
+  place?: (anchor: DOMRect, width: number) => PopPlacement
 } = {}) {
   const [open, setOpen] = useState(false)
   const [pos, setPos] = useState<PopPos | null>(null)
@@ -92,47 +104,40 @@ export function ExplorerSettings({
   const popRef = useRef<HTMLDivElement>(null)
 
   /**
-   * 落点：按钮矩形 + 视口 + 面板实测尺寸 → pop-anchor.ts。
+   * 落点：**与齿轮设置面板同一套**（默认 popPlacement，DeskDock 注入）。
    *
-   * 两段式：首帧面板还没挂上（pos 为空）量不到尺寸，先按保守高度摆一次；挂上之后这个
-   * layout effect 会带着真实尺寸再算一遍 —— 两段都在同一帧 paint 之前完成，看不到跳。
-   * ResizeObserver 兜住内容高度变化（目录拉回来、分组变多）；算出来一样就不 setState，
-   * 不会自己触发自己。
+   * 不用量面板尺寸：位置只跟按钮矩形与工作台/视口有关，面板自己的高度交给 CSS 的
+   * max-height 与内部滚动条。监听 resize/scroll 与内容尺寸变化，保证窗口缩放、侧栏
+   * 拖动、目录拉回来后依然贴着按钮。
    */
   useLayoutEffect(() => {
     if (!open) return
-    const place = () => {
+    const compute = place ?? defaultPlace
+    const apply = () => {
       const r = boxRef.current?.getBoundingClientRect()
       if (!r) return
-      const el = popRef.current
-      const next = anchorPopup({
-        anchor: r,
-        viewport: { width: window.innerWidth, height: window.innerHeight },
-        size: { width: el ? el.offsetWidth : 0, height: el ? el.scrollHeight : 0 },
-        bounds: bounds ? bounds() : null,
-        heightCap: Math.round(window.innerHeight * 0.64),
-      })
+      const next = compute(r, POP_WIDTH)
       setPos((prev) =>
         prev && prev.left === next.left && prev.top === next.top &&
-        prev.width === next.width && prev.maxHeight === next.maxHeight
+        prev.bottom === next.bottom
           ? prev
-          : { left: next.left, top: next.top, width: next.width, maxHeight: next.maxHeight },
+          : { left: next.left, top: next.top, bottom: next.bottom },
       )
     }
-    place()
-    window.addEventListener('resize', place)
-    window.addEventListener('scroll', place, true)
+    apply()
+    window.addEventListener('resize', apply)
+    window.addEventListener('scroll', apply, true)
     let ro: ResizeObserver | undefined
     if (typeof ResizeObserver !== 'undefined' && popRef.current) {
-      ro = new ResizeObserver(place)
+      ro = new ResizeObserver(apply)
       ro.observe(popRef.current)
     }
     return () => {
-      window.removeEventListener('resize', place)
-      window.removeEventListener('scroll', place, true)
+      window.removeEventListener('resize', apply)
+      window.removeEventListener('scroll', apply, true)
       ro?.disconnect()
     }
-  }, [open, data, err, loading, attempt])
+  }, [open, attempt, place])
 
   // 打开（或重试）时：先亮本地快照 → 再拉真目录。接口挂了也不会白屏。
   useEffect(() => {
@@ -270,19 +275,15 @@ export function ExplorerSettings({
           role="dialog"
           aria-label="探索者设置"
           data-desk-explorers-panel=""
-          data-compact={pos && pos.width < 300 ? '' : undefined}
           ref={popRef}
           style={{
+            // 位置与齿轮设置面板同一套：顶置给 top、侧置竖轨给 bottom（向上长）
             position: 'fixed',
             left: pos?.left ?? -10000,
-            top: pos?.top ?? -10000,
+            top: pos?.top,
+            bottom: pos?.bottom,
             right: 'auto',
-            // 宽度由落点算出（夹在所属侧栏内）；同时盖掉 CSS 的 min-width:300px，否则窄栏里会被顶回去
-            width: pos ? pos.width : undefined,
-            minWidth: pos ? 0 : undefined,
-            maxWidth: pos ? pos.width : undefined,
-            maxHeight: pos ? pos.maxHeight : undefined,
-            // 首帧还没算出落点：先藏起来，等 layout effect 定位好再显（否则会闪在左上角）
+            // 宽度、最大高度走 CSS（固定 300 / 72vh）；首帧还没算出落点先藏起来，免得闪在左上角
             visibility: pos ? 'visible' : 'hidden',
           }}
         >
