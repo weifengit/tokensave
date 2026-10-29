@@ -107,7 +107,9 @@ try {
     inSide.left + inSide.width <= rightSide.right - 8,
     `left=${inSide.left} w=${inSide.width} side=${rightSide.left}..${rightSide.right}`)
   check('右栏内：宽度最多占满栏（260 - 两侧留白）', inSide.width <= 260 - 16, `w=${inSide.width}`)
-  check('右栏内：仍然向右缘对齐按钮', Math.abs(inSide.left + inSide.width - (sideBtn.right - 8)) <= 1, `right=${inSide.left + inSide.width}`)
+  check('右栏内：贴着栏右侧内边（宽度占满到 8px 留白）',
+    Math.abs(inSide.left + inSide.width - (rightSide.right - 8)) <= 1,
+    `right=${inSide.left + inSide.width} sideRight=${rightSide.right}`)
   check('右栏内：竖向也不越出栏（上下留白）',
     inSide.top >= rightSide.top + 8 && inSide.top + Math.min(480, inSide.maxHeight) <= rightSide.bottom - 8)
 
@@ -227,6 +229,8 @@ try {
   check('重试会重跑加载 effect', /\}, \[open, attempt\]\)/.test(panel))
   check('重试按钮样式存在（错误行是一条 flex）',
     /\.ts-expset-err \{ display:flex;/.test(styles) && /\.ts-expset-retry \{/.test(styles))
+  check('面板宽度按 border-box 算（否则 padding 会把面板撞出栏外）',
+    /\.ts-expset-pop \{[^}]*box-sizing:border-box/.test(styles))
   check('接口地址是一个常量（错误提示与自检共用）',
     /export const EXPLORER_SETTINGS_URL = '\/plugins\/dsh-tokensave\/explorer-settings'/.test(apiSrc))
   check('请求带 no-store（不被中间缓存 / 代理卡住）', /cache: 'no-store'/.test(apiSrc))
