@@ -19,7 +19,8 @@
 import { build } from 'esbuild'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { join, dirname } from 'node:path'
-import { fileURLToPath, tmpdir } from 'node:os'
+import { fileURLToPath } from 'node:url'
+import { tmpdir } from 'node:os'
 import { readFileSync } from 'node:fs'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')

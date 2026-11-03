@@ -23,7 +23,8 @@
 import { build } from 'esbuild'
 import { mkdtempSync, rmSync, readFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
-import { fileURLToPath, tmpdir } from 'node:os'
+import { fileURLToPath } from 'node:url'
+import { tmpdir } from 'node:os'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const dir = mkdtempSync(join(tmpdir(), 'ts-cresize-'))
