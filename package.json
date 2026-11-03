@@ -38,6 +38,7 @@
     "test:nav": "node scripts/check-workbench-nav.mjs",
     "test:composer-resize": "node scripts/check-composer-resize.mjs",
     "test:turn-edits": "node scripts/check-turn-edits.mjs",
+    "test:changes-card": "node scripts/check-changes-card.mjs",
     "test:composer-status": "node scripts/check-composer-status.mjs",
     "test:desk": "node scripts/check-desk-ux.mjs",
     "test:desk-dock": "node scripts/check-desk-dock.mjs",
@@ -52,7 +53,7 @@
     "test:chrome": "node scripts/check-chrome-position.mjs",
     "test:chrome-geo": "node scripts/check-chrome-geometry.mjs",
     "test:expset": "node scripts/check-expset-panel.mjs",
-    "test": "pnpm check && pnpm test:auto-commit && pnpm test:continue && pnpm test:width && pnpm test:hover && pnpm test:sound && pnpm test:sound-sync && pnpm test:pending-alert && pnpm test:todo && pnpm test:chrome && pnpm test:expset && pnpm test:sidebar && pnpm test:composer-focus && pnpm test:nav && pnpm test:composer-resize && pnpm test:turn-edits && pnpm test:composer-status && pnpm test:dockview && pnpm test:desk && pnpm test:desk-dock && pnpm test:chat-scroll && pnpm test:msg-queue && pnpm test:clone && pnpm test:project-remove && pnpm test:card-flip && pnpm test:card-layout && pnpm test:mobile && pnpm test:ui"
+    "test": "pnpm check && pnpm test:auto-commit && pnpm test:continue && pnpm test:width && pnpm test:hover && pnpm test:sound && pnpm test:sound-sync && pnpm test:pending-alert && pnpm test:todo && pnpm test:chrome && pnpm test:expset && pnpm test:sidebar && pnpm test:composer-focus && pnpm test:nav && pnpm test:composer-resize && pnpm test:turn-edits && pnpm test:composer-status && pnpm test:changes-card && pnpm test:dockview && pnpm test:desk && pnpm test:desk-dock && pnpm test:chat-scroll && pnpm test:msg-queue && pnpm test:clone && pnpm test:project-remove && pnpm test:card-flip && pnpm test:card-layout && pnpm test:mobile && pnpm test:ui"
   },
   "dependencies": {
     "@deepseek-ai/dsh-brand": "0.2.0-rc.2",

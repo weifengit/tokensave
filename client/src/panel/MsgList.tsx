@@ -21,6 +21,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSta
 import type { StreamMsg } from '../session-subscribe'
 import { RichText, stripMarkdown } from './RichText'
 import type { ChatView } from './chat-view'
+import { ChangesCard } from './changes-card'
 
 /** 最多渲染的轮数（超出只显示最近这些） */
 const MAX_TURNS = 40
@@ -256,6 +257,12 @@ interface Turn {
   notice: StreamMsg | null
   /** 本轮被编辑的文件（write/edit/str_replace_editor，按出现顺序去重） */
   edits: string[]
+  /**
+   * 本轮的**变更档案 seq**（宿主 `workspace/changes` 事件）。
+   * 有它就能向 /api/changes.summary 要完整清单与行数（原生卡同源）；
+   * null = 宿主没发这个事件（非 git 工作区 / 旧版本），只能退回 edits 统计。
+   */
+  changesSeq: number | null
 }
 
 /**
@@ -271,6 +278,9 @@ function splitTurn(turn: StreamMsg[]): Turn {
   const queued: StreamMsg[] = []
   let notice: StreamMsg | null = null
   const edits: string[] = []
+  // 变更档案：宿主每轮结束发一条 workspace/changes（可能要等轮结束后才到），
+  // 取本轮**最后**一条的 seq——同一轮重跑/补充时以最新档案为准。
+  let changesSeq: number | null = null
   for (const m of turn) {
     // 队列消息（忙时发的、还没成为 durable user/message）单独收口：
     // 它不开轮、不算「该轮的提问」，只挂在流末尾带「排队中」标（用户反馈：
@@ -282,6 +292,11 @@ function splitTurn(turn: StreamMsg[]): Turn {
     // 文件编辑标记不进过程折叠，也不进任何气泡：只按轮收集，轮末一行报告
     if (m.kind === 'file-edit' && m.editPath) {
       if (!edits.includes(m.editPath)) edits.push(m.editPath)
+      continue
+    }
+    // 变更档案标记同理：只按轮记 seq，不进气泡、不进过程折叠
+    if (m.kind === 'changes') {
+      if (m.changesSeq !== undefined) changesSeq = m.changesSeq
       continue
     }
     // 注入消息 role 也是 'user'，必须先于 role 判断拦下：
@@ -300,7 +315,7 @@ function splitTurn(turn: StreamMsg[]): Turn {
     }
   }
   const proc = rest.filter((m) => m !== answer)
-  return { users, injects, proc, answer, notice, queued, edits }
+  return { users, injects, proc, answer, notice, queued, edits, changesSeq }
 }
 
 interface MsgListProps {
@@ -322,6 +337,11 @@ interface MsgListProps {
    * 挂载时若已有内容，直接贴底，不再依赖「内容变化」这个触发条件。
    */
   followKey?: string
+  /**
+   * 会话 id（仅轮末变更卡需要）：宿主 /api/changes.* 路由按 (sessionId, seq) 认证。
+   * 探索者窗口等不传——它们的消息流没有变更档案，卡片自然不出现。
+   */
+  sessionId?: string
   /**
    * 阅读视图（见 chat-view.ts）：只影响**呈现**，不改变轮次切分与滚动。
    *   all   → 现状：我的气泡 + 回复，过程 / 注入各自折叠一行；
@@ -371,50 +391,6 @@ function TurnNoticeRow({ notice }: { notice: NonNullable<StreamMsg['notice']> })
   )
 }
 
-/** 清单里只显示文件名（完整路径在悬浮提示里）：常见多级相对路径，整行太长。 */
-function fileNameOf(p: string): string {
-  const i = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'))
-  return i >= 0 ? p.slice(i + 1) : p
-}
-
-/**
- * 轮末的「已编辑 N 个文件」报告行（对齐原生对话 tab 的变更文件卡）。
- *
- * 数据来自 tool/call 投影（session-subscribe 的 fileEditOf，与宿主
- * dsh-workspace-changes 的 mutationPath 同口径：只认 write / edit /
- * str_replace_editor 三类真正落盘的编辑），按出现顺序去重。
- * 默认收起成一行；点开看文件清单（工作台是只读流，不做 diff 视图）。
- */
-function EditsRow({ files }: { files: string[] }) {
-  const [open, setOpen] = useState(false)
-  if (files.length === 0) return null
-  return (
-    <div className="ts-turn-edits">
-      <button
-        type="button"
-        className="ts-turn-edits-head"
-        onClick={() => setOpen((v) => !v)}
-        aria-expanded={open}
-        title={[...files].join('\n')}
-      >
-        <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true" focusable="false">
-          <path d="M7.4 1.2H3.4c-.5 0-.9.4-.9.9v7.8c0 .5.4.9.9.9h5.2c.5 0 .9-.4.9-.9V3.3L7.4 1.2z" fill="none" stroke="currentColor" strokeWidth="1.1" strokeLinejoin="round" />
-          <path d="M7.3 1.4v2.2h2.2" fill="none" stroke="currentColor" strokeWidth="1.1" strokeLinejoin="round" />
-        </svg>
-        <span>已编辑 {files.length} 个文件</span>
-        <span className="ts-turn-edits-toggle" aria-hidden="true">{open ? '▴' : '▾'}</span>
-      </button>
-      {open && (
-        <div className="ts-turn-edits-list">
-          {files.map((f) => (
-            <div className="ts-turn-edits-file" key={f} title={f}>{fileNameOf(f)}</div>
-          ))}
-        </div>
-      )}
-    </div>
-  )
-}
-
 export function MsgList({
   messages,
   emptyText,
@@ -423,6 +399,7 @@ export function MsgList({
   onLoadOlder,
   onScroll: onScrollExternal,
   followKey = '',
+  sessionId = '',
   view = 'all',
 }: MsgListProps) {
   const ref = useRef<HTMLDivElement>(null)
@@ -567,6 +544,7 @@ export function MsgList({
         notice: view === 'user' ? null : t.notice,
         // 「已编辑 N 个文件」是本轮的事实报告，不随阅读视图滤除（跟 answer 一样只在轮可见时出现）
         edits: t.edits,
+        changesSeq: t.changesSeq,
       }))
       .filter((t) => t.users.length > 0 || t.injects.length > 0
         || t.proc.length > 0 || !!t.answer || !!t.notice || t.queued.length > 0),
@@ -986,7 +964,11 @@ export function MsgList({
               <MsgTime time={t.answer.time} />
             </div>
           )}
-          {t.edits.length > 0 && <EditsRow files={t.edits} />}
+          {/* 轮末变更卡：有宿主档案 seq 就用路由的完整清单（含 +N/-M 与悬浮预览），
+              没有则退回本地 tool/call 统计的纯路径清单（与原生对话 tab 同位置的报告） */}
+          {(t.changesSeq !== null || t.edits.length > 0) && (
+            <ChangesCard sessionId={sessionId} seq={t.changesSeq} fallbackFiles={t.edits} />
+          )}
           {t.notice && <TurnNoticeRow notice={t.notice.notice!} />}
           {t.queued.map((m, i) => (
             <div className="ts-msg-block ts-msg-block-user" key={`q${i}`} data-turn-queued="">

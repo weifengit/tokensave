@@ -24,7 +24,7 @@ export interface StreamMsg {
    * 细分类型：'reasoning' 表示这是模型的思考（thinking）内容。
    * 思考与正文同为 assistant 流，但呈现上要分开（思考默认折叠，见 MsgList）。
    */
-  kind?: 'reasoning' | 'file-edit'
+  kind?: 'reasoning' | 'file-edit' | 'changes'
   /**
    * 该消息是宿主**自动注入**的上下文（运行时快照 / 技能目录 / 工作区指令…），
    * 而非用户亲口发送。
@@ -58,6 +58,12 @@ export interface StreamMsg {
    * 展示「已编辑 N 个文件」——对齐原生对话 tab 的结束报告。
    */
   editPath?: string
+  /**
+   * 该行是本轮**变更档案**（`workspace/changes` 事件）。
+   * changesSeq = 事件 seq，用于向宿主认证路由要完整清单 / 单文件 diff
+   * （与原生对话 tab 的「已编辑 N 个文件」卡同源，含 +N/-M 与悬浮预览）。
+   */
+  changesSeq?: number
 }
 
 // —— 会话指标（token 用量 / 工具耗时 / 活动时间窗）————————————
@@ -190,6 +196,22 @@ export function fileEditOf(name: unknown, args: unknown): string | null {
     default:
       return null
   }
+}
+
+/**
+ * 本轮变更档案的 seq（宿主 workspace/changes 事件）。
+ *
+ * 宿主 dsh-workspace-changes 在每轮结束时追加一条 workspace/changes 事件，
+ * data 只有 turn；真正的清单/行数/diff 由认证路由按 (sessionId, seq) 提供。
+ * 拿到 seq 就能直接照搬原生卡（含 +N/-M 与悬浮 diff 预览），不必自己猜；
+ * 拿不到（宿主版本变了 / 工作区不是 git 仓）时退回 file-edit 标记的纯路径统计。
+ */
+export function changesSeqOf(ev: any): number | null {
+  const seq = typeof ev?.seq === 'number' ? ev.seq : null
+  if (seq === null || !Number.isSafeInteger(seq) || seq < 1) return null
+  const turn = ev?.data?.turn
+  if (typeof turn !== 'number' || !Number.isSafeInteger(turn) || turn < 1) return null
+  return seq
 }
 
 /**
@@ -408,6 +430,14 @@ export function messagesFromWindow(snap: any): StreamMsg[] {
       if (p) out.push({ role: 'tool', content: '', type: 'tool/call', kind: 'file-edit', editPath: p })
       continue
     }
+    // 轮末变更档案：宿主在每轮结束追加一条 workspace/changes（data 只有 turn），
+    // 真正清单/行数/diff 由认证路由按 seq 提供。留成标记消息，MsgList 据此渲染
+    // 与原生对话 tab 同款的「已编辑 N 个文件」卡（含 +N/-M 与悬浮预览）。
+    if (ev.type === 'workspace/changes') {
+      const changesSeq = changesSeqOf(ev)
+      if (changesSeq !== null) out.push({ role: 'tool', content: '', type: ev.type, kind: 'changes', changesSeq })
+      continue
+    }
     if (ev.type === 'system/message') continue
     // durable assistant 消息可能同时带 reasoning 与 text 块：
     // 拆成两条（思考在前），呈现上才能分别折叠/展开（见 MsgList）。
@@ -559,6 +589,15 @@ function emitEvent(ch: Channel, x: any): void {
     const p = fileEditOf(ev.data?.name, ev.data?.arguments)
     if (p) {
       ch.msgs = ch.msgs.concat({ role: 'tool', content: '', type: 'tool/call', kind: 'file-edit', editPath: p })
+      publish(ch)
+    }
+    return
+  }
+  // 逐事件路径同样要带上轮末变更档案（与 messagesFromWindow 同口径）
+  if (ev.type === 'workspace/changes') {
+    const changesSeq = changesSeqOf(ev)
+    if (changesSeq !== null) {
+      ch.msgs = ch.msgs.concat({ role: 'tool', content: '', type: ev.type, kind: 'changes', changesSeq })
       publish(ch)
     }
     return

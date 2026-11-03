@@ -95,10 +95,29 @@ try {
   check('splitTurn 收集 file-edit 并去重',
     list.includes("if (m.kind === 'file-edit' && m.editPath)")
     && list.includes('if (!edits.includes(m.editPath)) edits.push(m.editPath)'))
-  check('轮末渲染 EditsRow（answer 之后）',
-    list.includes('<EditsRow files={t.edits} />')
-    && list.indexOf('<EditsRow files={t.edits} />') < list.indexOf('<TurnNoticeRow'))
-  check('报告文案对齐原生（已编辑 N 个文件）', list.includes('已编辑 {files.length} 个文件'))
+  check('轮末渲染变更卡（answer 之后、异常提示之前）',
+    list.includes('<ChangesCard sessionId={sessionId} seq={t.changesSeq} fallbackFiles={t.edits} />')
+    && list.indexOf('<ChangesCard') < list.indexOf('<TurnNoticeRow'))
+  check('splitTurn 收集 workspace/changes 的 seq（同一轮取最后一条）',
+    list.includes("if (m.kind === 'changes')")
+    && list.includes('if (m.changesSeq !== undefined) changesSeq = m.changesSeq'))
+  check('没有宿主档案时退回本地统计（两者都有才渲染）',
+    list.includes('{(t.changesSeq !== null || t.edits.length > 0) && ('))
+  check('主对话把 sessionId 传给 MsgList（路由认证要它）',
+    readFileSync(join(root, 'client/src/panel/MainChat.tsx'), 'utf8')
+      .includes('sessionId={sessionId}'))
+  // —— 4. 变更档案投影：workspace/changes 事件 → kind:'changes' 标记 ——
+  check('changesSeqOf 只认成形的事件（turn≥1 且 seq 为正整数）',
+    m.changesSeqOf({ seq: 12, data: { turn: 1 } }) === 12
+    && m.changesSeqOf({ seq: 12, data: {} }) === null
+    && m.changesSeqOf({ seq: 0, data: { turn: 1 } }) === null
+    && m.changesSeqOf({ seq: 3.5, data: { turn: 1 } }) === null
+    && m.changesSeqOf(null) === null)
+  check('workspace/changes 折叠为 kind:changes 标记（带 seq，不渲染文本）',
+    m.messagesFromWindow({
+      entries: [{ type: 'event', event: { type: 'workspace/changes', seq: 12, data: { turn: 1 } } }],
+    }).filter((x) => x.kind === 'changes')
+      .every((x) => x.changesSeq === 12 && x.content === ''))
 
   console.log(fail === 0 ? '\nALL PASS' : `\n${fail} FAILED`)
   process.exitCode = fail === 0 ? 0 : 1

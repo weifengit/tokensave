@@ -424,17 +424,52 @@ body.ts-desk-nochat [data-conversation-region="composer"] {
 /* 展开按钮推到最右，与标题条三段式一致 */
 .ts-turn-notice-head .ts-msg-toggle { margin-left:auto; }
 
-/* —— 轮末「已编辑 N 个文件」报告（对齐原生对话 tab 的变更文件卡）——
-   数据是 tool/call 的 write/edit/str_replace_editor（与宿主 workspace-changes
-   的 mutationPath 同口径）。默认一行胶囊，点开看文件清单；不用红黄色系 ——
-   它是正常产物报告，不是警示。 */
-.ts-turn-edits { align-self:stretch; display:flex; flex-direction:column; gap:3px; }
-.ts-turn-edits-head { display:inline-flex; align-items:center; gap:6px; align-self:flex-start; border:none; cursor:pointer; border-radius:99px; padding:2px 10px; font-size:calc(var(--ts-fs, 12.5px) * 0.9); line-height:1.5; color:var(--dsw-alias-label-secondary,inherit); background:rgba(127,127,127,.14); border:1px solid rgba(127,127,127,.28); }
-.ts-turn-edits-head:hover { background:rgba(127,127,127,.22); color:var(--dsw-alias-label-primary,inherit); }
-.ts-turn-edits-head svg { flex:none; opacity:.75; }
-.ts-turn-edits-toggle { flex:none; opacity:.6; font-size:.85em; }
-.ts-turn-edits-list { display:flex; flex-direction:column; gap:1px; border-left:2px solid rgba(127,127,127,.25); margin-left:10px; padding:2px 0 2px 10px; }
-.ts-turn-edits-file { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:calc(var(--ts-fs, 12.5px) * 0.86); opacity:.78; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+/* —— 轮末「已编辑 N 个文件」变更卡（照搬原生对话 tab 的 ChangedFiles）——
+   数据来自宿主 /api/changes.summary + /api/changes.diff（与原生卡同源：清单、
+   逐文件 +N/-M、单文件 before/after 对比都由宿主现算，含 git 工作树差异）。
+   视觉上比原生略收敛：工作台嵌在 dockview 面板里，卡片用与消息流一致的
+   中性底 + 细边，不再叠宿主那套 layer-1 底色（否则在深色面板上发白）。 */
+.ts-changes-card { align-self:stretch; display:flex; flex-direction:column; min-width:0; margin-top:4px; border:1px solid rgba(127,127,127,.28); border-radius:9px; overflow:hidden; background:rgba(127,127,127,.07); }
+.ts-changes-card[data-single=true] { border-color:rgba(127,127,127,.22); }
+.ts-cf-head { box-sizing:border-box; display:flex; align-items:center; gap:10px; width:100%; min-width:0; padding:8px 10px; border:0; margin:0; text-align:left; color:inherit; font:inherit; background:transparent; cursor:default; }
+.ts-changes-card > .ts-cf-head[aria-expanded] { cursor:pointer; }
+.ts-changes-card > .ts-cf-head[aria-expanded]:hover { background:rgba(127,127,127,.1); }
+.ts-cf-tile { flex:none; box-sizing:border-box; display:grid; place-items:center; width:34px; height:34px; border:1px solid rgba(127,127,127,.3); border-radius:8px; background:rgba(127,127,127,.06); font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:calc(var(--ts-fs, 12.5px) * 0.78); text-transform:uppercase; opacity:.8; color:var(--dsw-alias-label-secondary,inherit); }
+.ts-cf-titles { display:flex; flex-direction:column; flex:1; min-width:0; }
+.ts-cf-title { font-size:calc(var(--ts-fs, 12.5px) * 1.04); font-weight:500; line-height:20px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.ts-cf-stat { display:inline-flex; align-items:center; gap:8px; font-size:calc(var(--ts-fs, 12.5px) * 0.8); line-height:16px; color:var(--dsw-alias-label-tertiary,inherit); }
+.ts-cf-stat-counts { display:inline-flex; gap:6px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+.ts-cf-preview-hint { display:none; }
+.ts-cf-head:hover .ts-cf-stat-counts,
+.ts-cf-head:focus-visible .ts-cf-stat-counts { display:none; }
+.ts-cf-head:hover .ts-cf-preview-hint,
+.ts-cf-head:focus-visible .ts-cf-preview-hint { display:inline; }
+.ts-cf-added { color:var(--dsw-alias-state-success-primary,#3ba55d); }
+.ts-cf-deleted { color:var(--dsw-alias-state-error-primary,#e5484d); }
+.ts-cf-list { margin:0; padding:0; list-style:none; border-top:1px solid rgba(127,127,127,.22); }
+.ts-cf-row { box-sizing:border-box; display:flex; align-items:center; justify-content:space-between; gap:10px; width:100%; min-width:0; min-height:24px; padding:7px 18px 7px 14px; border:0; margin:0; text-align:left; background:transparent; cursor:default; color:var(--dsw-alias-label-tertiary,inherit); font-size:calc(var(--ts-fs, 12.5px) * 0.88); line-height:18px; }
+.ts-cf-row:hover, .ts-cf-row:focus-visible { background:rgba(127,127,127,.12); outline:none; }
+.ts-cf-path { min-width:0; flex:1; font-family:var(--dsw-font-family,inherit); font-size:calc(var(--ts-fs, 12.5px) * 0.96); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.ts-cf-counts { flex:none; display:inline-flex; gap:6px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+.ts-cf-toggle { display:inline-flex; align-items:center; gap:4px; width:100%; padding:10px 18px 10px 14px; border:0; margin:0; text-align:left; background:transparent; color:var(--dsw-alias-label-tertiary,inherit); font:inherit; font-size:calc(var(--ts-fs, 12.5px) * 0.92); line-height:18px; cursor:pointer; }
+.ts-cf-toggle:hover { background:rgba(127,127,127,.12); }
+@media (pointer:coarse) { .ts-cf-row, .ts-cf-toggle { min-height:44px; } }
+/* 悬浮预览：fixed 到视口层（消息流是可滚容器，absolute 会被裁掉）。
+   位置由 changes-card.tsx 按锚点矩形算好并夹在视口内。 */
+.ts-cf-hovercard { position:fixed; z-index:60; display:flex; flex-direction:column; overflow:hidden; border:1px solid rgba(127,127,127,.34); border-radius:9px; background:var(--ts-bg-1,#1b1b1d); box-shadow:0 10px 30px rgba(0,0,0,.32); }
+.ts-cf-preview { display:flex; flex-direction:column; min-height:0; }
+.ts-cf-preview-head { flex:none; padding:8px 10px; border-bottom:1px solid rgba(127,127,127,.22); font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:calc(var(--ts-fs, 12.5px) * 0.88); color:var(--dsw-alias-label-tertiary,inherit); white-space:nowrap; overflow:auto hidden; }
+.ts-cf-preview-body { min-height:0; overflow:auto; padding:6px 0 10px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:calc(var(--ts-fs, 12.5px) * 0.84); line-height:1.55; }
+.ts-cf-hunk { padding:4px 12px; color:var(--dsw-alias-label-tertiary,inherit); opacity:.75; white-space:pre; }
+.ts-cf-line { display:grid; grid-template-columns:1.2em minmax(0,1fr); white-space:pre; }
+.ts-cf-line-sign { text-align:center; user-select:none; }
+.ts-cf-line-text { padding-right:12px; }
+.ts-cf-line.is-add { background:rgba(59,165,93,.14); }
+.ts-cf-line.is-add .ts-cf-line-sign { color:var(--dsw-alias-state-success-primary,#3ba55d); }
+.ts-cf-line.is-del { background:rgba(229,72,77,.14); }
+.ts-cf-line.is-del .ts-cf-line-sign { color:var(--dsw-alias-state-error-primary,#e5484d); }
+.ts-cf-line.is-ctx .ts-cf-line-text { color:var(--dsw-alias-label-secondary,inherit); }
+.ts-cf-note { padding:10px 12px; font-size:calc(var(--ts-fs, 12.5px) * 0.92); color:var(--dsw-alias-label-tertiary,inherit); }
 
 /* —— 运行计时提醒（停靠输入条左上角，对齐原生对话 tab 的「深度求索中，用时…」）——
    absolute 挂在主对话面板容器内：bottom 用 --ts-composer-h（composer-dock 写的输入条实际高度，

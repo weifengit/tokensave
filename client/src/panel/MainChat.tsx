@@ -216,6 +216,7 @@ export function MainChat({ sessionId, actions }: { sessionId: string; actions?: 
       </div>
       <MsgList
         messages={messages}
+        sessionId={sessionId}
         view={view}
         emptyText="在下方输入框发送消息，对话内容会实时显示在这里。"
         hasMore={history.hasMore}
