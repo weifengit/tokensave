@@ -478,6 +478,29 @@ body.ts-desk-nochat [data-conversation-region="composer"] {
 .ts-cf-line.is-ctx .ts-cf-line-text { color:var(--dsw-alias-label-secondary,inherit); }
 .ts-cf-note { padding:10px 12px; font-size:calc(var(--ts-fs, 12.5px) * 0.92); color:var(--dsw-alias-label-tertiary,inherit); }
 
+/* —— 模式选择器（标准 / PTC / 极简 / 创造）——
+   宿主把它只注册在「新会话 Hero」与它自己的会话标题行；工作台替换了宿主的
+   会话视图，那两处都不渲染，所以这里自带一个（见 agent-preset-chip.tsx）。
+   尺寸与标题行同高、可读但不用力抢戏：它是会话的属性，不是主操作。 */
+.ts-preset-chip { display:inline-flex; align-items:center; gap:4px; flex:none; min-height:24px; max-width:200px; padding:0 8px; border:1px solid rgba(127,127,127,.28); border-radius:99px; background:rgba(127,127,127,.1); color:var(--dsw-alias-label-secondary,inherit); font-size:calc(var(--ts-fs, 12.5px) * 0.9); line-height:1.4; cursor:pointer; transition:background-color .12s; }
+.ts-preset-chip:hover:not(:disabled) { background:rgba(127,127,127,.2); color:var(--dsw-alias-label-primary,inherit); }
+.ts-preset-chip.is-open { background:rgba(127,127,127,.22); color:var(--dsw-alias-label-primary,inherit); }
+/* 只读态（会话已跑过轮次，宿主不允许再换）：不装作能点，但仍显示"它在用什么" */
+.ts-preset-chip.is-readonly { cursor:default; opacity:.78; }
+.ts-preset-chip.is-empty { cursor:default; opacity:.7; border-style:dashed; }
+.ts-preset-chip svg { flex:none; opacity:.8; }
+.ts-preset-label { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ts-preset-caret { flex:none; opacity:.6; font-size:.9em; }
+.ts-preset-notice { flex:none; margin-left:6px; font-size:calc(var(--ts-fs, 12.5px) * 0.84); color:var(--dsw-alias-state-error-primary,#e5484d); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:280px; }
+/* 下拉：portal 到 body（面板可滚可裁，普通 absolute 会被裁掉）。
+   z-index 与变更卡预览一致：压过停靠输入条(35/42)与 dockview 浮层，低于宿主弹窗(1000)。 */
+.ts-preset-menu { position:fixed; z-index:70; display:flex; flex-direction:column; min-height:0; overflow-y:auto; padding:4px; border:1px solid rgba(127,127,127,.34); border-radius:9px; background:var(--ts-bg-1,#1b1b1d); box-shadow:0 10px 30px rgba(0,0,0,.32); }
+.ts-preset-item { display:flex; flex-direction:column; gap:2px; align-items:flex-start; width:100%; padding:7px 9px; border:0; border-radius:6px; background:transparent; color:inherit; font:inherit; text-align:left; cursor:pointer; }
+.ts-preset-item:hover { background:rgba(127,127,127,.16); }
+.ts-preset-item.is-current { background:rgba(127,127,127,.22); }
+.ts-preset-item-name { font-size:calc(var(--ts-fs, 12.5px) * 1.02); font-weight:500; color:var(--dsw-alias-label-primary,inherit); }
+.ts-preset-item-desc { font-size:calc(var(--ts-fs, 12.5px) * 0.82); color:var(--dsw-alias-label-tertiary,inherit); white-space:normal; line-height:1.45; }
+
 /* —— 运行计时提醒（停靠输入条左上角，对齐原生对话 tab 的「深度求索中，用时…」）——
    absolute 挂在主对话面板容器内：bottom 用 --ts-composer-h（composer-dock 写的输入条实际高度，
    停靠在容器底），left/max-width 用 --ts-composer-left / --ts-composer-w（composer-dock 每轮

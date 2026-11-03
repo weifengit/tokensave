@@ -12,6 +12,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { subscribeSession, subscribeHistoryState, loadOlderHistory } from '../session-subscribe'
 import type { StreamMsg } from '../session-subscribe'
 import { MsgList } from './MsgList'
+import { AgentPresetChip } from './agent-preset-chip'
 import { CHAT_VIEWS, CHAT_VIEW_STAT, CHAT_VIEW_UNIT, useChatView } from './chat-view'
 
 import { ComposerRunBadge } from './composer-status'
@@ -104,6 +105,15 @@ export function MainChat({ sessionId, actions }: { sessionId: string; actions?: 
   // 镜头按**会话**分键（Step 13-C）：多项目并存时 A 切镜头不会改到 B；
   // 同一会话的面板/浮层两实例仍共用同一份真值。
   const [view, setView] = useChatView(sessionId)
+  /**
+   * 是否还能切换模式。
+   *
+   * 判据用「消息流里有没有真人发言」而不是宿主的 `session.blank`：工作台拿不到
+   * 宿主的会话摘要（那是 uiWorkspace / sessions 的私有结构），而「跑过一轮」在
+   * 消息流上必然表现为至少一条真人 user 消息——这与宿主拒切模式的真实条件一致。
+   * 注入的 runtime-context 不算发言（它不是人发的，也不代表这轮开始了）。
+   */
+  const blank = !messages.some((m) => m.role === 'user' && !m.injected && !m.queued)
   const [history, setHistory] = useState<{ hasMore: boolean; loadingOlder: boolean }>({
     hasMore: false,
     loadingOlder: false,
@@ -186,6 +196,10 @@ export function MainChat({ sessionId, actions }: { sessionId: string; actions?: 
       {/* 标题条：标题 + 中间信息（消息条数）居中，三键固定右上角 */}
       <div className="ts-mainchat-head">
         <span className="ts-head-title">DSH 主对话</span>
+        {/* 模式选择器：宿主只在新会话 Hero 与它自己的会话标题行渲染这个入口，
+            而工作台替换了宿主会话视图 → 那两处都不出现，这里自带一个。
+            只有空白会话（还没跑过轮次）可切换，这是宿主的硬约束。 */}
+        <AgentPresetChip sessionId={sessionId} editable={blank} />
         {/* 中间段 = 统计 + 视图开关：它两回答的是同一个问题——现在看的是哪一档、有多少 */}
         <span
           className="ts-head-mid ts-mainchat-mid"

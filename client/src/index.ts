@@ -33,6 +33,7 @@ import { installComposerFocus } from './composer-focus'
 import { DockSpikeGate } from './panel/dock-spike'
 import { startSoundSync } from './panel/sound'
 import { installSkinLayerCss } from './panel/skin-layer'
+import { probeAgentPresets } from './panel/agent-preset'
 
 export const inject = { slots: true }
 
@@ -181,6 +182,10 @@ export function apply(ctx: Context) {
   } catch (e) {
     console.warn('[skin-layer] install failed:', e)
   }
+  // Agent 模式清单诊断：宿主在预设注册链失败时**完全静默**，用户看到的只是
+  // 「模式选择入口凭空消失」。这里启动即读一次清单并把结论打进控制台，
+  // 把「猜是哪个开关」变成「看日志就知道」（详见 agent-preset.ts 的 probeAgentPresets）。
+  void probeAgentPresets()
   // 宿主原生输入条增强：自动加高（一眼看全长文本）+ 上沿抓手手动拉高（松手固定）。
   // 与 slots/uiWorkspace 无关，因此在最前面挂，任何视图（含默认纯对话窗）都生效。
   try {
