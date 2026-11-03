@@ -28,7 +28,7 @@ const dir = mkdtempSync(join(tmpdir(), 'ts-cstatus-'))
 try {
   const out = join(dir, 't.mjs')
   await build({
-    entryPoints: [join(root, 'client/src/panel/composer-status.ts')],
+    entryPoints: [join(root, 'client/src/panel/composer-status.tsx')],
     bundle: true,
     format: 'esm',
     outfile: out,
@@ -72,7 +72,7 @@ try {
     m.turnStartMsOf([{ role: 'user', content: 'x' }]) === null)
 
   // —— 3. 源码断言：与原生同拍 + 挂载点 ——
-  const src = readFileSync(join(root, 'client/src/panel/composer-status.ts'), 'utf8')
+  const src = readFileSync(join(root, 'client/src/panel/composer-status.tsx'), 'utf8')
   check('起点优先 readTurnStartMs（本轮 turn/start，与原生 RunningStatus 同口径）',
     src.includes('readTurnStartMs(sessionId) ?? turnStartMsOf(messages)'))
   check('running 订阅 uiSession.sessionStatus（activity 同源）',
