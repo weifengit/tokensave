@@ -369,6 +369,30 @@ export function useDockNativeComposer(
         if (seatH > 0 && root.style.getPropertyValue('--ts-composer-h') !== seatPx) {
           root.style.setProperty('--ts-composer-h', seatPx)
         }
+        // 徽标（.ts-run-badge）必须贴着**可见输入卡**的左缘：卡在座位里居中、
+        // 又被 --dsh-composer-card-max-width 收窄，按格子左缘 + 固定 14px 会偏到
+        // 卡的左边外面（用户反馈「跑到左边去了」）。量卡相对本格 padding box 的
+        // 偏移与宽度写成变量，座位重排/宽度把手拖动都会经 apply 重算而跟随。
+        // 坐标系用 cell 自己的 padding box（徽标的包含块就是 cell，不是 r ——
+        // r 可能退化到可见祖先，拿它算会把偏移量算到错误的原点上）。
+        const card = seat.querySelector<HTMLElement>('[data-composer-card]')
+        if (card) {
+          const cardRect = card.getBoundingClientRect()
+          const cellRect = cell.getBoundingClientRect()
+          const padBoxLeft = cellRect.left + (parseFloat(cs.borderLeftWidth) || 0)
+          const leftPx = `${Math.round(cardRect.left - padBoxLeft)}px`
+          if (root.style.getPropertyValue('--ts-composer-left') !== leftPx) {
+            root.style.setProperty('--ts-composer-left', leftPx)
+          }
+          const cardWPx = `${Math.round(cardRect.width)}px`
+          if (root.style.getPropertyValue('--ts-composer-w') !== cardWPx) {
+            root.style.setProperty('--ts-composer-w', cardWPx)
+          }
+        } else {
+          // 卡不在（hero 态/座位重建中）：回落到 CSS 默认的 14px 口径
+          root.style.removeProperty('--ts-composer-left')
+          root.style.removeProperty('--ts-composer-w')
+        }
       } catch {
         /* 视图切换竞态：下一次调度再试 */
       }
@@ -392,6 +416,8 @@ export function useDockNativeComposer(
       restore()
       PRE_DOCK_STYLES.delete(seat)
       document.documentElement.style.removeProperty('--ts-composer-h')
+      document.documentElement.style.removeProperty('--ts-composer-left')
+      document.documentElement.style.removeProperty('--ts-composer-w')
       seedCell.style.removeProperty('--ts-chat-content-w')
       // 面板若被重挂过，写宽度变量的是活节点（observed），不只 seedCell——两边都清
       if (observed && observed !== seedCell) observed.style.removeProperty('--ts-chat-content-w')

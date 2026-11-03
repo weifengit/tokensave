@@ -438,8 +438,11 @@ body.ts-desk-nochat [data-conversation-region="composer"] {
 
 /* —— 运行计时提醒（停靠输入条左上角，对齐原生对话 tab 的「深度求索中，用时…」）——
    absolute 挂在主对话面板容器内：bottom 用 --ts-composer-h（composer-dock 写的输入条实际高度，
-   停靠在容器底），left 与输入条内缩对齐；面板隐藏时随容器 visibility/display 一起消失。 */
-.ts-run-badge { position:absolute; z-index:5; left:14px; bottom:calc(var(--ts-composer-h, 0px) + 8px); display:inline-flex; align-items:center; gap:6px; max-width:calc(100% - 28px); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; padding:3px 10px; border-radius:99px; background:rgba(127,127,127,.16); color:var(--dsw-alias-label-secondary,inherit); font-size:calc(var(--ts-fs, 12.5px) * 0.9); line-height:1.5; }
+   停靠在容器底），left/max-width 用 --ts-composer-left / --ts-composer-w（composer-dock 每轮
+   实测可见输入卡的左缘与宽度写入：卡在座位里居中且被 --dsh-composer-card-max-width 收窄，
+   写死格子左缘 +14px 会偏到卡左侧外，且卡宽随宽度把手拖动变化，变量跟着重算）。
+   面板隐藏时随容器 visibility/display 一起消失。 */
+.ts-run-badge { position:absolute; z-index:5; left:var(--ts-composer-left, 14px); bottom:calc(var(--ts-composer-h, 0px) + 8px); display:inline-flex; align-items:center; gap:6px; max-width:var(--ts-composer-w, calc(100% - 28px)); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; padding:3px 10px; border-radius:99px; background:rgba(127,127,127,.16); color:var(--dsw-alias-label-secondary,inherit); font-size:calc(var(--ts-fs, 12.5px) * 0.9); line-height:1.5; }
 .ts-run-dot { flex:none; width:7px; height:7px; border-radius:50%; background:var(--dsw-alias-state-business-primary,#4b8dff); animation:ts-run-blink 1.1s ease-in-out infinite alternate; }
 @keyframes ts-run-blink { from { opacity:.35; } to { opacity:1; } }
 @media (prefers-reduced-motion: reduce) { .ts-run-dot { animation:none; opacity:.9; } }

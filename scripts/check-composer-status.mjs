@@ -14,7 +14,9 @@
  * 这里钉三件事：
  *   1. formatElapsed 的「10分10秒」口径；
  *   2. turnStartMsOf 跳过注入与排队消息；
- *   3. 起点优先 readTurnStartMs（与原生同拍），渲染挂在输入条上沿（--ts-composer-h）。
+ *   3. 起点优先 readTurnStartMs（与原生同拍），渲染挂在输入条上沿（--ts-composer-h），
+ *      横向贴可见输入卡左缘并跟随其宽度（--ts-composer-left / --ts-composer-w，
+ *      由 composer-dock 每轮实测 [data-composer-card] 写入）。
  */
 import { build } from 'esbuild'
 import { mkdtempSync, rmSync, readFileSync } from 'node:fs'
@@ -86,7 +88,18 @@ try {
   const styles = readFileSync(join(root, 'client/src/panel/styles.ts'), 'utf8')
   check('定位在停靠输入条上沿（--ts-composer-h 是 composer-dock 写的实际高度）',
     styles.includes('.ts-run-badge') && styles.includes('var(--ts-composer-h, 0px)'))
+  check('徽标左对齐输入卡并随宽度调节变动（left/max-width 消费 dock 实测变量）',
+    styles.includes('left:var(--ts-composer-left, 14px)') &&
+    styles.includes('max-width:var(--ts-composer-w,'))
   const sub = readFileSync(join(root, 'client/src/session-subscribe.ts'), 'utf8')
+  const dock = readFileSync(join(root, 'client/src/panel/composer-dock.ts'), 'utf8')
+  check('左缘/宽度实测可见输入卡（apply 写 --ts-composer-left / --ts-composer-w）',
+    dock.includes("querySelector<HTMLElement>('[data-composer-card]')") &&
+    dock.includes("setProperty('--ts-composer-left'") &&
+    dock.includes("setProperty('--ts-composer-w'"))
+  check('卸载时清掉左缘/宽度变量（不把旧坐标留给下一次）',
+    dock.includes("removeProperty('--ts-composer-left')") &&
+    dock.includes("removeProperty('--ts-composer-w')"))
   check('readTurnStartMs 从事件窗口倒序找 turn/start.time',
     sub.includes("ev?.type === 'turn/start'") && sub.includes('Number(ev.time) || null'))
 
