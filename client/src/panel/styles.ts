@@ -908,6 +908,12 @@ body.ts-vsplit-dragging .ts-card { transition:none !important; animation:none !i
    底部留白 = 输入条实测高度（--ts-composer-h，由 HDesk 停靠时写入）+ 余量。
    以前写死 72px，输入条多行/换行时就不够，末尾几行被遮住。 */
 .ts-mainchat .ts-chat-msgs { padding-bottom:calc(var(--ts-composer-h, 72px) + 14px); }
+/* 运行提醒（.ts-run-badge）是 absolute 浮在输入条上沿的一条：距输入条 8px、
+   自身约 23px 高，共占去 31px。只垫 14px 时它会压住最新一条回复（用户反馈）。
+   这里用 :has 只在它真出现（会话 running）时才多让位，不跑时不白留一块空白；
+   34px = 8px 间距 + 23px 胶囊高度 + 3px 呼吸余量（徽标高度随 --ts-fs 缩放，
+   若未来字号大幅调大需重算这两个常数）。 */
+.ts-mainchat:has(.ts-run-badge) .ts-chat-msgs { padding-bottom:calc(var(--ts-composer-h, 72px) + 34px); }
 /* 主对话消息宽度：**跟自己的面板宽度自适应**，不再吃宿主那套全局宽度。
    历史：原先跟 --ts-chat-content-w（由输入条停靠逻辑写，取自宿主的
    --dsh-chat-user-width，带 680px 下限）并居中——面板变窄时它仍按 680px 算，

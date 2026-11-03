@@ -16,7 +16,8 @@
  *   2. turnStartMsOf 跳过注入与排队消息；
  *   3. 起点优先 readTurnStartMs（与原生同拍），渲染挂在输入条上沿（--ts-composer-h），
  *      横向贴可见输入卡左缘并跟随其宽度（--ts-composer-left / --ts-composer-w，
- *      由 composer-dock 每轮实测 [data-composer-card] 写入）。
+ *      由 composer-dock 每轮实测 [data-composer-card] 写入）；且徽标出现时消息流
+ *      底部多让位（.ts-mainchat:has(.ts-run-badge) → +34px），不压住最新一条回复。
  */
 import { build } from 'esbuild'
 import { mkdtempSync, rmSync, readFileSync } from 'node:fs'
@@ -91,6 +92,11 @@ try {
   check('徽标左对齐输入卡并随宽度调节变动（left/max-width 消费 dock 实测变量）',
     styles.includes('left:var(--ts-composer-left, 14px)') &&
     styles.includes('max-width:var(--ts-composer-w,'))
+  check('徽标出现时消息流多让位，不压最新回复（:has 只在实际显示时生效）',
+    styles.includes('.ts-mainchat:has(.ts-run-badge) .ts-chat-msgs') &&
+    /:has\(.ts-run-badge\) .ts-chat-msgs \{[^}]*padding-bottom:calc\(var\(--ts-composer-h, 72px\) \+ 34px\)/.test(styles) &&
+    // 不能把基础留白也改大（不跑时会白留一块空白）
+    styles.includes('.ts-mainchat .ts-chat-msgs { padding-bottom:calc(var(--ts-composer-h, 72px) + 14px); }'))
   const sub = readFileSync(join(root, 'client/src/session-subscribe.ts'), 'utf8')
   const dock = readFileSync(join(root, 'client/src/panel/composer-dock.ts'), 'utf8')
   check('左缘/宽度实测可见输入卡（apply 写 --ts-composer-left / --ts-composer-w）',
