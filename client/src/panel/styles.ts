@@ -456,7 +456,14 @@ body.ts-desk-nochat [data-conversation-region="composer"] {
 @media (pointer:coarse) { .ts-cf-row, .ts-cf-toggle { min-height:44px; } }
 /* 悬浮预览：fixed 到视口层（消息流是可滚容器，absolute 会被裁掉）。
    位置由 changes-card.tsx 按锚点矩形算好并夹在视口内。 */
-.ts-cf-hovercard { position:fixed; z-index:60; display:flex; flex-direction:column; overflow:hidden; border:1px solid rgba(127,127,127,.34); border-radius:9px; background:var(--ts-bg-1,#1b1b1d); box-shadow:0 10px 30px rgba(0,0,0,.32); }
+/* 悬浮预览：portal 到 body + fixed。
+   ① position:fixed 必须落在**视口**上 —— 留在面板里的话，dockview/抽屉的
+      transform 会让它相对祖先解析，坐标全偏（实测掉出屏幕底部）。
+   ② z-index 要压过停靠的原生输入条（它 fixed 在视口层，z-index 35；
+      浮层里停靠时是 42），也要压过 dockview 的浮层，但低于宿主弹窗(1000)/菜单(1100)。
+   ③ width / max-height 由 changes-preview-position.ts 算好后写成行内样式，
+      因此这里不再写 max-width（否则会跟「按视口收窄」的结果打架）。 */
+.ts-cf-hovercard { position:fixed; z-index:70; display:flex; flex-direction:column; min-height:0; overflow:hidden; border:1px solid rgba(127,127,127,.34); border-radius:9px; background:var(--ts-bg-1,#1b1b1d); box-shadow:0 10px 30px rgba(0,0,0,.32); }
 .ts-cf-preview { display:flex; flex-direction:column; min-height:0; }
 .ts-cf-preview-head { flex:none; padding:8px 10px; border-bottom:1px solid rgba(127,127,127,.22); font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:calc(var(--ts-fs, 12.5px) * 0.88); color:var(--dsw-alias-label-tertiary,inherit); white-space:nowrap; overflow:auto hidden; }
 .ts-cf-preview-body { min-height:0; overflow:auto; padding:6px 0 10px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:calc(var(--ts-fs, 12.5px) * 0.84); line-height:1.55; }

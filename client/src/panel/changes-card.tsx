@@ -13,18 +13,17 @@
  * 为什么单独成模块：MsgList 已经很长，卡片带自己的读取状态机、悬浮计时、
  * diff 渲染，塞进去会让两件事互相牵制（自检也不好拆开验）。
  */
-import React, { useEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import type { ChangesDiffState, ChangedFile } from './changes-types'
 import { loadChangesDiff, loadChangesSummary } from './changes-api'
 import type { ChangesSummary } from './changes-types'
+import { PREVIEW_CLOSE_DELAY_MS, PREVIEW_OPEN_DELAY_MS, PREVIEW_MAX_H } from './changes-preview-const'
+import { placePreview } from './changes-preview-position'
+import type { Placement } from './changes-preview-position'
 
 /** 折叠状态下先露几行（原生 COLLAPSED_ROWS = 4，一旦可折就按这个高度收）。 */
 const COLLAPSED_ROWS = 4
-/** 悬浮多久才去读 diff（原生 500ms；太快会在鼠标划过时打一串无用请求）。 */
-const PREVIEW_OPEN_DELAY_MS = 500
-/** 预览宽度上限：不占满整块面板，也不至于窄到读不了。 */
-const PREVIEW_MAX_W = 520
-const PREVIEW_MAX_H = 260
 
 const COUNT_FMT = new Intl.NumberFormat('en-US')
 
@@ -121,8 +120,18 @@ function DiffPreview({
   )
 }
 
-/** 悬浮锚点：位置由锚点矩形算出（避开视口边缘），指针移入预览本身时保持显示。 */
-interface HoverState { index: number, display: string, left: number, top: number }
+/**
+ * 悬浮预览的**开启状态**。
+ *
+ * 为什么只存锚点矩形、不存最终 left/top：窗口尺寸会在预览开着时变（拖面板、
+ * 拖宽度把手、转屏），摆位必须跟着重算，否则卡片会停在旧坐标上掉出视口。
+ * 位置由 placePreview 在渲染时按当前视口现算，见下面的 placement useMemo。
+ */
+interface HoverState {
+  index: number
+  display: string
+  anchor: { left: number, top: number, width: number, height: number }
+}
 
 /**
  * 轮末变更卡。
@@ -138,7 +147,9 @@ export function ChangesCard({
   const [expanded, setExpanded] = useState(false)
   const [hover, setHover] = useState<HoverState | null>(null)
   const cardRef = useRef<HTMLDivElement>(null)
-  const hoverTimer = useRef<number | null>(null)
+  /** 开：等 openDelay 才读 diff；关：等 closeDelay，给指针移进卡片的时间。两个计时互斥。 */
+  const openTimer = useRef<number | null>(null)
+  const closeTimer = useRef<number | null>(null)
 
   // 有 seq 才读宿主清单；没有就直接用本地统计（此时不显示行数）
   useEffect(() => {
@@ -150,36 +161,87 @@ export function ChangesCard({
     return () => { alive = false }
   }, [sessionId, seq])
 
-  const clearHoverTimer = () => {
-    if (hoverTimer.current !== null) {
-      window.clearTimeout(hoverTimer.current)
-      hoverTimer.current = null
-    }
-  }
-  useEffect(() => clearHoverTimer, [])
+  const clearTimers = useCallback(() => {
+    if (openTimer.current !== null) { window.clearTimeout(openTimer.current); openTimer.current = null }
+    if (closeTimer.current !== null) { window.clearTimeout(closeTimer.current); closeTimer.current = null }
+  }, [])
+  // 卸载必须清计时器：否则组件已经不在了，定时器还在跑 setHover
+  useEffect(() => clearTimers, [clearTimers])
 
-  // 卸载 / 收起时把悬浮卡关掉，避免它留在屏上
-  useEffect(() => {
-    if (!expanded) setHover(null)
-  }, [expanded])
-
-  const openHover = (index: number, display: string, anchor: HTMLElement) => {
-    clearHoverTimer()
-    hoverTimer.current = window.setTimeout(() => {
-      hoverTimer.current = null
+  /**
+   * 指针进入锚点行：先撤销「待关闭」，再起「待打开」。
+   *
+   * 锚点矩形在**打开这一刻**量并存在 state 里（不每帧重测）：存储的坐标会在
+   * 窗口变化时由渲染期的 placePreview 重算，因此既能跟随布局又不会因为
+   * 悬浮期间行被滚动/重排而抖动闪烁。
+   */
+  const openHover = useCallback((index: number, display: string, anchor: HTMLElement) => {
+    if (closeTimer.current !== null) { window.clearTimeout(closeTimer.current); closeTimer.current = null }
+    if (openTimer.current !== null) return   // 已经在同一行上等打开，别重置延迟
+    openTimer.current = window.setTimeout(() => {
+      openTimer.current = null
       const r = anchor.getBoundingClientRect()
-      const cardRect = cardRef.current?.getBoundingClientRect()
-      // 左缘对齐卡片，纵向落在锚点下方；下方空间不够就翻到上方
-      const left = Math.max(8, Math.min(cardRect?.left ?? r.left, window.innerWidth - PREVIEW_MAX_W - 8))
-      const below = r.bottom + 6
-      const fits = below + PREVIEW_MAX_H + 8 <= window.innerHeight
-      const top = fits ? below : Math.max(8, r.top - PREVIEW_MAX_H - 6)
-      setHover({ index, display, left, top })
+      setHover({ index, display, anchor: { left: r.left, top: r.top, width: r.width, height: r.height } })
     }, PREVIEW_OPEN_DELAY_MS)
-  }
+  }, [])
+
+  /**
+   * 指针离开：延迟关闭而非立即关。
+   *
+   * 为什么不能立刻关：锚点行与卡片之间有 PREVIEW_GAP 的空隙，指针从行移到
+   * 卡片上必然穿过它；立即关闭会让预览「一碰就没」，用户也就无法在卡内滚动
+   * diff。这个延迟给跨越空隙的时间，指针真进到卡上时 onEnter 会把计时撤销。
+   */
+  const scheduleClose = useCallback(() => {
+    if (openTimer.current !== null) { window.clearTimeout(openTimer.current); openTimer.current = null }
+    if (closeTimer.current !== null) window.clearTimeout(closeTimer.current)
+    closeTimer.current = window.setTimeout(() => {
+      closeTimer.current = null
+      setHover(null)
+    }, PREVIEW_CLOSE_DELAY_MS)
+  }, [])
+
+  /** 指针进到卡片本身：撤销待关闭（这是「预览可以停留」的关键）。 */
+  const cancelClose = useCallback(() => {
+    if (closeTimer.current !== null) { window.clearTimeout(closeTimer.current); closeTimer.current = null }
+  }, [])
+
+  // Esc 关闭（键盘用户没有「移开」这个动作，必须给一条退出口）
+  useEffect(() => {
+    if (!hover) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setHover(null) }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [hover])
+
+  // 列表收起 / 展开会重排行位置：旧锚点已失效，直接关掉预览
+  useEffect(() => {
+    setHover(null)
+  }, [expanded, summary])
+
+  /**
+   * 预览位置（渲染期现算）。
+   *
+   * 依赖 hover 与视口尺寸：拖面板/拖宽度把手/转屏时视口变了要重算，否则卡片
+   * 停在与新布局不匹配的旧坐标上（这正是「掉到屏幕底部之外」的成因之一）。
+   * 视口尺寸在 resize 事件里同步进 state，保证重算能被 React 看到。
+   */
+  const [viewport, setViewport] = useState(() => ({
+    width: typeof window === 'undefined' ? 0 : window.innerWidth,
+    height: typeof window === 'undefined' ? 0 : window.innerHeight,
+  }))
+  useEffect(() => {
+    const onResize = () => setViewport({ width: window.innerWidth, height: window.innerHeight })
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
+
+  const placement: Placement | null = useMemo(() => {
+    if (!hover) return null
+    return placePreview(hover.anchor, viewport, { height: PREVIEW_MAX_H })
+  }, [hover, viewport])
 
   const files = summary?.files ?? null
-  const fallbackFilesUsed = !files
   const count = files ? summary!.total : fallbackFiles.length
   if (count === 0) return null
 
@@ -220,10 +282,12 @@ export function ChangesCard({
               <button
                 type="button"
                 className="ts-cf-row"
+                // 悬停与键盘焦点各给一次机会：鼠标用户靠 mouseenter，
+                // 键盘用户 Tab 到行上同样应该能看预览（原生 HoverCard 也这么做）。
                 onMouseEnter={(e) => openHover(index, f.display, e.currentTarget)}
-                onMouseLeave={clearHoverTimer}
+                onMouseLeave={scheduleClose}
                 onFocus={(e) => openHover(index, f.display, e.currentTarget)}
-                onBlur={clearHoverTimer}
+                onBlur={scheduleClose}
                 aria-label={`查看 ${f.display} 的改动`}
               >
                 <span className="ts-cf-path" title={f.path}>{f.display}</span>
@@ -248,15 +312,35 @@ export function ChangesCard({
         </button>
       )}
 
-      {hover && seq !== null && (
+      {/*
+        * 预览卡 **portal 到 body**，不留在卡片 DOM 里。
+        *
+        * 为什么必须这样（两个实测症状的同一个根因）：
+        *   ① 位置算不准 —— 工作台面板处在 dockview / 抽屉这类带 transform 的
+        *      容器里，`position:fixed` 会相对最近的 transformed 祖先解析，而不是
+        *      视口；于是 getBoundingClientRect 得出的视口坐标被当成「相对那个祖先」
+        *      消费，卡片就掉到屏幕外（尤其向下掉出底部）。
+        *   ② 被输入框压住 —— 祖先一旦构成 stacking context，子元素的 z-index
+        *      只在那个上下文里比较；停靠的原生输入条是 fixed 在视口层（z-index 35），
+        *      卡片再大的 z-index 也翻不出祖先，于是落在输入框下层。
+        * 挂到 body 之后：坐标系就是视口，z-index 也在顶层比较，两个问题一起消失。
+        */}
+      {hover && seq !== null && placement && createPortal(
         <div
           className="ts-cf-hovercard"
-          style={{ left: hover.left, top: hover.top, maxHeight: PREVIEW_MAX_H, maxWidth: PREVIEW_MAX_W }}
-          onMouseEnter={clearHoverTimer}
-          onMouseLeave={() => setHover(null)}
+          style={{
+            left: placement.left,
+            top: placement.top,
+            width: placement.width,
+            maxHeight: placement.maxHeight,
+          }}
+          // 指针进到卡上就撤掉「待关闭」，这样可以在卡内滚动 diff 而不会被关掉
+          onMouseEnter={cancelClose}
+          onMouseLeave={scheduleClose}
         >
           <DiffPreview sessionId={sessionId} seq={seq} index={hover.index} display={hover.display} />
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   )

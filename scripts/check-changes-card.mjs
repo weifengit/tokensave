@@ -118,8 +118,13 @@ try {
   // —— 3. 卡片渲染的硬事实（源码断言） ——
   const card = readFileSync(join(root, 'client/src/panel/changes-card.tsx'), 'utf8')
   check('折叠行数与原生一致（COLLAPSED_ROWS = 4）', card.includes('const COLLAPSED_ROWS = 4'))
+  const consts = readFileSync(join(root, 'client/src/panel/changes-preview-const.ts'), 'utf8')
   check('悬浮预览延迟 500ms（与原生 HoverCard openDelayMs 同拍）',
-    card.includes('const PREVIEW_OPEN_DELAY_MS = 500'))
+    consts.includes('PREVIEW_OPEN_DELAY_MS = 500'))
+  check('关闭有延迟（给指针跨过锚点与卡片之间的空隙，否则一碰就没）',
+    consts.includes('PREVIEW_CLOSE_DELAY_MS'))
+  check('预览卡 portal 到 body（否则祖先的 transform 会把 fixed 改写成相对祖先定位）',
+    card.includes('createPortal') && card.includes('document.body'))
   check('单文件时只留 header（不渲染文件列表）',
     card.includes('rows &&') && card.includes('const single = '))
   check('文案对齐原生（已编辑 N 个文件 / +N / -N）',
@@ -128,6 +133,41 @@ try {
     && card.includes('-{COUNT_FMT.format(deleted)}'))
   check('没有宿主档案时退回本地统计，且不假造行数',
     card.includes('fallbackFiles') && card.includes('按工具调用统计（宿主未提供行数）'))
+
+  // —— 3b. 预览摆位：不许掉出视口（用户反馈的正是这两种掉出） ——
+  const posOut = join(dir, 'pos.mjs')
+  await build({
+    entryPoints: [join(root, 'client/src/panel/changes-preview-position.ts')],
+    bundle: true, format: 'esm', outfile: posOut, platform: 'neutral', logLevel: 'silent',
+  })
+  const pos = await import(posOut)
+  const VP = { width: 1280, height: 800 }
+  // 锚点在视口底部附近：下方只剩很少空间 → 必须翻到上方，且完全在视口内
+  const nearBottom = pos.placePreview({ left: 100, top: 740, width: 800, height: 24 }, VP)
+  check('锚点在底部时翻到上方（不会掉出屏幕底部）',
+    nearBottom.side === 'above' && nearBottom.top + nearBottom.maxHeight <= VP.height - 8)
+  check('上方落位不越过视口顶',
+    nearBottom.top >= 8)
+  // 锚点在顶部附近：上方没空间 → 落在下方，且底边不越界
+  const nearTop = pos.placePreview({ left: 100, top: 30, width: 800, height: 24 }, VP)
+  check('锚点在顶部时落在下方且不出底边',
+    nearTop.side === 'below' && nearTop.top + nearTop.maxHeight <= VP.height - 8)
+  // 视口比理想高度还矮（面板被拖扁）：高度收成剩余空间，仍不出屏
+  const tiny = pos.placePreview({ left: 100, top: 120, width: 400, height: 20 }, { width: 900, height: 300 })
+  check('视口很矮时高度收成剩余空间（宁可内部滚动也不出屏）',
+    tiny.maxHeight <= 300 && tiny.top + tiny.maxHeight <= 300 - 8 + 0.5)
+  // 锚点极靠右：横向夹回视口内
+  const right = pos.placePreview({ left: 1200, top: 200, width: 60, height: 24 }, VP)
+  check('锚点靠右时横向夹回视口内',
+    right.left + right.width <= VP.width - 8 + 0.5)
+  // 窄屏（手机）：宽度跟着视口收
+  const phone = pos.placePreview({ left: 10, top: 200, width: 300, height: 24 }, { width: 390, height: 844 })
+  check('窄屏时宽度跟着视口收窄（不横向溢出）',
+    phone.width <= 390 - 16 && phone.left + phone.width <= 390 - 8 + 0.5)
+  // 锚点在正中、窗口矮到两侧都放不下：仍必须完全在视口内
+  const middle = pos.placePreview({ left: 200, top: 150, width: 400, height: 24 }, { width: 800, height: 320 })
+  check('两侧都放不下时选空间更大一侧且完全在视口内',
+    middle.top >= 8 && middle.top + middle.maxHeight <= 320 - 8 + 0.5)
 
   // —— 4. 样式消费 ——
   const styles = readFileSync(join(root, 'client/src/panel/styles.ts'), 'utf8')
@@ -138,6 +178,13 @@ try {
     /\.ts-cf-hovercard \{[^}]*position:fixed/.test(styles))
   check('增删有颜色语义（+成功 / -错误）',
     styles.includes('.ts-cf-added') && styles.includes('.ts-cf-deleted'))
+  // 层级：停靠输入条 fixed 在视口层（z-index 35，浮层里 42），预览必须压过它，
+  // 否则会落在「聊天对话输入框」下层（用户反馈的第三个问题）。
+  const cardZ = Number((styles.match(/\.ts-cf-hovercard \{[^}]*z-index:(\d+)/) || [])[1])
+  check('预览卡 z-index 压过停靠输入条(35/42)与 dockview 浮层，但低于宿主弹窗(1000)',
+    cardZ > 42 && cardZ < 1000, `z-index=${cardZ}`)
+  check('样式不再写 max-width（否则与「按视口收窄」的行内宽度打架）',
+    !/\.ts-cf-hovercard \{[^}]*max-width:/.test(styles))
 
   console.log(fail === 0 ? '\nALL PASS' : `\n${fail} FAILED`)
   process.exitCode = fail === 0 ? 0 : 1
