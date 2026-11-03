@@ -14,6 +14,10 @@
  *     松手后固定并写入 localStorage（`tokensave:composer-height.v1`），刷新后仍在，
  *     且内容变少也不会自动收回（固定高度是用户的明确意图）；
  *     抓手右侧的「重置」（或双击抓手）把高度交还给自动加高。
+ *     误触防护（2026-10-30）：位移超过 3px 才算拖动，按下 / 单击不改变任何高度 ——
+ *     抓手是隐形命中区，旧版「按下即固定」让一次无意点击把输入框钉死在
+ *     一行高并持久化（用户报的就是它：「输入框不会随内容自动变高」）；
+ *     固定态现在随时可见（数字胶囊淡显 + 「重置」常显），一眼可发现、一键可撤销。
  *
  * 关键：手动高度必须**同时写 min-height 与 max-height**（固定盒）。
  * 只写 max-height 时，内容比目标矮的盒子不会变高——空输入框往上拖毫无反应。
@@ -46,6 +50,16 @@ interface DragState {
   originY: number
   /** 按下时滚动口的实际高度（作为拖动基准，避免第一下跳变）。 */
   originH: number
+  /**
+   * 是否已经进入真正的拖动（位移超过阈值）。
+   *
+   * 为什么需要：抓手是横在输入框上沿的**隐形命中区**（视觉横线已删），
+   * 平时点输入框上方 / 拖选文本起点稍高都会碾过它。旧实现在 pointerdown
+   * 当场就把高度固定并持久化 —— 一次无意的点击就把输入框钉死在当时的
+   * 一行高，且抓手看不见、重置按钮要悬停才出现，用户只看到「输入框再也不
+   * 随内容变高了」。现在按下不固定，位移超过 DRAG_START_PX 才算拖动。
+   */
+  moved: boolean
 }
 
 let installed = false
@@ -141,6 +155,11 @@ const CSS = `
    抓手只保留一条不可见的 16px 命中区（cursor:ns-resize + title 提示可发现），
    拖动反馈只靠 px 数字胶囊与悬停浮出的「重置」按钮。 */
 .ts-composer-grabber .ts-composer-size{margin-left:var(--ts-grab-inset,16px);border-radius:99px;padding:0 7px;font-size:calc(var(--ts-fs, 12.5px) * 0.8);line-height:15px;font-variant-numeric:tabular-nums;background:rgba(127,127,127,.25);color:var(--dsw-alias-label-secondary,#9aa0a6);opacity:0;transition:opacity .14s ease;pointer-events:none;transform:translateY(-2px)}
+/* 固定态（非拖动）：数字胶囊淡显 + 「重置」常显。
+   固定高度是用户的明确意图，但它同时是「自动加高」的关断开关 ——
+   必须随时可见、可撤销，否则一次旧版误触就把人锁在死高度里还无从察觉。 */
+.ts-composer-grabber[data-ts-manual="1"]:not([data-ts-dragging="1"]) .ts-composer-size{opacity:.8}
+.ts-composer-grabber[data-ts-manual="1"]:not([data-ts-dragging="1"]) .ts-composer-reset{opacity:1}
 .ts-composer-grabber[data-ts-dragging="1"] .ts-composer-size{opacity:1}
 /* 重置胶囊：悬停才浮出，右端同样按圆角内缩，不越过卡片圆角 */
 .ts-composer-reset{position:absolute;right:var(--ts-grab-inset,16px);top:-11px;height:18px;border-radius:99px;padding:0 8px;border:.5px solid rgba(127,127,127,.4);background:var(--dsw-specific-menu,rgba(30,30,32,.92));color:var(--dsw-alias-label-secondary,#9aa0a6);font-size:calc(var(--ts-fs, 12.5px) * 0.84);line-height:1;cursor:pointer;opacity:0;transition:opacity .14s ease}
@@ -242,8 +261,9 @@ function onPointerDown(e: PointerEvent): void {
   e.preventDefault()
   // 高度数学是 origin 基准（originH + 指针位移，与抓手自身位置无关），
   // 因此抓手可实时跟随盒顶走而不影响跟手（无残影）。
-  drag = { originY: e.clientY, originH: Math.max(MIN_CAP, Math.round(el.clientHeight)) }
-  writeManualCap(drag.originH)
+  // 按下只记录基准，**不固定**：是否算拖动由位移决定（见 onPointerMove），
+  // 单击 / 路过的误触不应改变任何高度。
+  drag = { originY: e.clientY, originH: Math.max(MIN_CAP, Math.round(el.clientHeight)), moved: false }
   try {
     grabber.setPointerCapture(e.pointerId)
   } catch {
@@ -255,11 +275,34 @@ function onPointerDown(e: PointerEvent): void {
 
 /** 拖动逐帧合并：pointermove 频率可高于刷新率，每移动一次就布局会闪屏。 */
 let dragRaf = 0
+/**
+ * 位移超过这个距离才算「真的在拖」；之内的都算误触（单击 / 路过）。
+ * 3px 与常用拖拽库的点击阈值一致，手感上不会觉察到死区。
+ */
+export const DRAG_START_PX = 3
+
+/** 指针相对按下点的纵向位移（px，纯函数供自检复用）。 */
+export function dragOffsetPx(d: { originY: number }, clientY: number): number {
+  return Math.abs(clientY - d.originY)
+}
+
+/** 这一次移动是否把「按下」升级成「拖动」（纯函数供自检复用）。 */
+export function shouldBeginDrag(d: { originY: number; moved: boolean }, clientY: number): boolean {
+  return !d.moved && dragOffsetPx(d, clientY) >= DRAG_START_PX
+}
 let pendingPx = 0
 
 function onPointerMove(e: PointerEvent): void {
   if (!drag || !current || !current.isConnected) return
   e.preventDefault()
+  // 误触防护：位移够大才算拖动；升级的当下先把固定盒设为「按下时的高度」，
+  // 后续帧再跟随（这样第一下不会跳变，语义与旧版「按下即固定」一致）。
+  if (shouldBeginDrag(drag, e.clientY)) {
+    drag.moved = true
+    writeManualCap(drag.originH, false)
+    reflect()
+  }
+  if (!drag.moved) return
   // 往上拖 = 变高：只记录目标值，真正应用合并到下一帧（防闪屏）
   pendingPx = clamp(Math.round(drag.originH + (drag.originY - e.clientY)), MIN_CAP, maxCap())
   if (!dragRaf) dragRaf = requestAnimationFrame(applyDrag)
@@ -284,6 +327,8 @@ function applyDrag(): void {
 
 function onPointerUp(e: PointerEvent): void {
   if (!drag) return
+  // 先取出「是否真的拖过」：下面会把 drag 清空，之后不能再读
+  const dragged = drag.moved
   const el = current
   // 冲刷排队中的最后一帧（合并后 pointerup 可能先于 rAF 到达）
   if (dragRaf) {
@@ -298,8 +343,8 @@ function onPointerUp(e: PointerEvent): void {
     /* 已释放 */
   }
   document.body.classList.remove('ts-composer-resizing')
-  // 拖动期间只改内存，松手一次性落盘
-  if (manualCap !== null) writeManualCap(manualCap)
+  // 只有真的拖过才落盘固定；误触（未超过阈值）不改变任何高度、也不落盘
+  if (dragged && manualCap !== null) writeManualCap(manualCap)
   // 松手即固定：这次拖出来的高度是用户的明确意图（“就固定在这个高度”），
   // 不做自动收回；抓手右侧的「重置」或双击抓手指它交还自动加高。
   if (el && el.isConnected) apply()

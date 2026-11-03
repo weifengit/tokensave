@@ -44,8 +44,9 @@
  */
 import React, { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { getClientContext } from '../session-subscribe'
 import {
-  enterProjectWorkbench, getLiveScreen, onRequestProjectList, onRequestWorkbench, openControlRoom,
+  activeHostPanelId, enterProjectWorkbench, getLiveScreen, onRequestProjectList, onRequestWorkbench, openControlRoom,
   sendToSession,
 } from './sessions'
 import { markPulseRead, useActivityPulse, type InterruptKind } from './pulse'
@@ -680,6 +681,20 @@ export function ControlRoomEntry({ wide }: { wide?: boolean }) {
   const alive = pulse.alive > 0
   // 导航在途标记：宿主切 tab 是异步的，期间把重复点击当作同一意图的重复表达。
   const navigatingRef = useRef(false)
+  /**
+   * 本页是否正停在宿主的「插件 / 便笺」等全局面板（main 槽选中了非对话面板）。
+   * 那种屏下呼吸灯的职责从「切换」变成「回家」：点一下回到上次所在的屏，
+   * 而不是把上次的屏又拨到对面（用户刚从工作台进插件页，点一下想回的是工作台）。
+   * 宿主切全局面板不给本插件发信号（用户点的是宿主侧栏的面板行，本入口不重挂），
+   * 只能低成本轮询 layout 的 panelInfo 快照（500ms，纯内存读）。
+   */
+  const [offSurface, setOffSurface] = useState(false)
+  useEffect(() => {
+    const probe = () => setOffSurface(activeHostPanelId(getClientContext()) !== null)
+    probe()
+    const timer = window.setInterval(probe, 500)
+    return () => window.clearInterval(timer)
+  }, [])
   const tone: 'ok' | 'warn' = pulse.warn > 0 ? 'warn' : 'ok'
   const running = pulse.running > 0
   const warnUnread = pulse.warn > 0
@@ -1022,10 +1037,11 @@ export function ControlRoomEntry({ wide }: { wide?: boolean }) {
           navigatingRef.current = true
           window.setTimeout(() => { navigatingRef.current = false }, NAV_LOCK_MS)
           // 意图即真值：点击瞬间就定住目标屏，按钮文案不再闪动（不等宿主回流）。
-          const target: 'list' | 'desk' = screen === 'list' ? 'desk' : 'list'
+          // 全局面板下 = 回家（回上次的屏）；对话页内 = 交替切换（原有语义）。
+          const target: 'list' | 'desk' = offSurface ? screen : (screen === 'list' ? 'desk' : 'list')
           setScreen(target)
           try {
-            if (!openControlRoom()) {
+            if (!openControlRoom(target)) {
               console.warn('[tokensave] 项目中心：没有可导航的会话，且没有已登记项目')
             }
           } catch (e) {

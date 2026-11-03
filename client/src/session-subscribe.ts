@@ -24,7 +24,7 @@ export interface StreamMsg {
    * 细分类型：'reasoning' 表示这是模型的思考（thinking）内容。
    * 思考与正文同为 assistant 流，但呈现上要分开（思考默认折叠，见 MsgList）。
    */
-  kind?: 'reasoning'
+  kind?: 'reasoning' | 'file-edit'
   /**
    * 该消息是宿主**自动注入**的上下文（运行时快照 / 技能目录 / 工作区指令…），
    * 而非用户亲口发送。
@@ -50,6 +50,14 @@ export interface StreamMsg {
    * tab 里可见，工作台里与正常结束长得一模一样（用户反馈）。
    */
   notice?: TurnNotice
+
+  /**
+   * 该 tool/call 是一次**文件编辑**（write / edit / str_replace_editor，与宿主
+   * dsh-workspace-changes 的 mutationPath 同口径），editPath 是目标文件路径。
+   * 只作为轮次统计的标记存在（不渲染气泡）；MsgList 按轮去重后在轮末
+   * 展示「已编辑 N 个文件」——对齐原生对话 tab 的结束报告。
+   */
+  editPath?: string
 }
 
 // —— 会话指标（token 用量 / 工具耗时 / 活动时间窗）————————————
@@ -156,6 +164,32 @@ function contentOf(ev: any): string {
   }
   if (typeof data.text === 'string') return data.text
   return ''
+}
+
+
+// —— 文件编辑口径（与宿主 dsh-workspace-changes 的 mutationPath 对齐）——————
+/**
+ * 会把文件写进工作区的工具及其路径参数：write→file_path、edit→file_path（有新旧串）、
+ * str_replace_editor→path（仅 create/str_replace/insert 三种 command）。
+ * 宿主的「变更文件」卡（交付物面板 / 对话 tab）统计的就是这三类；
+ * 这里同口径提取，用于工作台轮末的「已编辑 N 个文件」。
+ */
+export function fileEditOf(name: unknown, args: unknown): string | null {
+  if (!args || typeof args !== 'object' || Array.isArray(args)) return null
+  const a = args as Record<string, unknown>
+  const path = (v: unknown): string | null => (typeof v === 'string' && v.trim() ? v : null)
+  switch (name) {
+    case 'write':
+      return typeof a.content === 'string' ? path(a.file_path) : null
+    case 'edit':
+      return typeof a.old_string === 'string' && typeof a.new_string === 'string' ? path(a.file_path) : null
+    case 'str_replace_editor':
+      return a.command === 'create' || a.command === 'str_replace' || a.command === 'insert'
+        ? path(a.path)
+        : null
+    default:
+      return null
+  }
 }
 
 /**
@@ -322,7 +356,9 @@ function noticeFromEvent(ev: any): TurnNotice | null {
 /**
  * 把 SessionEventWindow 快照重建为消息列表：
  * - durable 事件（{ type:'event', event }）：user/assistant/tool-result 进流，
- *   system/message（渲染后的整份系统提示词）与 tool/call（参数 JSON）不进流；
+ *   system/message（渲染后的整份系统提示词）不进流；tool/call 也不进流，
+ *   但其中的**文件编辑**（write/edit/str_replace_editor，见 fileEditOf）折叠成
+ *   kind:'file-edit' 的标记消息留在流里，供 MsgList 按轮统计「已编辑 N 个文件」；
  * - transient 行（assistant/live-chunk 文本增量）按 attemptId 累积成一条 assistant 消息，
  *   settle 时窗口会滤掉 transient 并放入 durable 行 —— 全量重建天然不重复。
  */
@@ -365,7 +401,14 @@ export function messagesFromWindow(snap: any): StreamMsg[] {
       applySplice(queue, ev.data, typeof ev.time === 'number' ? ev.time : undefined)
       continue
     }
-    if (ev.type === 'system/message' || ev.type === 'tool/call') continue
+    // tool/call 不进消息流（参数 JSON 没有展示价值），但**文件编辑**要留下来：
+    // 折叠成一条不渲染的标记消息，供 MsgList 按轮统计「已编辑 N 个文件」。
+    if (ev.type === 'tool/call') {
+      const p = fileEditOf(ev.data?.name, ev.data?.arguments)
+      if (p) out.push({ role: 'tool', content: '', type: 'tool/call', kind: 'file-edit', editPath: p })
+      continue
+    }
+    if (ev.type === 'system/message') continue
     // durable assistant 消息可能同时带 reasoning 与 text 块：
     // 拆成两条（思考在前），呈现上才能分别折叠/展开（见 MsgList）。
     if (ev.type === 'assistant/message') {
@@ -511,7 +554,16 @@ function emitEvent(ch: Channel, x: any): void {
     publish(ch)
     return
   }
-  if (ev.type === 'system/message' || ev.type === 'tool/call') return
+  // 逐事件路径同样要把文件编辑留下来（与 messagesFromWindow 同口径）
+  if (ev.type === 'tool/call') {
+    const p = fileEditOf(ev.data?.name, ev.data?.arguments)
+    if (p) {
+      ch.msgs = ch.msgs.concat({ role: 'tool', content: '', type: 'tool/call', kind: 'file-edit', editPath: p })
+      publish(ch)
+    }
+    return
+  }
+  if (ev.type === 'system/message') return
   // 逐事件订阅路径同样要带上异常结局（与 messagesFromWindow 保持同口径）
   if (ev.type === 'turn/end' || ev.type === 'agent/error') {
     const notice = noticeFromEvent(ev)
@@ -625,6 +677,29 @@ export function readHistoryState(sessionId: string): { hasMore: boolean; loading
   } catch {
     return { hasMore: false, loadingOlder: false }
   }
+}
+
+/**
+ * 读事件窗口里最新一条 `turn/start` 的时间（Unix ms；没有则 null）。
+ *
+ * 原生对话 tab 的运行计时（RunningStatus）用的就是「当前 open turn 的
+ * turn/start.time」——比「最后一条真人消息的时间」更准：自动继续的续轮
+ * 也有自己的 turn/start，计时与原生同拍。调用方拿到 null 时可回退到
+ * 消息流投影里的真人消息时间。
+ */
+export function readTurnStartMs(sessionId: string): number | null {
+  try {
+    const src = channels.get(sessionId)?.binding?.eventSource
+    const snap = typeof src?.getSnapshot === 'function' ? src.getSnapshot() : null
+    const entries: any[] = Array.isArray(snap?.entries) ? snap.entries : []
+    for (let i = entries.length - 1; i >= 0; i--) {
+      const ev = entries[i]?.event
+      if (ev?.type === 'turn/start') return Number(ev.time) || null
+    }
+  } catch {
+    /* 窗口未就绪：回退调用方自己的口径 */
+  }
+  return null
 }
 
 /**

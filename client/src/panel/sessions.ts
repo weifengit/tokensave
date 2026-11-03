@@ -756,6 +756,53 @@ export function getLiveScreen(): Screen {
   return getControlRoomScreen()
 }
 
+/**
+ * 宿主 main 槽当前选中的**全局面板** id（null = 对话页）——读 ui-layout 的共享 panelInfo。
+ *
+ * 背景（读宿主 dsh-client-ui-layout 源码核对）：主区域是 keyed main 槽，
+ * `activePanelId === null` 时渲染 Conversation（对话页，含 [data-conversation-tabs]）；
+ * 非 null（如 'plugins' / 'schedules'）时渲染那个全局面板，**Conversation 整个卸载**，
+ * 对话 tab 条从 DOM 里消失——这就是「在插件 / 便笺页点呼吸灯没反应」的根因：
+ * 本插件的导航只操作 conversation.view 层（写偏好 + 点 tab），够不到顶级页面。
+ */
+export function activeHostPanelId(ctx: any): string | null {
+  try {
+    const info = readService<any>(ctx, 'layout')?.panelInfo
+    const snap = info && typeof info.getSnapshot === 'function' ? info.getSnapshot() : null
+    const id = snap?.activePanelId
+    return id == null ? null : String(id)
+  } catch {
+    return null
+  }
+}
+
+/**
+ * 确保 Conversation 已在屏上：停在「插件 / 便笺」等全局面板时先回对话页。
+ *
+ * ctx.layout.selectPanel(null) 是宿主自己留给「回到 Conversation」的正规入口
+ * （LayoutController.selectPanel 的注释原文："Select a global panel or return
+ * to the Conversation"）。切回后 Conversation 重新挂载需要一拍，随后各家导航
+ * 的延迟激活链（scheduleActivate / scheduleSelectHostView 的 0/60/200/600/1500ms）
+ * 正好覆盖 tab 条重新出现后的点击。幂等：已在对话页时是纯读快照，零副作用。
+ *
+ * @returns 是否真的发生了「全局面板 → 对话页」的切换
+ */
+export function ensureConversationSurface(ctx: any): boolean {
+  if (!ctx) return false
+  const active = activeHostPanelId(ctx)
+  if (active === null) return false
+  const layout = readService<any>(ctx, 'layout')
+  if (!layout || typeof layout.selectPanel !== 'function') return false
+  try {
+    layout.selectPanel(null)
+    console.debug(`[tokensave] 从全局面板「${active}」回到对话页`)
+    return true
+  } catch (e) {
+    console.warn('[tokensave] 回到对话页失败（selectPanel(null)）', e)
+    return false
+  }
+}
+
 // —— 导航代次：让「最后一次点击」胜出，杜绝尾随定时器把界面拨回去 ————
 //
 // 切 tab 靠一串延迟点击（0/120/400/900ms…）。若不作废，上一个动作的尾随点击会在新动作
@@ -957,6 +1004,9 @@ export function switchToView(
   epoch: number = beginNavigation(),
 ): boolean {
   const sid = getCurrentSessionId()
+  // 用户可能停在「插件 / 便笺」等全局面板（此时对话 tab 不在 DOM，点 tab 无从谈起）：
+  // 先把宿主拉回对话页，再走视图切换（未在全局面板时这步是零成本的快照读）。
+  ensureConversationSurface(getClientContext())
   if (sid) {
     primeViewPreference(sid, viewId)
     scheduleActivate(sid, viewId, label, epoch)
@@ -980,6 +1030,8 @@ export function enterProjectWorkbench(
   intent?: WorkbenchIntent,
 ): boolean {
   if (!projectId) return false
+  // 从呼吸灯悬浮面板等任意屏直达工作台时，宿主可能正停在全局面板：先回对话页。
+  ensureConversationSurface(getClientContext())
   // 进入工作台 = 使用过这个项目 → 刷新「上次更新时间」
   touchProject(projectId)
   const current = getCurrentSessionId()
@@ -1052,12 +1104,22 @@ export function stayInProjectAfterArchive(
  *   - 本插件视图被激活（空白会话也要能渲染）；
  *   - 点宿主 tab 真正切过去（宿主只渲染 store.view 指向的视图）。
  * @returns 是否成功发起导航
+ * @param target - 可选：明确的目标屏。从「插件 / 便笺」等全局面板点呼吸灯时由调用方传入
+ *   「上次所在的屏」——那种场景下谈不上「当前在哪个屏」，交替方向由用户意图决定。
  */
-export function openControlRoom(): boolean {
+export function openControlRoom(target?: 'list' | 'desk'): boolean {
   const ctx: any = getClientContext()
   if (!ctx) return false
+  // 用户可能停在「插件 / 便笺」等全局面板：先回对话页，切换语义才能落地（见 ensureConversationSurface）。
+  ensureConversationSurface(ctx)
   const epoch = beginNavigation()
-  const toDesk = getLiveScreen() === 'list'
+  // 意图屏：调用方明确指定（如「从全局面板回上次的屏」）时优先；
+  // 缺省保持切换语义：当前在列表 → 去工作台，反之亦然。
+  // 注意这里 getLiveScreen() 处于 navSettle 窗口内（beginNavigation 刚设置），
+  // 在全局面板下 DOM 里没有 tab 条，读到的正是 controlRoomScreen 缓存 ——
+  // 那是「上次所在屏」，恰是切换语义所需的当前屏。
+  const desired: 'list' | 'desk' = target ?? (getLiveScreen() === 'list' ? 'desk' : 'list')
+  const toDesk = desired === 'desk'
   const current = getCurrentSessionId()
   if (current) {
     if (toDesk) {
@@ -1371,6 +1433,8 @@ export function ensureProjectForWorkspace(ctx: any, workspaceId: string): Projec
 export function openProjectCenterList(): boolean {
   const ctx: any = getClientContext()
   if (!ctx) return false
+  // 「新会话」按钮在侧边栏常驻（任何屏都可点）：先回对话页再切项目中心。
+  ensureConversationSurface(ctx)
   const current = getCurrentSessionId()
   if (current) {
     const epoch = beginNavigation()

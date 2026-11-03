@@ -254,6 +254,8 @@ interface Turn {
   injects: StreamMsg[]
   /** 本轮异常结束的提示（turn/end 的 reason / agent/error）；正常结束为 null */
   notice: StreamMsg | null
+  /** 本轮被编辑的文件（write/edit/str_replace_editor，按出现顺序去重） */
+  edits: string[]
 }
 
 /**
@@ -268,6 +270,7 @@ function splitTurn(turn: StreamMsg[]): Turn {
   const rest: StreamMsg[] = []
   const queued: StreamMsg[] = []
   let notice: StreamMsg | null = null
+  const edits: string[] = []
   for (const m of turn) {
     // 队列消息（忙时发的、还没成为 durable user/message）单独收口：
     // 它不开轮、不算「该轮的提问」，只挂在流末尾带「排队中」标（用户反馈：
@@ -276,6 +279,11 @@ function splitTurn(turn: StreamMsg[]): Turn {
     // 异常结局单独收口：它既不是用户消息，也不该被埋进「过程」折叠里——
     // 用户必须一眼看到「这轮挂了」（以前 turn/end 被丢弃，工作台看不出来）。
     if (m.notice) { notice = m; continue }
+    // 文件编辑标记不进过程折叠，也不进任何气泡：只按轮收集，轮末一行报告
+    if (m.kind === 'file-edit' && m.editPath) {
+      if (!edits.includes(m.editPath)) edits.push(m.editPath)
+      continue
+    }
     // 注入消息 role 也是 'user'，必须先于 role 判断拦下：
     // 既不能当用户气泡，也不能被算作「该轮的提问」。
     if (m.injected) injects.push(m)
@@ -292,7 +300,7 @@ function splitTurn(turn: StreamMsg[]): Turn {
     }
   }
   const proc = rest.filter((m) => m !== answer)
-  return { users, injects, proc, answer, notice, queued }
+  return { users, injects, proc, answer, notice, queued, edits }
 }
 
 interface MsgListProps {
@@ -359,6 +367,50 @@ function TurnNoticeRow({ notice }: { notice: NonNullable<StreamMsg['notice']> })
       {open
         ? <div className="ts-turn-notice-body"><RichText text={notice.message} /></div>
         : <div className="ts-turn-notice-preview">{oneLine(notice.message)}</div>}
+    </div>
+  )
+}
+
+/** 清单里只显示文件名（完整路径在悬浮提示里）：常见多级相对路径，整行太长。 */
+function fileNameOf(p: string): string {
+  const i = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'))
+  return i >= 0 ? p.slice(i + 1) : p
+}
+
+/**
+ * 轮末的「已编辑 N 个文件」报告行（对齐原生对话 tab 的变更文件卡）。
+ *
+ * 数据来自 tool/call 投影（session-subscribe 的 fileEditOf，与宿主
+ * dsh-workspace-changes 的 mutationPath 同口径：只认 write / edit /
+ * str_replace_editor 三类真正落盘的编辑），按出现顺序去重。
+ * 默认收起成一行；点开看文件清单（工作台是只读流，不做 diff 视图）。
+ */
+function EditsRow({ files }: { files: string[] }) {
+  const [open, setOpen] = useState(false)
+  if (files.length === 0) return null
+  return (
+    <div className="ts-turn-edits">
+      <button
+        type="button"
+        className="ts-turn-edits-head"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        title={[...files].join('\n')}
+      >
+        <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true" focusable="false">
+          <path d="M7.4 1.2H3.4c-.5 0-.9.4-.9.9v7.8c0 .5.4.9.9.9h5.2c.5 0 .9-.4.9-.9V3.3L7.4 1.2z" fill="none" stroke="currentColor" strokeWidth="1.1" strokeLinejoin="round" />
+          <path d="M7.3 1.4v2.2h2.2" fill="none" stroke="currentColor" strokeWidth="1.1" strokeLinejoin="round" />
+        </svg>
+        <span>已编辑 {files.length} 个文件</span>
+        <span className="ts-turn-edits-toggle" aria-hidden="true">{open ? '▴' : '▾'}</span>
+      </button>
+      {open && (
+        <div className="ts-turn-edits-list">
+          {files.map((f) => (
+            <div className="ts-turn-edits-file" key={f} title={f}>{fileNameOf(f)}</div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
@@ -513,6 +565,8 @@ export function MsgList({
         proc: view === 'user' ? [] : t.proc,
         answer: view === 'user' ? null : t.answer,
         notice: view === 'user' ? null : t.notice,
+        // 「已编辑 N 个文件」是本轮的事实报告，不随阅读视图滤除（跟 answer 一样只在轮可见时出现）
+        edits: t.edits,
       }))
       .filter((t) => t.users.length > 0 || t.injects.length > 0
         || t.proc.length > 0 || !!t.answer || !!t.notice || t.queued.length > 0),
@@ -932,6 +986,7 @@ export function MsgList({
               <MsgTime time={t.answer.time} />
             </div>
           )}
+          {t.edits.length > 0 && <EditsRow files={t.edits} />}
           {t.notice && <TurnNoticeRow notice={t.notice.notice!} />}
           {t.queued.map((m, i) => (
             <div className="ts-msg-block ts-msg-block-user" key={`q${i}`} data-turn-queued="">

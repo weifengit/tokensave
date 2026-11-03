@@ -14,6 +14,7 @@ import type { StreamMsg } from '../session-subscribe'
 import { MsgList } from './MsgList'
 import { CHAT_VIEWS, CHAT_VIEW_STAT, CHAT_VIEW_UNIT, useChatView } from './chat-view'
 
+import { ComposerRunBadge } from './composer-status'
 /**
  * 正文阅读宽度 —— **复用宿主官方那套**：
  *   宿主对话区自带一对宽度把手（`[data-width-handle]`），把偏好存在
@@ -180,6 +181,8 @@ export function MainChat({ sessionId, actions }: { sessionId: string; actions?: 
     <div className="ts-mainchat">
       {/* 正文宽度把手：复用宿主官方的偏好键与数字 */}
       <WidthHandles />
+      {/* 运行计时提醒：输入条左上角「深度求索中，用时…」（对齐原生对话 tab） */}
+      <ComposerRunBadge sessionId={sessionId} messages={messages} />
       {/* 标题条：标题 + 中间信息（消息条数）居中，三键固定右上角 */}
       <div className="ts-mainchat-head">
         <span className="ts-head-title">DSH 主对话</span>

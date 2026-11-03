@@ -423,6 +423,26 @@ body.ts-desk-nochat [data-conversation-region="composer"] {
 .ts-turn-notice-code { flex:none; font-size:calc(var(--ts-fs, 12.5px) * 0.88); padding:1px 6px; border-radius:99px; background:rgba(127,127,127,.22); border:1px solid rgba(127,127,127,.4); opacity:.9; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
 /* 展开按钮推到最右，与标题条三段式一致 */
 .ts-turn-notice-head .ts-msg-toggle { margin-left:auto; }
+
+/* —— 轮末「已编辑 N 个文件」报告（对齐原生对话 tab 的变更文件卡）——
+   数据是 tool/call 的 write/edit/str_replace_editor（与宿主 workspace-changes
+   的 mutationPath 同口径）。默认一行胶囊，点开看文件清单；不用红黄色系 ——
+   它是正常产物报告，不是警示。 */
+.ts-turn-edits { align-self:stretch; display:flex; flex-direction:column; gap:3px; }
+.ts-turn-edits-head { display:inline-flex; align-items:center; gap:6px; align-self:flex-start; border:none; cursor:pointer; border-radius:99px; padding:2px 10px; font-size:calc(var(--ts-fs, 12.5px) * 0.9); line-height:1.5; color:var(--dsw-alias-label-secondary,inherit); background:rgba(127,127,127,.14); border:1px solid rgba(127,127,127,.28); }
+.ts-turn-edits-head:hover { background:rgba(127,127,127,.22); color:var(--dsw-alias-label-primary,inherit); }
+.ts-turn-edits-head svg { flex:none; opacity:.75; }
+.ts-turn-edits-toggle { flex:none; opacity:.6; font-size:.85em; }
+.ts-turn-edits-list { display:flex; flex-direction:column; gap:1px; border-left:2px solid rgba(127,127,127,.25); margin-left:10px; padding:2px 0 2px 10px; }
+.ts-turn-edits-file { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:calc(var(--ts-fs, 12.5px) * 0.86); opacity:.78; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+
+/* —— 运行计时提醒（停靠输入条左上角，对齐原生对话 tab 的「深度求索中，用时…」）——
+   absolute 挂在主对话面板容器内：bottom 用 --ts-composer-h（composer-dock 写的输入条实际高度，
+   停靠在容器底），left 与输入条内缩对齐；面板隐藏时随容器 visibility/display 一起消失。 */
+.ts-run-badge { position:absolute; z-index:5; left:14px; bottom:calc(var(--ts-composer-h, 0px) + 8px); display:inline-flex; align-items:center; gap:6px; max-width:calc(100% - 28px); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; padding:3px 10px; border-radius:99px; background:rgba(127,127,127,.16); color:var(--dsw-alias-label-secondary,inherit); font-size:calc(var(--ts-fs, 12.5px) * 0.9); line-height:1.5; }
+.ts-run-dot { flex:none; width:7px; height:7px; border-radius:50%; background:var(--dsw-alias-state-business-primary,#4b8dff); animation:ts-run-blink 1.1s ease-in-out infinite alternate; }
+@keyframes ts-run-blink { from { opacity:.35; } to { opacity:1; } }
+@media (prefers-reduced-motion: reduce) { .ts-run-dot { animation:none; opacity:.9; } }
 .ts-turn-notice-preview { font-size:calc(var(--ts-fs, 12.5px) * 0.96); opacity:.85; word-break:break-word; }
 .ts-turn-notice-body { font-size:var(--ts-fs, 12.5px); }
 
