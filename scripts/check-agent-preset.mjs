@@ -126,6 +126,15 @@ try {
   const chip = readFileSync(join(root, 'client/src/panel/agent-preset-chip.tsx'), 'utf8')
   check('清单为空时明确显示「模式不可用」（不让入口凭空消失）',
     chip.includes('模式不可用') && chip.includes('is-empty'))
+  // 用户反馈「顶部一直显示模式下载中」：宿主服务缺失时 remote 可能**永不 resolve**，
+  // rows 就永远停在 null。必须有超时兜底把界面推进到明确的「不可用」态。
+  check('读清单有超时兜底（服务挂死时不会一直转圈）',
+    chip.includes('ROSTER_TIMEOUT_MS') &&
+    /setTimeout\(\(\) => finish\(\[\]\), ROSTER_TIMEOUT_MS\)/.test(chip))
+  check('读取失败也落地（不让状态停在加载中）',
+    chip.includes('.catch(() => finish([]))'))
+  check('超时/失败/成功三路不会重复落地（settled 闸门）',
+    chip.includes('if (!alive || settled) return') && chip.includes('settled = true'))
   check('下拉 portal 到 body（面板可裁，普通 absolute 会被裁掉）',
     chip.includes('createPortal') && chip.includes('document.body'))
   check('非空白会话只读（disabled + 解释性 title）',

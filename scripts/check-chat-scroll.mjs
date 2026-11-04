@@ -48,6 +48,29 @@ check('贴底：到底后立刻重写备忘（bottom=true）',
 check('记账真值取 pinnedRef（不重算几何）',
   /const bottom = pinnedRef\.current/.test(src))
 
+// —— 问题 C：「回到最新」的出现条件与寿命（用户反馈两件事）——
+// ① 内容不足一屏（可滚距离≈0）时不该出现：对话只有几行、下面一大片空白，
+//    用户根本没有「回到最新」的诉求。判据必须是可滚距离，不能是「距底距离」
+//    —— 后者在内容不足一屏时会因 padding-bottom 恒为一个大值而让按钮常驻。
+check('「回到最新」按可滚距离判定（内容不足一屏不显示）',
+  /scrollHeight - el\.clientHeight <= NEAR_BOTTOM/.test(src))
+// ② 显示 5 秒后自动隐藏（它是提醒，不是常驻控件；旧实现「不在底部就一直显示」）
+check('「回到最新」5 秒后自动隐藏',
+  /JUMP_SHOW_MS = 5_000/.test(src) &&
+  /setTimeout\(\(\) => \{[\s\S]{0,120}?setJumpVisible\(false\)[\s\S]{0,60}?\}, JUMP_SHOW_MS\)/.test(src))
+// ③ 回到底部立即收起，不等计时器
+check('回到底部立即收起（不等 5s）',
+  /pinnedRef\.current = true[\s\S]{0,80}?hideJump\(\)/.test(src) &&
+  /forceBottom\(\)[\s\S]{0,120}?hideJump\(\)/.test(src))
+// ④ 每种"离开底部"的路径都提示，不只方向确认为向上那一种
+check('离开底部的两条路径都会提示（上滚 + 拖滚动条/键盘翻页）',
+  /suspendFollow\(\)[\s\S]{0,80}?revealJump\(\)/.test(src))
+// ⑤ 可见性用独立的 jumpVisible，不再直接绑 pinned（pinned 必须立刻为假，
+//    而按钮还该满足「内容可滚 + 只活 5 秒」两个额外条件）
+check('按钮可见性用 jumpVisible 而非 pinned',
+  /data-visible=\{jumpVisible \? '' : undefined\}/.test(src) &&
+  !/data-visible=\{pinned \? undefined : ''\}/.test(src))
+
 // —— 问题 B：回翻锚定必须用「活节点」+ 逐帧平移（一次性像素锚会在第一批就被消费）——
 check('锚点是活节点 + 稳定 key（key/node/nodeTop/startedAt/until）',
   /anchorRef = useRef<\{ key: string; node: Element; nodeTop: number; startedAt: number; until: number \} \| null>\(null\)/.test(src))
