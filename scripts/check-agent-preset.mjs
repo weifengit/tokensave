@@ -124,8 +124,12 @@ try {
     main.includes('!m.injected && !m.queued'))
 
   const chip = readFileSync(join(root, 'client/src/panel/agent-preset-chip.tsx'), 'utf8')
-  check('清单为空时明确显示「模式不可用」（不让入口凭空消失）',
-    chip.includes('模式不可用') && chip.includes('is-empty'))
+  // 用户反馈：那个「模式不可用」灰胶囊在标题栏里是第三列，把中间段
+  // （msg / 全部 / 我的 / 回复）挤偏离中线；而且该状态是常态，长期挂个坏消息没价值。
+  check('清单为空时完全不渲染（不再显示「模式不可用」胶囊）',
+    chip.includes('if (rows !== null && rows.length === 0) return null')
+    // 只断 JSX 输出：注释里解释历史原因提到这个词是允许的
+    && !chip.includes('>模式不可用<') && !chip.includes('is-empty'))
   // 用户反馈「顶部一直显示模式下载中」：宿主服务缺失时 remote 可能**永不 resolve**，
   // rows 就永远停在 null。必须有超时兜底把界面推进到明确的「不可用」态。
   check('读清单有超时兜底（服务挂死时不会一直转圈）',
@@ -143,8 +147,19 @@ try {
     chip.includes('setCurrent(before)'))
 
   const styles = readFileSync(join(root, 'client/src/panel/styles.ts'), 'utf8')
+  const dock = readFileSync(join(root, 'client/src/panel/composer-dock.ts'), 'utf8')
   check('chip / 下拉 / 选项都有样式定义',
     ['.ts-preset-chip', '.ts-preset-menu', '.ts-preset-item'].every((sel) => styles.includes(`${sel} `)))
+  // 中间段必须在**整条标题条**的中线上（1fr auto 1fr）。chip 一旦作为网格项参与
+  // 布局，右列就比左列宽、中线整体左偏 —— 那正是用户反馈的"被挤到右边"。
+  check('chip 绝对定位、脱离标题条网格（保证中间段仍在正中）',
+    /\.ts-mainchat-head > \.ts-head-preset \{ position:absolute/.test(styles))
+  check('chip 右缘对齐输入框右边（消费 --ts-composer-right）',
+    /right:var\(--ts-composer-right, 8px\)/.test(styles) &&
+    dock.includes("setProperty('--ts-composer-right'") &&
+    dock.includes("removeProperty('--ts-composer-right')"))
+  check('窄面板下不显示 chip（绝对定位会盖住中间段）',
+    /\.ts-mainchat-head > \.ts-head-preset \{ display:none/.test(styles))
   const menuZ = Number((styles.match(/\.ts-preset-menu \{[^}]*z-index:(\d+)/) || [])[1])
   check('下拉 z-index 压过停靠输入条(35/42)、低于宿主弹窗(1000)', menuZ > 42 && menuZ < 1000, `z-index=${menuZ}`)
 

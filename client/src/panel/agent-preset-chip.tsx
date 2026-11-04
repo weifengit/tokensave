@@ -155,25 +155,16 @@ export function AgentPresetChip({ sessionId, editable }: { sessionId: string, ed
   const label = chosen ? presetLabel(chosen) : (rows === null ? '模式加载中…' : '未配置模式')
 
   /**
-   * 清单为空：明确说"不可用"，而不是让入口凭空消失或一直转圈。
+   * 不可用就**完全不渲染**。
    *
-   * 两种情况都会走到这里：宿主预设注册链没跑起来（真读到了空清单），
-   * 或者读取超时（服务缺失时 remote 可能永不 resolve）。对用户而言结论相同：
-   * 此刻没有可选模式；细节在控制台的启动诊断日志里。
+   * 两种情况都会走到这里：宿主预设注册链没跑起来（真读到空清单），或读取超时
+   * （服务缺失时 remote 可能永不 resolve）。早先这里渲染了一个「模式不可用」
+   * 的灰胶囊，结果它作为标题栏的第三列把中间段（msg/全部/我的/回复）挤偏离中线
+   * （用户反馈），而且这个状态在实测里是**常态**——一个长期存在的"坏消息"标签
+   * 每天挂在标题栏上没有价值。改为不显示：没有可选模式，就不存在这个入口。
+   * 细节留在控制台的启动诊断日志里（[tokensave] 模式清单…）。
    */
-  if (rows !== null && rows.length === 0) {
-    return (
-      <span
-        className="ts-preset-chip is-empty"
-        title={'模式清单为空：宿主侧预设注册链未加载（或读取超时）。\n'
-          + '此时原生对话 tab 与工作台的模式入口都不会有可选项。\n'
-          + '排查：控制台的 [tokensave] 模式清单 诊断日志，以及 profile 的 preset patch。'}
-      >
-        {presetIcon()}
-        <span className="ts-preset-label">模式不可用</span>
-      </span>
-    )
-  }
+  if (rows !== null && rows.length === 0) return null
 
   return (
     <>

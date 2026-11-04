@@ -431,10 +431,20 @@ export function useDockNativeComposer(
           if (root.style.getPropertyValue('--ts-composer-w') !== targetWPx) {
             root.style.setProperty('--ts-composer-w', targetWPx)
           }
+          // 右缘：标题栏里的模式选择器要贴到对齐目标的**右**边（用户要求），
+          // 而不是标题条的右内距。同一个 padding box 原点 → 距 cell 右边界 = 
+          // (cell 宽 − 目标右缘相对 padding box 的偏移)。
+          const cellPadW = cellRect.width - (parseFloat(cs.paddingLeft) || 0)
+            - (parseFloat(cs.paddingRight) || 0)
+          const rightPx = `${Math.round(cellPadW - (tRect.right - padBoxLeft))}px`
+          if (root.style.getPropertyValue('--ts-composer-right') !== rightPx) {
+            root.style.setProperty('--ts-composer-right', rightPx)
+          }
         } else {
           // 卡与面板都不在（hero 态/座位重建中）：回落到 CSS 默认的 14px 口径
           root.style.removeProperty('--ts-composer-left')
           root.style.removeProperty('--ts-composer-w')
+          root.style.removeProperty('--ts-composer-right')
         }
       } catch {
         /* 视图切换竞态：下一次调度再试 */
@@ -463,6 +473,7 @@ export function useDockNativeComposer(
       document.documentElement.style.removeProperty('--ts-composer-h')
       document.documentElement.style.removeProperty('--ts-composer-left')
       document.documentElement.style.removeProperty('--ts-composer-w')
+      document.documentElement.style.removeProperty('--ts-composer-right')
       seedCell.style.removeProperty('--ts-chat-content-w')
       // 面板若被重挂过，写宽度变量的是活节点（observed），不只 seedCell——两边都清
       if (observed && observed !== seedCell) observed.style.removeProperty('--ts-chat-content-w')

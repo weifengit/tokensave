@@ -487,7 +487,6 @@ body.ts-desk-nochat [data-conversation-region="composer"] {
 .ts-preset-chip.is-open { background:rgba(127,127,127,.22); color:var(--dsw-alias-label-primary,inherit); }
 /* 只读态（会话已跑过轮次，宿主不允许再换）：不装作能点，但仍显示"它在用什么" */
 .ts-preset-chip.is-readonly { cursor:default; opacity:.78; }
-.ts-preset-chip.is-empty { cursor:default; opacity:.7; border-style:dashed; }
 .ts-preset-chip svg { flex:none; opacity:.8; }
 .ts-preset-label { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .ts-preset-caret { flex:none; opacity:.6; font-size:.9em; }
@@ -999,6 +998,27 @@ body.ts-vsplit-dragging .ts-card { transition:none !important; animation:none !i
 .ts-mainchat-head > .ts-head-title { justify-self:start; }
 .ts-mainchat-head > .ts-head-mid { justify-self:center; margin:0; }
 .ts-mainchat-head > .ts-card-actions { justify-self:end; margin-left:0; order:0; }
+/*
+ * 模式选择器：**绝对定位**贴标题条右缘，不参与上面那个 1fr auto 1fr 网格。
+ *
+ * 为什么不能让它当一个网格项：那个网格靠「左右两列等宽(1fr)」把中间段
+ * （msg / 全部 / 我的 / 回复）钉在整条标题条的中线上。一旦 chip 作为第三列
+ * 参与布局，右列就比左列宽，中线整体左偏——用户看到的就是"中间那些内容被
+ * 挤到右边"。绝对定位让它脱离网格，中线回到正中；它在可视上仍占右侧，
+ * 与标题条右内距对齐（8px，与 .ts-mainchat-head 的 padding 同值）。
+ * 右缘再减 padding，才真正对上标题条内容的右边界（而不是边框外沿）。
+ */
+.ts-mainchat-head { position:relative; }
+/* 右缘对齐到**输入框**的右边（--ts-composer-right 由 composer-dock 每轮实测写入，
+   与徽标的左缘/宽度同一套坐标系）。变量缺失（dock 还没跑过）时回落到标题条右内距 8px。 */
+.ts-mainchat-head > .ts-head-preset { position:absolute; right:var(--ts-composer-right, 8px); top:50%; transform:translateY(-50%); z-index:1; }
+/* chip 是绝对定位的，窄面板下会盖到中间段上。
+   不能用给中间段加右侧 padding 的办法避让 —— 那会把中间段自己的内容往左挤，
+   反而**破坏**它在中线上的居中（正是我们要保住的东西）。所以改为在窄面板下
+   干脆不显示 chip（面板太窄时模式选择也不是当务之急，宽度把手拖宽即可回来）。 */
+@media (max-width: 720px) {
+  .ts-mainchat-head > .ts-head-preset { display:none; }
+}
 /* 中间段 = 计数 + 视图开关（同格内两件）。窄卡片下允许横向滚动而不是把三键挤出去：
    网格给它的上限就是 auto 列，overflow-x:auto 让 chip 可滑，不参与换行。 */
 .ts-mainchat-mid { font-size:calc(var(--ts-fs, 12.5px) * 0.84); font-weight:400; opacity:.6; display:inline-flex; align-items:center; gap:7px; max-width:100%; overflow-x:auto; overflow-y:hidden; text-overflow:clip; white-space:nowrap; scrollbar-width:none; }

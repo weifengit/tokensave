@@ -199,7 +199,11 @@ export function MainChat({ sessionId, actions }: { sessionId: string; actions?: 
         {/* 模式选择器：宿主只在新会话 Hero 与它自己的会话标题行渲染这个入口，
             而工作台替换了宿主会话视图 → 那两处都不出现，这里自带一个。
             只有空白会话（还没跑过轮次）可切换，这是宿主的硬约束。 */}
-        <AgentPresetChip sessionId={sessionId} editable={blank} />
+        {/* 绝对定位容器：让 chip 脱离标题条的 1fr auto 1fr 网格（否则右列变宽、
+            中间段整体左偏）。右缘对齐到输入框右边，见 styles.ts 的 .ts-head-preset。 */}
+        <span className="ts-head-preset">
+          <AgentPresetChip sessionId={sessionId} editable={blank} />
+        </span>
         {/* 中间段 = 统计 + 视图开关：它两回答的是同一个问题——现在看的是哪一档、有多少 */}
         <span
           className="ts-head-mid ts-mainchat-mid"
