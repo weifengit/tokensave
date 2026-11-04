@@ -103,6 +103,16 @@ try {
     dock.includes("querySelector<HTMLElement>('[data-composer-card]')") &&
     dock.includes("setProperty('--ts-composer-left'") &&
     dock.includes("setProperty('--ts-composer-w'"))
+  // 用户反馈：输入框上方出现「任务 / 目标」时，那两个 dock 面板比输入卡窄且居中，
+  // 徽标仍贴卡左缘就显得偏左。对齐目标必须优先取 dock 面板，没有才取卡。
+  check('对齐目标优先取 dock 面板（任务清单 / 目标条），没有才回落到输入卡',
+    dock.includes('[data-testid="todo-panel"], [data-goal-bar]') &&
+    dock.includes('const alignTarget = dockTop ?? card'))
+  check('两个 dock 面板同时在时取最靠上的（todo 在上、goal 在下）',
+    dock.includes('if (y < dockTopY) { dockTopY = y; dockTop = p }'))
+  check('盯 seat 自身子树（面板增删不改 cell 尺寸，否则徽标晚一拍才对齐）',
+    dock.includes('seatSubtreeMo.observe(seat, { childList: true, subtree: true })') &&
+    dock.includes('seatSubtreeMo?.disconnect()'))
   check('卸载时清掉左缘/宽度变量（不把旧坐标留给下一次）',
     dock.includes("removeProperty('--ts-composer-left')") &&
     dock.includes("removeProperty('--ts-composer-w')"))

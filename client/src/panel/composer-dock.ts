@@ -288,10 +288,32 @@ export function useDockNativeComposer(
       observed = cell
     }
 
+    /**
+     * 座位**自身子树**的变化：输入条上方的 dock 面板增删。
+     *
+     * 为什么单独一个 observer：徽标的对齐目标会在 `[data-testid="todo-panel"]`
+     * / `[data-goal-bar]` 与输入卡之间切换（模型写 todo、建/清目标时这些面板
+     * 凭空增删），而这**不改变 cell 尺寸**、也不改祖先行内 style —— 只靠
+     * ResizeObserver + 300ms 轮询的话，面板出现后徽标会晚一拍才对齐（能看出
+     * "跳一下"）。与下面盯父节点的 observer 分开，是因为两者的 disconnect
+     * 语义不同（这里按座位身份重挂，那里按父节点身份重挂），共用一个实例会
+     * 互相把对方的观察断掉。
+     */
+    let seatSubtreeMo: MutationObserver | null = null
+    let seatSubtreeOf: HTMLElement | null = null
+    const watchSeatSubtree = () => {
+      if (!seat || seatSubtreeOf === seat) return
+      seatSubtreeMo?.disconnect()
+      seatSubtreeOf = seat
+      seatSubtreeMo = new MutationObserver(schedule)
+      seatSubtreeMo.observe(seat, { childList: true, subtree: true })
+    }
+
     /** 座位被宿主整块换掉（切换会话重建 composer 子树）时立刻重算，不等 300ms 轮询。 */
     let seatMo: MutationObserver | null = null
     let seatParent: HTMLElement | null = null
     const watchSeat = () => {
+      watchSeatSubtree()
       const parent = seat?.parentElement ?? null
       if (parent === seatParent) return
       seatMo?.disconnect()
@@ -376,20 +398,41 @@ export function useDockNativeComposer(
         // 坐标系用 cell 自己的 padding box（徽标的包含块就是 cell，不是 r ——
         // r 可能退化到可见祖先，拿它算会把偏移量算到错误的原点上）。
         const card = seat.querySelector<HTMLElement>('[data-composer-card]')
-        if (card) {
-          const cardRect = card.getBoundingClientRect()
-          const cellRect = cell.getBoundingClientRect()
-          const padBoxLeft = cellRect.left + (parseFloat(cs.borderLeftWidth) || 0)
-          const leftPx = `${Math.round(cardRect.left - padBoxLeft)}px`
+        const cellRect = cell.getBoundingClientRect()
+        const padBoxLeft = cellRect.left + (parseFloat(cs.borderLeftWidth) || 0)
+        // 对齐目标：优先用输入条上方那些 **dock 面板**（任务清单 / 目标），
+        // 没有才用输入卡自己。
+        //
+        // 为什么：dock 项（conversation.input.dock 里的 todo-panel、goal-bar）
+        // 宽度是 `100% - side-clearance*2 - dock-inset*4`，输入卡是 `100% - clearance*2`，
+        // 两者都 `margin:0 auto` —— 所以 dock 面板比卡窄、并且居中，左右各缩进一段。
+        // 徽标若始终贴卡的左缘，在这些面板出现时就会显得比它们更靠左（用户反馈）。
+        // 这里每轮实测一次：有 dock 面板就贴它的左缘，没有就贴卡的左缘，
+        // 面板出现/消失/换宽度都会经既有的 ResizeObserver + 300ms 轮询自动跟上。
+        // 两个面板可能同时在（todo order=0 在上、goal order=10 在下）：取**最靠上的**
+        // 那个才对——徽标是"输入区上沿"的一条，跟最上面那行左对齐看起来才是同一条边。
+        const dockPanels = Array.from(
+          seat.querySelectorAll<HTMLElement>('[data-testid="todo-panel"], [data-goal-bar]'),
+        )
+        let dockTop: HTMLElement | null = null
+        let dockTopY = Number.POSITIVE_INFINITY
+        for (const p of dockPanels) {
+          const y = p.getBoundingClientRect().top
+          if (y < dockTopY) { dockTopY = y; dockTop = p }
+        }
+        const alignTarget = dockTop ?? card
+        if (alignTarget) {
+          const tRect = alignTarget.getBoundingClientRect()
+          const leftPx = `${Math.round(tRect.left - padBoxLeft)}px`
           if (root.style.getPropertyValue('--ts-composer-left') !== leftPx) {
             root.style.setProperty('--ts-composer-left', leftPx)
           }
-          const cardWPx = `${Math.round(cardRect.width)}px`
-          if (root.style.getPropertyValue('--ts-composer-w') !== cardWPx) {
-            root.style.setProperty('--ts-composer-w', cardWPx)
+          const targetWPx = `${Math.round(tRect.width)}px`
+          if (root.style.getPropertyValue('--ts-composer-w') !== targetWPx) {
+            root.style.setProperty('--ts-composer-w', targetWPx)
           }
         } else {
-          // 卡不在（hero 态/座位重建中）：回落到 CSS 默认的 14px 口径
+          // 卡与面板都不在（hero 态/座位重建中）：回落到 CSS 默认的 14px 口径
           root.style.removeProperty('--ts-composer-left')
           root.style.removeProperty('--ts-composer-w')
         }
@@ -409,6 +452,8 @@ export function useDockNativeComposer(
       ro?.disconnect()
       mo?.disconnect()
       seatMo?.disconnect()
+      seatSubtreeMo?.disconnect()
+      seatSubtreeOf = null
       window.removeEventListener('resize', schedule)
       window.removeEventListener('scroll', schedule, true)
       window.clearInterval(timer)

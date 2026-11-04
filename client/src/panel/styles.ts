@@ -504,8 +504,12 @@ body.ts-desk-nochat [data-conversation-region="composer"] {
 /* —— 运行计时提醒（停靠输入条左上角，对齐原生对话 tab 的「深度求索中，用时…」）——
    absolute 挂在主对话面板容器内：bottom 用 --ts-composer-h（composer-dock 写的输入条实际高度，
    停靠在容器底），left/max-width 用 --ts-composer-left / --ts-composer-w（composer-dock 每轮
-   实测可见输入卡的左缘与宽度写入：卡在座位里居中且被 --dsh-composer-card-max-width 收窄，
-   写死格子左缘 +14px 会偏到卡左侧外，且卡宽随宽度把手拖动变化，变量跟着重算）。
+   实测**对齐目标**的左缘与宽度写入，目标按优先级取：
+     ① 输入卡上方的 dock 面板（任务清单 [data-testid=todo-panel] / 目标条 [data-goal-bar]，
+        两者都在则取最靠上的）——它们比卡窄且居中，徽标贴卡的左缘会显得比它们更靠左；
+     ② 没有 dock 面板时才贴输入卡自己。
+   卡与面板都居中（margin:0 auto）且被 --dsh-composer-card-max-width 收窄，所以必须实测，
+   写死格子左缘 +14px 会偏到它们左侧外；宽度把手拖动/面板增删都会经 apply 重算而跟随）。
    面板隐藏时随容器 visibility/display 一起消失。 */
 .ts-run-badge { position:absolute; z-index:5; left:var(--ts-composer-left, 14px); bottom:calc(var(--ts-composer-h, 0px) + 8px); display:inline-flex; align-items:center; gap:6px; max-width:var(--ts-composer-w, calc(100% - 28px)); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; padding:3px 10px; border-radius:99px; background:rgba(127,127,127,.16); color:var(--dsw-alias-label-secondary,inherit); font-size:calc(var(--ts-fs, 12.5px) * 0.9); line-height:1.5; }
 .ts-run-dot { flex:none; width:7px; height:7px; border-radius:50%; background:var(--dsw-alias-state-business-primary,#4b8dff); animation:ts-run-blink 1.1s ease-in-out infinite alternate; }
