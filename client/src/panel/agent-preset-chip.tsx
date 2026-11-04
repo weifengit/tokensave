@@ -25,6 +25,15 @@ import { placePreview } from './changes-preview-position'
 const MENU_W = 260
 /** 下拉最大高度；超出内部滚动。 */
 const MENU_MAX_H = 320
+/**
+ * 读清单的超时上限。
+ *
+ * 为什么要它：宿主的 remote 命名空间在服务缺失时可能**永不 resolve**，
+ * 界面就会一直停在「模式加载中…」（用户反馈的现象）。1.5s 足够正常读取，
+ * 超时即视为空清单，进入明确的「模式不可用」态——宁可显示"不可用"，
+ * 也不要无限转圈让人以为一直在加载。
+ */
+const ROSTER_TIMEOUT_MS = 1500
 
 interface MenuPos { left: number, top: number, width: number, maxHeight: number }
 
@@ -51,17 +60,37 @@ export function AgentPresetChip({ sessionId, editable }: { sessionId: string, ed
   const [pos, setPos] = useState<MenuPos | null>(null)
   const anchorRef = useRef<HTMLButtonElement>(null)
 
-  // 清单与当前值：挂载读一次；换会话重读（不同会话可能有不同的当前模式）
+  /**
+   * 清单与当前值：挂载读一次；换会话重读。
+   *
+   * 两条硬要求（都是实测踩出来的）：
+   *   ① **超时兜底**。宿主 `agentPresets` 服务缺失时，`list()` 可能一直挂着
+   *      不 resolve（远端命名空间的坑），`rows` 就永远停在 null，界面卡在
+   *      「模式加载中…」——这正是用户反馈的现象。给一个上限，超过就当读完
+   *      （空清单），让界面进入明确的「模式不可用」而不是无限转圈。
+   *   ② **失败也要落地**。`listAgentPresets` 已把异常收敛成 ok:false，但这里
+   *      仍然显式 try/catch，保证任何意外都不会让状态停在加载中。
+   */
   useEffect(() => {
     let alive = true
-    void listAgentPresets().then((roster) => {
-      if (!alive) return
-      setRows(roster.rows)
-      // 当前模式取 isDefault 的那条作初值；宿主服务若提供当前值会在 select 后更新
-      const def = roster.rows.find((r) => r.isDefault) ?? roster.rows[0]
+    let settled = false
+    const finish = (rows: AgentPresetRow[]) => {
+      if (!alive || settled) return
+      settled = true
+      setRows(rows)
+      // 当前模式取 isDefault 的那条作初值（默认模式）
+      const def = rows.find((r) => r.isDefault) ?? rows[0]
       setCurrent((prev) => prev || (def?.id ?? ''))
-    })
-    return () => { alive = false }
+    }
+    const timer = window.setTimeout(() => finish([]), ROSTER_TIMEOUT_MS)
+    void listAgentPresets()
+      .then((roster) => finish(roster.rows))
+      .catch(() => finish([]))
+      .finally(() => window.clearTimeout(timer))
+    return () => {
+      alive = false
+      window.clearTimeout(timer)
+    }
   }, [sessionId])
 
   /** 摆放下拉：复用播报卡的摆位纯函数（同一套"不许出视口"规则）。 */
@@ -125,10 +154,21 @@ export function AgentPresetChip({ sessionId, editable }: { sessionId: string, ed
   const chosen = useMemo(() => rows?.find((r) => r.id === current), [rows, current])
   const label = chosen ? presetLabel(chosen) : (rows === null ? '模式加载中…' : '未配置模式')
 
-  // 清单为空（宿主预设链未加载）：明确说出来，不让入口凭空消失
+  /**
+   * 清单为空：明确说"不可用"，而不是让入口凭空消失或一直转圈。
+   *
+   * 两种情况都会走到这里：宿主预设注册链没跑起来（真读到了空清单），
+   * 或者读取超时（服务缺失时 remote 可能永不 resolve）。对用户而言结论相同：
+   * 此刻没有可选模式；细节在控制台的启动诊断日志里。
+   */
   if (rows !== null && rows.length === 0) {
     return (
-      <span className="ts-preset-chip is-empty" title="宿主侧预设注册链未加载，模式清单为空（详见控制台诊断日志）">
+      <span
+        className="ts-preset-chip is-empty"
+        title={'模式清单为空：宿主侧预设注册链未加载（或读取超时）。\n'
+          + '此时原生对话 tab 与工作台的模式入口都不会有可选项。\n'
+          + '排查：控制台的 [tokensave] 模式清单 诊断日志，以及 profile 的 preset patch。'}
+      >
         {presetIcon()}
         <span className="ts-preset-label">模式不可用</span>
       </span>

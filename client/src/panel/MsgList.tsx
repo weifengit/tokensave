@@ -429,6 +429,8 @@ export function MsgList({
   const restoredAtRef = useRef(0)
   /** 距底部多少像素内仍算“在底部”（给流式追加留余量）。 */
   const NEAR_BOTTOM = 24
+  /** 「回到最新」显示多久后自动隐藏（用户要求 5s：它是提醒，不是常驻控件）。 */
+  const JUMP_SHOW_MS = 5_000
   /**
    * 记住当前滚动位置（卸载前 / 用户滚动时调用）。
    *
@@ -459,6 +461,10 @@ export function MsgList({
   // 所以真正的保命线是「用户一滚动就当场记账」（见 onScroll 里的各处
   // rememberScroll），这里只当最后一道兼容。
   useEffect(() => rememberScroll, [rememberScroll])
+  // 卸载清计时器：组件不在了还去 setJumpVisible 会报警告，也留不住意义
+  useEffect(() => () => {
+    if (jumpTimerRef.current !== null) window.clearTimeout(jumpTimerRef.current)
+  }, [])
 
   /** 待恢复的滚动位置：重挂时内容往往还没到位，先存着，等内容来了再套用。 */
   const pendingRestoreRef = useRef<ScrollMemo | null>(null)
@@ -701,6 +707,58 @@ export function MsgList({
     settleUntilRef.current = 0
   }, [])
 
+  /**
+   * 「回到最新」按钮的可见态（独立于 pinned）。
+   *
+   * 为什么不直接用 pinned：pinned 表达的是「要不要继续跟随新内容」，它必须在
+   * 用户上滚时立刻为假；而按钮还该满足两个额外条件，否则就是个噪音：
+   *
+   *   ① **内容真的超出了视口**。对话只有几行、下面一大片空白时，滚动条压根
+   *      没有可滚距离，用户不存在「想回到最新」的诉求。判据用
+   *      `scrollHeight - clientHeight`（可滚距离）而不是「距底距离」：后者在
+   *      内容不足一屏时会因为 padding-bottom 而恒为一个大值，导致按钮常驻。
+   *   ② **只在刚离开底部的那几秒里出现**（JUMP_SHOW_MS）。旧实现是「只要不在
+   *      底部就一直显示」，用户滚上去读内容时它会一直挂在屏幕上挡视线；
+   *      现在显示 5 秒后自己淡出——它是个提醒，不是常驻控件。再往上翻一次会
+   *      重新计时（见下面的 revealJump），所以不是"用一次就消失"。
+   */
+  const [jumpVisible, setJumpVisible] = useState(false)
+  const jumpTimerRef = useRef<number | null>(null)
+
+  /** 收起「回到最新」并清掉计时器（回到底部时用，立即生效）。 */
+  const hideJump = useCallback(() => {
+    if (jumpTimerRef.current !== null) {
+      window.clearTimeout(jumpTimerRef.current)
+      jumpTimerRef.current = null
+    }
+    setJumpVisible(false)
+  }, [])
+
+  /**
+   * 显示「回到最新」并重新计时 5 秒。
+   *
+   * 每次用户**重新上翻**都会再调一次 → 计时重置，所以反复上翻时它会再出现，
+   * 不是「只提醒一次」。已经可见时不重启计时器（避免一次滚动里被 onScroll
+   * 和滚轮两条路径连调、把 5 秒不断往后推成"永不消失"）。
+   */
+  const revealJump = useCallback(() => {
+    const el = ref.current
+    if (!el) return
+    // 内容压根不足一屏（没有可滚距离）：不存在"回到最新"的诉求，不显示。
+    if (el.scrollHeight - el.clientHeight <= NEAR_BOTTOM) {
+      hideJump()
+      return
+    }
+    setJumpVisible((already) => {
+      if (already) return already
+      jumpTimerRef.current = window.setTimeout(() => {
+        jumpTimerRef.current = null
+        setJumpVisible(false)
+      }, JUMP_SHOW_MS)
+      return true
+    })
+  }, [NEAR_BOTTOM, JUMP_SHOW_MS, hideJump])
+
   useEffect(() => {
     const el = ref.current
     if (!el) return
@@ -769,7 +827,8 @@ export function MsgList({
     forceBottom()
     pinnedRef.current = true
     setPinned(true)
-  }, [forceBottom])
+    hideJump()
+  }, [forceBottom, hideJump])
   /**
    * 贴底稳定化：布局变动后的一小段时间内反复贴底。
    *
@@ -849,6 +908,7 @@ export function MsgList({
       upwardRef.current = true
       downPxRef.current = 0
       suspendFollow()
+      revealJump()
       rememberScroll()
       // 滚到顶部就往下回翻（只认真实用户滚动）
       if (top <= TOP_LOAD_THRESHOLD) requestOlder()
@@ -860,6 +920,10 @@ export function MsgList({
       // 当前位置就是用户此刻看到的位置 —— 无论向上还是向下，都重写一笔。
       // 这样「切走再切回」才是原样恢复，而不是回放更早的一笔旧账。
       if (freshIntent) rememberScroll()
+      // 也要提示「可回到最新」：上面的 movedUp 分支只覆盖「方向确认为向上」，
+      // 而拖滚动条 / 键盘翻页 / 触控滑动可能一次跨过 NEAR_BOTTOM 且量不出
+      // 向上位移，这里补上，保证任何离开底部的形式都会给出口。
+      if (freshIntent) revealJump()
       return
     }
 
@@ -880,6 +944,7 @@ export function MsgList({
     downPxRef.current = 0
     if (!pinnedRef.current) {
       pinnedRef.current = true
+      hideJump()
       setPinned(true)
     }
     // ⭐ 关键：到底之后必须**立刻重写备忘**（bottom=true）。
@@ -991,9 +1056,11 @@ export function MsgList({
       {messages.length > 0 && (
         <button
           className="ts-jump-latest"
-          data-visible={pinned ? undefined : ''}
-          aria-hidden={pinned || undefined}
-          tabIndex={pinned ? -1 : undefined}
+          // 可见性用独立于 pinned 的 jumpVisible：内容不足一屏时不出现，
+          // 离开底部后 5 秒自动收起（详见上面的 revealJump / hideJump）。
+          data-visible={jumpVisible ? '' : undefined}
+          aria-hidden={jumpVisible ? undefined : true}
+          tabIndex={jumpVisible ? undefined : -1}
           onClick={jumpToBottom}
           title="回到最新"
         >
