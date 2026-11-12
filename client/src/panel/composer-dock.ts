@@ -236,32 +236,57 @@ export function useDockNativeComposer(
     }
 
     /**
+     * 「自己人」浮层选择器：设置齿轮面板（.ts-pop）、探索者设置（.ts-expset-pop）、
+     * 跑马灯面板（.ts-warn-pop）、皮肤面板（.ts-skin-pop）、变更卡预览（.ts-cf-hovercard）、
+     * 模式菜单（.ts-preset-menu）、会话下拉（.ts-sess-pop）。
+     * 它们是**瞬态**弹层（点外面就关），且 z-index 都在座位之上 —— 就算把停靠点盖住，
+     * 关掉后输入条原样露出来；不能因为它们在场就把输入条整个藏起来（用户反馈：
+     * 「左侧边栏的设置面板打开之后，DSH 主对话的聊天输入框会隐藏」）。
+     */
+    const OWN_POP_SEL = '.ts-pop, .ts-warn-pop, .ts-expset-pop, .ts-skin-pop, .ts-cf-hovercard, .ts-preset-menu, .ts-sess-pop'
+    /**
      * 容器在停靠点是否处于**最前层**。fixed 座位的 z-index 高于工作台内一切浮层，
      * 不做这道判定，最大化浮层/叠放窗口盖住主对话时输入条仍浮在最上（用户反馈）。
      * 命中测试只临时摘掉座位的指针事件（**绝不**动 visibility/display：那会让含焦点的
      * 编辑面失去可聚焦性 → 跨帧即 blur，手机上的表现就是软键盘刚弹出又被系统收回）。
-     * 命中点必须落在 cell 内部才算「主对话真的露在最前」。
+     *
+     * 探测策略（本轮修复）：**底边一条上取 5 个点**（10% ~ 90%），不再只押「底边中点」
+     * —— 设置面板这类小弹层（宽 238px、最高 72vh）从侧栏长上来，恰好压住中点
+     * 就会让整条输入条消失。多点之后：任一点命中 cell 即算在最前；全部没命中、
+     * 但命中的东西只有「自己人」弹层（OWN_POP_SEL）也算在前 —— 真正的遮挡者
+     * （最大化浮窗 / 叠放窗口 / 宿主弹窗）在场时这 5 个点一个都回不来，仍会藏。
      */
     const cellFront = (cell: HTMLElement, r: DOMRect): boolean => {
-      const x = Math.round(r.left + r.width / 2)
-      const y = Math.round(r.bottom - 24)
       // 视口下界取「布局视口」与「可视视口」的较大者：手机键盘弹出时可用高度会变小
       // （Android interactive-widget=resizes-content / iOS 视口收缩）。若按缩小后的值
       // 判定，停靠点会在键盘弹出那一瞬越界 → apply 把座位隐藏 → 正在编辑的输入条被
       // blur，系统随即收回键盘（用户反馈：一点输入框，键盘刚弹出就收回去）。
       const vv = window.visualViewport
       const maxY = Math.max(window.innerHeight, vv ? vv.offsetTop + vv.height : 0)
-      if (x < 0 || y < 0 || x >= window.innerWidth || y >= maxY) return false
+      const y = Math.round(r.bottom - 24)
+      if (y < 0 || y >= maxY) return false
+      const xs = [0.1, 0.3, 0.5, 0.7, 0.9]
+        .map((f) => Math.round(r.left + r.width * f))
+        .filter((x) => x >= 0 && x < window.innerWidth)
+      if (xs.length === 0) return false
       const prevPe = seat.style.pointerEvents
       seat.style.pointerEvents = 'none'
-      let hit: Element | null = null
+      let front = false
+      let ownPopSeen = false
+      let otherCover = false
       try {
-        hit = document.elementFromPoint(x, y)
+        for (const x of xs) {
+          const hit: Element | null = document.elementFromPoint(x, y)
+          if (hit && cell.contains(hit)) { front = true; break }
+          if (!hit) { otherCover = true; continue }
+          if (hit.closest?.(OWN_POP_SEL)) ownPopSeen = true
+          else otherCover = true
+        }
       } catch {
-        hit = null
+        otherCover = true
       }
       seat.style.pointerEvents = prevPe
-      return !!hit && cell.contains(hit)
+      return front || (ownPopSeen && !otherCover)
     }
 
     let raf = 0

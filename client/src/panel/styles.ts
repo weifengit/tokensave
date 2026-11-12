@@ -398,6 +398,15 @@ body.ts-desk-nochat [data-conversation-region="composer"] {
 .ts-btn-danger { background:rgba(248,113,113,.18); border-color:rgba(248,113,113,.5); }
 .ts-icon-btn { cursor:pointer; border:none; background:transparent; color:inherit; opacity:.6; border-radius:6px; padding:2px 7px; font-size:calc(var(--ts-fs, 12.5px) * 1.12); line-height:1.3; }
 .ts-icon-btn:hover { opacity:1; background:rgba(127,127,127,.22); }
+/* 消息时间后面的复制按钮：默认隐身，悬停时间行才现身 —— 常驻会抢视线；
+   对齐时间小字的基线，深浅主题都自适应（currentColor + 半透明底）。 */
+/* 消息时间后面的复制按钮：默认隐身，悬停时间行才现身 —— 常驻会抢视线；
+   对齐时间小字的基线，深浅主题都自适应（currentColor，无背景色）。 */
+.ts-copy-btn { display:none; vertical-align:middle; cursor:pointer; border:none; background:transparent; color:inherit; opacity:.55; border-radius:4px; padding:0 6px; margin-left:10px; line-height:1.4; font-size:calc(var(--ts-fs, 12.5px) * 0.84); }
+.ts-copy-btn svg { display:block; width:1em; height:1em; }
+.ts-msg-time:hover .ts-copy-btn, .ts-copy-btn:focus-visible, .ts-copy-btn.is-copied { display:inline-flex; align-items:center; justify-content:center; }
+.ts-copy-btn:hover { opacity:1; background:transparent; }
+.ts-copy-btn.is-copied { opacity:1; color:#4ade80; }
 .ts-input, .ts-select { border:1px solid rgba(127,127,127,.35); background:rgba(127,127,127,.08); color:inherit; border-radius:6px; padding:6px 9px; font-size:calc(var(--ts-fs, 12.5px) * 1.04); box-sizing:border-box; }
 /* 弹窗里的表单控件一律撑满整行（否则 textarea 会退回 cols 默认宽度，
    比同行的 input 窄——用户反馈两者宽度不一致）。 */

@@ -106,6 +106,28 @@ const POP_H_MAX = 720
  */
 const RENEW_MAX = 4
 /**
+ * 陈旧坐标的容忍：指针移出浏览器窗口后不会再有 mousemove，
+ * pointerRef 会停在最后一个已知位置（可能正落在面板 / 触发器上）。
+ * 到点若坐标说“还在里面”但真实进出状态说不在，就按离开处理 ——
+ * 但给几次短间隔重查的机会（原生 <select> 下拉弹层是 DOM 外的另一层窗口，
+ * 鼠标移过去也会让面板收到 mouseleave），避免把正在选选项的人误收。
+ *
+ * 为什么必须有这个上限：旧实现读到 panel / trigger 就直接 return 且不再续期，
+ * 于是“把鼠标从圆点直接移出窗口”会让面板永远挂着不关 —— 用户反馈的
+ * 「有时候不会自动关闭（鼠标已经不在面板上方）」。
+ */
+const STALE_RETRY_MAX = 6
+/** 陈旧重查间隔：比正常宽限短得多，保证指针真离开窗口时面板不会多挂好几秒 */
+const STALE_RETRY_MS = 140
+/** 面板里的表单控件（原生下拉 / 输入框）算作“正在交互”，不因坐标陈旧误收 */
+const FORM_TAGS = /^(SELECT|INPUT|TEXTAREA)$/
+/**
+ * 面板里的表单控件被操作后，允许它「占用」多久不被自动收起。
+ * 为什么要时间边界而不是只看 activeElement：点过一次 <select> 后焦点会一直停在
+ * 它上面，若只用「面板里有聚焦控件就保持」，用户移走鼠标后面板会永远不关。
+ */
+const FORM_GRACE_MS = 2500
+/**
  * 面板宽度：跟着**清单里最长的那条**走（策略在 panel-width.ts，纯函数可单测）。
  * 这里只做一层薄包装，把「窗口剩余空间」也算进去。
  */
@@ -883,17 +905,20 @@ export function ControlRoomEntry({ wide }: { wide?: boolean }) {
   /** 打开：算位置并展开（hover / 点角标共用） */
   const openHover = () => {
     clearHoverTimer()
+    // 打开这一刻指针就在触发器上 —— 记下真实状态，供到点时区分
+    // 「指针仍在面板/触发器上」与「坐标已经陈旧」。
+    insideRef.current = true
+    staleRef.current = 0
     if (hoverPos || hoverItems.length === 0) return
     const pos = computePanelPos()
     if (pos) setHoverPos(pos)
   }
   /**
-   * 关闭：指针离开后**不立刻收**，而是进一段「宽限倒计时」，到点再问一次“指针在哪”。
+   * 关闭：指针离开后**不立刻收**，而是进一段「宽限倒计时」，到点再结算。
    *
    * 光延长时间不够 —— 面板与触发器之间本来就有一道缝（横 8 + 纵 6），
    * 指针在缝里时两边都算「离开了」。到点时：
-   *   panel / trigger → 不收（mouseleave 才是准确信号；尤其不能在鼠标停在
-   *                     面板上时收掉，那正是“鼠标还没到就消失”的另一面）
+   *   panel / trigger → 不收（mouseleave 才是准确信号）
    *   corridor        → 正在挪过去，续期（有上限，不会无限赖着）
    *   out             → 真走了，收起
    *
@@ -901,34 +926,84 @@ export function ControlRoomEntry({ wide }: { wide?: boolean }) {
    * 指针如果在缝里**停住不动**，就没有 mousemove 事件了 —— 那样照样会被收掉。
    * 把判断放在到点那一刻，移动中的和停住不动的两种情形都盖住。
    *
-   * 续期有上限（RENEW_MAX）：允许慢慢挪，但不允许在缝里停一辈子不消失。
+   * ⭐ 关键修复（用户反馈「有时候不会自动关闭（鼠标已经不在面板上方）」）：
+   * 指针**移出浏览器窗口**后不再有 mousemove，pointerRef 会停在最后已知位置，
+   * 可能正好落在面板/触发器矩形里。旧实现在这里读到 panel/trigger 就直接 return
+   * 且**不再续期**，于是面板永远挂着。现在先看真实进出状态（insideRef，由
+   * mouseenter / mouseleave 维护），再看坐标；坐标与真实状态矛盾时按**陈旧**处理——
+   * 给有限次短间隔重查，超出就收，保证不会因为一个陈旧坐标赖着不关。
    */
+  const insideRef = useRef(false)
   const renewRef = useRef(0)
+  const staleRef = useRef(0)
+  /** 最近一次在面板内操作控件的时间（用时间边界，避免焦点停在 select 上永不收起） */
+  const interactAtRef = useRef(0)
+  /** 面板里的表单控件是否正拿着焦点（原生 <select> 下拉弹层是 DOM 外的另一层，
+   *  鼠标移过去会让面板收到 mouseleave —— 交互期间不能收） */
+  const panelFormActive = (): boolean => {
+    const p = panelRef.current
+    const a = document.activeElement as HTMLElement | null
+    if (!p || !a || !p.contains(a)) return false
+    return FORM_TAGS.test(a.tagName)
+  }
+  /** 到点结算：决定收起，还是重查 / 续期 */
+  const settleClose = () => {
+    // 1) 真实进出状态：指针确实在面板/触发器上 → 绝不收（等它们的 mouseleave）
+    if (insideRef.current) {
+      renewRef.current = 0
+      staleRef.current = 0
+      return
+    }
+    // 2) 面板里的表单控件正在用（原生下拉弹层在 DOM 外）→ 保持，但只在
+    //    最近一次交互后的宽限窗口内，避免焦点停在 select 上导致永不收起
+    if (panelFormActive() && Date.now() - interactAtRef.current < FORM_GRACE_MS) {
+      staleRef.current = 0
+      armClose(STALE_RETRY_MS)
+      return
+    }
+    const zone = pointerZone()
+    // 3) 坐标说在里面但真实状态说不在 = 陈旧坐标（指针已移出窗口）→ 有限重查后收
+    if (zone === 'panel' || zone === 'trigger') {
+      if (staleRef.current < STALE_RETRY_MAX) {
+        staleRef.current += 1
+        armClose(STALE_RETRY_MS)
+        return
+      }
+      staleRef.current = 0
+      renewRef.current = 0
+      setHoverPos(null)
+      return
+    }
+    // 4) 正在缝里往面板挪 → 续期（有上限）
+    if (zone === 'corridor' && renewRef.current < RENEW_MAX) {
+      renewRef.current += 1
+      armClose(HOVER_CLOSE_MS)
+      return
+    }
+    // 5) 真走了
+    renewRef.current = 0
+    staleRef.current = 0
+    setHoverPos(null)
+  }
+  /** 延时投递一次结算（所有关闭路径都从这里进，便于统一续期 / 重查） */
+  const armClose = (ms: number) => {
+    clearHoverTimer()
+    hoverTimer.current = window.setTimeout(() => {
+      hoverTimer.current = null
+      settleClose()
+    }, ms)
+  }
   const scheduleClose = () => {
     // 手机摆法 = 钉住：不参与 hover 自动收起。
     // 手机上侧边栏是抽屉，一收起来触发器（角标）就 display:none，mouseleave / 指针命中
     // 都会给出「已离开」的假信号，面板就跟着抽屉一起消失了（用户反馈：
     // 「侧边栏一收起来，浮动面板跟着关闭了」）。手机改用显式 ✕ / 点面板外关闭。
     if (hoverPos?.mode === 'sheet') return
-    clearHoverTimer()
-    hoverTimer.current = window.setTimeout(() => {
-      hoverTimer.current = null
-      const zone = pointerZone()
-      // 指针就停在面板 / 触发器上：绝不能收，等它们自己的 mouseleave 再说话
-      if (zone === 'panel' || zone === 'trigger') {
-        renewRef.current = 0
-        return
-      }
-      if (zone === 'corridor' && renewRef.current < RENEW_MAX) {
-        renewRef.current += 1
-        scheduleClose()
-        return
-      }
-      renewRef.current = 0
-      setHoverPos(null)
-    }, HOVER_CLOSE_MS)
+    armClose(HOVER_CLOSE_MS)
   }
+  /** 触发器 / 面板的鼠标离开：把真实状态置为“不在里面”，再走宽限关闭 */
   const closeHover = () => {
+    insideRef.current = false
     renewRef.current = 0
     scheduleClose()
   }
@@ -974,6 +1049,9 @@ export function ControlRoomEntry({ wide }: { wide?: boolean }) {
     e.stopPropagation()
     if (hoverPos) {
       clearHoverTimer()
+      insideRef.current = false
+      staleRef.current = 0
+      renewRef.current = 0
       setHoverPos(null)
       return
     }
@@ -1008,9 +1086,19 @@ export function ControlRoomEntry({ wide }: { wide?: boolean }) {
         setHoverPos(null)
       }
     }
+    // 面板内控件被操作（点 / 改值）→ 记一笔时间，给原生下拉弹层留出宽限，
+    // 但不会让焦点停在 select 上把面板永久钉住（见 FORM_GRACE_MS）。
+    const onInteract = (ev: Event) => {
+      const t = ev.target as HTMLElement | null
+      if (t?.closest('.ts-warn-pop')) interactAtRef.current = Date.now()
+    }
+    document.addEventListener('pointerdown', onInteract, true)
+    document.addEventListener('change', onInteract, true)
     document.addEventListener('mousedown', onDown)
     document.addEventListener('keydown', onKey)
     return () => {
+      document.removeEventListener('pointerdown', onInteract, true)
+      document.removeEventListener('change', onInteract, true)
       document.removeEventListener('mousedown', onDown)
       document.removeEventListener('keydown', onKey)
     }
@@ -1121,9 +1209,14 @@ export function ControlRoomEntry({ wide }: { wide?: boolean }) {
             setHoverPos(null)
           }}
           onHover={(inside) => {
-            // 鼠标在面板里 → 保持打开；离开 → 走同一条宽限关闭（走廊内可续期）
-            if (inside) clearHoverTimer()
-            else closeHover()
+            // 鼠标在面板里 → 保持打开（真实状态置真）；离开 → 走同一条宽限关闭
+            if (inside) {
+              insideRef.current = true
+              staleRef.current = 0
+              clearHoverTimer()
+            } else {
+              closeHover()
+            }
           }}
           onMarkRead={(key) => markPulseRead('warn', key)}
           onMarkAllRead={() => {

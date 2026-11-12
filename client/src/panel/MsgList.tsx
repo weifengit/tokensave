@@ -107,25 +107,46 @@ function collapseOnBodyClick(close: () => void) {
   }
 }
 /**
-
- * 消息发出时间（每条消息一行小字）。
-
- * 数据源：StreamMsg.time（来自 SessionEvent.time，Unix ms），窗口重建与逐事件
-
- * 两条路径都会带上它；缺失时本组件返回 null，不占位。
-
- * 格式按「离现在多远」选粒度，与宿主对话 tab 的 clock 口径一致：
-
- *   今天        → HH:mm
-
- *   今年以内    → M月D日 HH:mm
-
- *   跨年        → YYYY年M月D日 HH:mm
-
- * title 始终挂完整本地时间戳，鼠标悬浮可看精确时刻。
-
+ * execCommand 兜底：非安全上下文（如 http 非 localhost）里没有 navigator.clipboard。
  */
-function MsgTime({ time, className }: { time?: number; className?: string }) {
+function fallbackCopyText(text: string): boolean {
+  try {
+    const ta = document.createElement('textarea')
+    ta.value = text
+    ta.style.position = 'fixed'
+    ta.style.opacity = '0'
+    document.body.appendChild(ta)
+    ta.select()
+    const ok = document.execCommand('copy')
+    document.body.removeChild(ta)
+    return ok
+  } catch {
+    return false
+  }
+}
+
+/**
+ * 消息发出时间（每条消息一行小字）。
+ *
+ * 数据源：StreamMsg.time（来自 SessionEvent.time，Unix ms），窗口重建与逐事件
+ * 两条路径都会带上它；缺失时本组件返回 null，不占位。
+ *
+ * 格式按「离现在多远」选粒度，与宿主对话 tab 的 clock 口径一致：
+ *   今天        → HH:mm
+ *   今年以内    → M月D日 HH:mm
+ *   跨年        → YYYY年M月D日 HH:mm
+ *
+ * title 始终挂完整本地时间戳，鼠标悬浮可看精确时刻。
+ *
+ * copyContent：传了就在时间后面放一个复制按钮（点一下复制该条消息正文，
+ * 与宿主对话 tab 的复制一致）；点击后按钮换成 ✓ 表示已复制，1.5s 后还原。
+ * 注意：**不能**传给嵌在 <button> 里的调用点（ProcessGroup 头部）——
+ * button 套 button 是非法 HTML。
+ */
+function MsgTime({ time, className, copyContent }: { time?: number; className?: string; copyContent?: string }) {
+  const [copied, setCopied] = useState(false)
+  const copiedTimer = useRef<number | null>(null)
+  useEffect(() => () => { if (copiedTimer.current) window.clearTimeout(copiedTimer.current) }, [])
   if (typeof time !== 'number' || !Number.isFinite(time) || time <= 0) return null
   const d = new Date(time)
   const now = new Date()
@@ -137,9 +158,41 @@ function MsgTime({ time, className }: { time?: number; className?: string }) {
     : d.getFullYear() === now.getFullYear()
       ? `${d.getMonth() + 1}月${d.getDate()}日 ${hm}`
       : `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日 ${hm}`
+  const handleCopy = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (!copyContent) return
+    const markDone = () => {
+      setCopied(true)
+      if (copiedTimer.current) window.clearTimeout(copiedTimer.current)
+      copiedTimer.current = window.setTimeout(() => setCopied(false), 1500)
+    }
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(copyContent).then(markDone).catch(() => {
+        if (fallbackCopyText(copyContent)) markDone()
+      })
+    } else if (fallbackCopyText(copyContent)) {
+      markDone()
+    }
+  }
   return (
     <span className={className ? `ts-msg-time ${className}` : 'ts-msg-time'} title={d.toLocaleString('zh-CN')}>
       {text}
+      {copyContent && (
+        <button
+          type="button"
+          className={`ts-copy-btn${copied ? ' is-copied' : ''}`}
+          onClick={handleCopy}
+          title={copied ? '已复制' : '复制内容'}
+          aria-label="复制内容"
+        >
+          {copied ? '✓' : (
+            <svg width="11" height="11" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <rect x="5.75" y="5.75" width="8.5" height="8.5" rx="1.5" stroke="currentColor" strokeWidth="1.5" />
+              <path d="M10.25 5.75V4A1.75 1.75 0 0 0 8.5 2.25H4A1.75 1.75 0 0 0 2.25 4v4.5A1.75 1.75 0 0 0 4 10.25h1.75" stroke="currentColor" strokeWidth="1.5" />
+            </svg>
+          )}
+        </button>
+      )}
     </span>
   )
 }
@@ -157,7 +210,7 @@ function ProcItem({ msg }: { msg: StreamMsg }) {
       <div className="ts-proc-item-head">
         <span className="ts-proc-role">{isThink ? '思考' : ROLE_LABELS[msg.role] || msg.role}</span>
         {/* 过程项也带时间：每条工具/思考何时发生一目了然（用户要求“每条消息”） */}
-        <MsgTime time={msg.time} className="ts-proc-time" />
+        <MsgTime time={msg.time} className="ts-proc-time" copyContent={msg.content} />
         <button
           className="ts-icon-btn ts-msg-toggle"
           onClick={() => setOpen((v) => !v)}
@@ -201,7 +254,7 @@ function InjectionRow({ items }: { items: StreamMsg[] }) {
             <div className="ts-proc-item ts-inject-item" key={i}>
               <div className="ts-proc-item-head">
                 <span className="ts-proc-role">{label(m)}</span>
-                <MsgTime time={m.time} className="ts-proc-time" />
+                <MsgTime time={m.time} className="ts-proc-time" copyContent={m.content} />
               </div>
               <div className="ts-msg-full"><RichText text={m.content} /></div>
             </div>
@@ -548,9 +601,11 @@ export function MsgList({
         proc: view === 'user' ? [] : t.proc,
         answer: view === 'user' ? null : t.answer,
         notice: view === 'user' ? null : t.notice,
-        // 「已编辑 N 个文件」是本轮的事实报告，不随阅读视图滤除（跟 answer 一样只在轮可见时出现）
-        edits: t.edits,
-        changesSeq: t.changesSeq,
+        // 「已编辑 N 个文件」是**模型侧**的产出报告：「我的」视图下不显示
+        //（用户反馈：筛选“我的”还能看到文件变动，它应该属于 AI 回复的信息）；
+        //  「模型」与「全部」视图照常在轮末展示。
+        edits: view === 'user' ? [] : t.edits,
+        changesSeq: view === 'user' ? null : t.changesSeq,
       }))
       .filter((t) => t.users.length > 0 || t.injects.length > 0
         || t.proc.length > 0 || !!t.answer || !!t.notice || t.queued.length > 0),
@@ -1016,7 +1071,7 @@ export function MsgList({
           {t.users.map((m, i) => (
             <div className="ts-msg-block ts-msg-block-user" key={`u${i}`}>
               <div className="ts-msg-user">{m.content}</div>
-              <MsgTime time={m.time} />
+              <MsgTime time={m.time} copyContent={m.content} />
             </div>
           ))}
           <InjectionRow items={t.injects} />
@@ -1026,7 +1081,7 @@ export function MsgList({
               <div className="ts-msg-assistant">
                 <RichText text={t.answer.content} />
               </div>
-              <MsgTime time={t.answer.time} />
+              <MsgTime time={t.answer.time} copyContent={t.answer.content} />
             </div>
           )}
           {/* 轮末变更卡：有宿主档案 seq 就用路由的完整清单（含 +N/-M 与悬浮预览），
@@ -1041,7 +1096,7 @@ export function MsgList({
                 {m.content}
                 <span className="ts-queued-tag" title="会话正忙：这条消息在宿主收件箱队列里，下一轮开始时送达模型（与原生对话的队列面板同源）">排队中</span>
               </div>
-              <MsgTime time={m.time} />
+              <MsgTime time={m.time} copyContent={m.content} />
             </div>
           ))}
         </div>
