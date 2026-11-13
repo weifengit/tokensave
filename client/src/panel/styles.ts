@@ -398,14 +398,12 @@ body.ts-desk-nochat [data-conversation-region="composer"] {
 .ts-btn-danger { background:rgba(248,113,113,.18); border-color:rgba(248,113,113,.5); }
 .ts-icon-btn { cursor:pointer; border:none; background:transparent; color:inherit; opacity:.6; border-radius:6px; padding:2px 7px; font-size:calc(var(--ts-fs, 12.5px) * 1.12); line-height:1.3; }
 .ts-icon-btn:hover { opacity:1; background:rgba(127,127,127,.22); }
-/* 消息时间后面的复制按钮：默认隐身，悬停时间行才现身 —— 常驻会抢视线；
-   对齐时间小字的基线，深浅主题都自适应（currentColor + 半透明底）。 */
-/* 消息时间后面的复制按钮：默认隐身，悬停时间行才现身 —— 常驻会抢视线；
-   对齐时间小字的基线，深浅主题都自适应（currentColor，无背景色）。 */
-.ts-copy-btn { display:none; vertical-align:middle; cursor:pointer; border:none; background:transparent; color:inherit; opacity:.55; border-radius:4px; padding:0 6px; margin-left:10px; line-height:1.4; font-size:calc(var(--ts-fs, 12.5px) * 0.84); }
+/* 消息时间后面的复制按钮：**常显**（用户反复反馈“看不到”——原来的 display:none
+   + 只在 :hover 时间小字时现身，时间那行字太小几乎永远悬不到，等于永远不显）。
+   与时间同字号、无背景色、无边框，悬停只提不透明度；左侧 10px 把两者拉开。 */
+.ts-copy-btn { display:inline-flex; align-items:center; justify-content:center; vertical-align:middle; cursor:pointer; border:none; background:transparent; color:inherit; opacity:.5; padding:0; margin-left:10px; line-height:1; font-size:calc(var(--ts-fs, 12.5px) * 0.84); }
 .ts-copy-btn svg { display:block; width:1em; height:1em; }
-.ts-msg-time:hover .ts-copy-btn, .ts-copy-btn:focus-visible, .ts-copy-btn.is-copied { display:inline-flex; align-items:center; justify-content:center; }
-.ts-copy-btn:hover { opacity:1; background:transparent; }
+.ts-copy-btn:hover, .ts-copy-btn:focus-visible { opacity:1; background:transparent; outline:none; }
 .ts-copy-btn.is-copied { opacity:1; color:#4ade80; }
 .ts-input, .ts-select { border:1px solid rgba(127,127,127,.35); background:rgba(127,127,127,.08); color:inherit; border-radius:6px; padding:6px 9px; font-size:calc(var(--ts-fs, 12.5px) * 1.04); box-sizing:border-box; }
 /* 弹窗里的表单控件一律撑满整行（否则 textarea 会退回 cols 默认宽度，
@@ -1077,9 +1075,14 @@ body.ts-vsplit-dragging .ts-card { transition:none !important; animation:none !i
 .ts-msg-block { display:flex; flex-direction:column; gap:3px; min-width:0; }
 .ts-msg-block-user { align-self:flex-end; align-items:flex-end; }
 .ts-msg-block-assistant { align-self:stretch; }
-.ts-msg-time { font-size:calc(var(--ts-fs, 12.5px) * 0.84); opacity:.5; font-variant-numeric:tabular-nums; white-space:nowrap; color:inherit; line-height:1.4; }
+.ts-msg-time { font-size:calc(var(--ts-fs, 12.5px) * 0.84); font-variant-numeric:tabular-nums; white-space:nowrap; color:inherit; line-height:1.4; }
+/* 不透明度必须加在**文字**上而不是容器上：容器带 opacity 会把内部的复制按钮
+   一起乘半（0.5 × 0.5 = 0.25），按钮就“明明在却看不见”。 */
+.ts-msg-time-text { opacity:.5; }
 .ts-msg-block-user .ts-msg-time { text-align:right; }
-.ts-proc-time { margin-left:auto; font-size:calc(var(--ts-fs, 12.5px) * 0.8); opacity:.5; font-variant-numeric:tabular-nums; white-space:nowrap; flex:none; }
+/* .ts-proc-time 与 .ts-msg-time 同构：透明度只给文字，按钮保持自己的可见度 */
+.ts-proc-time { margin-left:auto; font-size:calc(var(--ts-fs, 12.5px) * 0.8); font-variant-numeric:tabular-nums; white-space:nowrap; flex:none; }
+.ts-proc-time .ts-msg-time-text { opacity:.5; }
 .ts-msg-tool .ts-msg-role, .ts-msg-system .ts-msg-role { display:flex; align-items:center; gap:4px; }
 .ts-msg-toggle { padding:0 4px; font-size:calc(var(--ts-fs, 12.5px) * 0.88); opacity:.7; }
 .ts-msg-preview { opacity:.85; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }

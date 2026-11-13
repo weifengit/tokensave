@@ -22,6 +22,7 @@ import type { StreamMsg } from '../session-subscribe'
 import { RichText, stripMarkdown } from './RichText'
 import type { ChatView } from './chat-view'
 import { ChangesCard } from './changes-card'
+import { injectProjectCenterStyles } from './styles'
 
 /** 最多渲染的轮数（超出只显示最近这些） */
 const MAX_TURNS = 40
@@ -129,7 +130,8 @@ function fallbackCopyText(text: string): boolean {
  * 消息发出时间（每条消息一行小字）。
  *
  * 数据源：StreamMsg.time（来自 SessionEvent.time，Unix ms），窗口重建与逐事件
- * 两条路径都会带上它；缺失时本组件返回 null，不占位。
+ * 两条路径都会带上它；缺失时**不渲染时间**（返回 null），但复制按钮不受影响
+ * —— 复制与时间解耦，否则宿主没带 time 的消息会连按钮一起消失。
  *
  * 格式按「离现在多远」选粒度，与宿主对话 tab 的 clock 口径一致：
  *   今天        → HH:mm
@@ -143,11 +145,55 @@ function fallbackCopyText(text: string): boolean {
  * 注意：**不能**传给嵌在 <button> 里的调用点（ProcessGroup 头部）——
  * button 套 button 是非法 HTML。
  */
-function MsgTime({ time, className, copyContent }: { time?: number; className?: string; copyContent?: string }) {
+/** 复制按钮（与时间解耦的独立组件）：常显，点了复制正文，1.5s 内显示 ✓ */
+function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false)
-  const copiedTimer = useRef<number | null>(null)
-  useEffect(() => () => { if (copiedTimer.current) window.clearTimeout(copiedTimer.current) }, [])
-  if (typeof time !== 'number' || !Number.isFinite(time) || time <= 0) return null
+  const timer = useRef<number | null>(null)
+  useEffect(() => () => { if (timer.current) window.clearTimeout(timer.current) }, [])
+  const handleCopy = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    const markDone = () => {
+      setCopied(true)
+      if (timer.current) window.clearTimeout(timer.current)
+      timer.current = window.setTimeout(() => setCopied(false), 1500)
+    }
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(text).then(markDone).catch(() => {
+        if (fallbackCopyText(text)) markDone()
+      })
+    } else if (fallbackCopyText(text)) {
+      markDone()
+    }
+  }
+  return (
+    <button
+      type="button"
+      className={`ts-copy-btn${copied ? ' is-copied' : ''}`}
+      onClick={handleCopy}
+      title={copied ? '已复制' : '复制内容'}
+      aria-label="复制内容"
+    >
+      {copied ? '✓' : (
+        <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <rect x="5.75" y="5.75" width="8.5" height="8.5" rx="1.5" stroke="currentColor" strokeWidth="1.6" />
+          <path d="M10.25 5.75V4A1.75 1.75 0 0 0 8.5 2.25H4A1.75 1.75 0 0 0 2.25 4v4.5A1.75 1.75 0 0 0 4 10.25h1.75" stroke="currentColor" strokeWidth="1.6" />
+        </svg>
+      )}
+    </button>
+  )
+}
+
+function MsgTime({ time, className, copyContent }: { time?: number; className?: string; copyContent?: string }) {
+  const hasTime = typeof time === 'number' && Number.isFinite(time) && time > 0
+  if (!hasTime) {
+    // 没有时间戳：只保留复制按钮（有正文时），不让它跟着时间一起消失
+    if (!copyContent) return null
+    return (
+      <span className={className ? `ts-msg-time ${className}` : 'ts-msg-time'}>
+        <CopyButton text={copyContent} />
+      </span>
+    )
+  }
   const d = new Date(time)
   const now = new Date()
   const pad = (n: number) => String(n).padStart(2, '0')
@@ -158,41 +204,10 @@ function MsgTime({ time, className, copyContent }: { time?: number; className?: 
     : d.getFullYear() === now.getFullYear()
       ? `${d.getMonth() + 1}月${d.getDate()}日 ${hm}`
       : `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日 ${hm}`
-  const handleCopy = (e: React.MouseEvent) => {
-    e.stopPropagation()
-    if (!copyContent) return
-    const markDone = () => {
-      setCopied(true)
-      if (copiedTimer.current) window.clearTimeout(copiedTimer.current)
-      copiedTimer.current = window.setTimeout(() => setCopied(false), 1500)
-    }
-    if (navigator.clipboard?.writeText) {
-      navigator.clipboard.writeText(copyContent).then(markDone).catch(() => {
-        if (fallbackCopyText(copyContent)) markDone()
-      })
-    } else if (fallbackCopyText(copyContent)) {
-      markDone()
-    }
-  }
   return (
     <span className={className ? `ts-msg-time ${className}` : 'ts-msg-time'} title={d.toLocaleString('zh-CN')}>
-      {text}
-      {copyContent && (
-        <button
-          type="button"
-          className={`ts-copy-btn${copied ? ' is-copied' : ''}`}
-          onClick={handleCopy}
-          title={copied ? '已复制' : '复制内容'}
-          aria-label="复制内容"
-        >
-          {copied ? '✓' : (
-            <svg width="11" height="11" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-              <rect x="5.75" y="5.75" width="8.5" height="8.5" rx="1.5" stroke="currentColor" strokeWidth="1.5" />
-              <path d="M10.25 5.75V4A1.75 1.75 0 0 0 8.5 2.25H4A1.75 1.75 0 0 0 2.25 4v4.5A1.75 1.75 0 0 0 4 10.25h1.75" stroke="currentColor" strokeWidth="1.5" />
-            </svg>
-          )}
-        </button>
-      )}
+      <span className="ts-msg-time-text">{text}</span>
+      {copyContent && <CopyButton text={copyContent} />}
     </span>
   )
 }
@@ -455,6 +470,16 @@ export function MsgList({
   sessionId = '',
   view = 'all',
 }: MsgListProps) {
+  /**
+   * 自注入样式表。
+   *
+   * 为何在这里而不是在宿主壳层：本组件被**主对话卡片**与**探索者窗口**共用，
+   * 而 styles.ts 原先只在 ControlRoom / ProjectCenter 里 inject —— 那两个组件
+   * 不一定被渲染，于是 .ts-copy-btn 这类规则在其它宿主位置完全不存在，
+   * 按钮带 display:none 就永远不显形（用户反馈「复制按钮还是没看到」）。
+   * injectProjectCenterStyles 自身按 id 幂等，多处调不会重复插样式。
+   */
+  useEffect(() => { injectProjectCenterStyles() }, [])
   const ref = useRef<HTMLDivElement>(null)
   // 当前展示的轮数窗口：瀑布式回翻时逐步放大（只放大，不缩回去）
   const [windowTurns, setWindowTurns] = useState(MAX_TURNS)

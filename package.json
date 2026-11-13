@@ -45,6 +45,7 @@
     "test:desk-dock": "node scripts/check-desk-dock.mjs",
     "test:chat-scroll": "node scripts/check-chat-scroll.mjs",
     "test:msg-queue": "node scripts/check-msg-queue.mjs",
+    "test:copy-btn": "node scripts/check-copy-btn.mjs",
     "test:clone": "node scripts/check-clone-project.mjs",
     "test:project-remove": "node scripts/check-project-remove.mjs",
     "test:card-flip": "node scripts/check-card-flip.mjs",
@@ -54,7 +55,7 @@
     "test:chrome": "node scripts/check-chrome-position.mjs",
     "test:chrome-geo": "node scripts/check-chrome-geometry.mjs",
     "test:expset": "node scripts/check-expset-panel.mjs",
-    "test": "pnpm check && pnpm test:auto-commit && pnpm test:continue && pnpm test:width && pnpm test:hover && pnpm test:sound && pnpm test:sound-sync && pnpm test:pending-alert && pnpm test:todo && pnpm test:chrome && pnpm test:expset && pnpm test:sidebar && pnpm test:composer-focus && pnpm test:nav && pnpm test:composer-resize && pnpm test:turn-edits && pnpm test:composer-status && pnpm test:changes-card && pnpm test:agent-preset && pnpm test:dockview && pnpm test:desk && pnpm test:desk-dock && pnpm test:chat-scroll && pnpm test:msg-queue && pnpm test:clone && pnpm test:project-remove && pnpm test:card-flip && pnpm test:card-layout && pnpm test:mobile && pnpm test:ui"
+    "test": "pnpm check && pnpm test:auto-commit && pnpm test:continue && pnpm test:width && pnpm test:hover && pnpm test:sound && pnpm test:sound-sync && pnpm test:pending-alert && pnpm test:todo && pnpm test:chrome && pnpm test:expset && pnpm test:sidebar && pnpm test:composer-focus && pnpm test:nav && pnpm test:composer-resize && pnpm test:turn-edits && pnpm test:composer-status && pnpm test:changes-card && pnpm test:agent-preset && pnpm test:dockview && pnpm test:desk && pnpm test:desk-dock && pnpm test:chat-scroll && pnpm test:msg-queue && pnpm test:copy-btn && pnpm test:clone && pnpm test:project-remove && pnpm test:card-flip && pnpm test:card-layout && pnpm test:mobile && pnpm test:ui"
   },
   "dependencies": {
     "@deepseek-ai/dsh-brand": "0.2.0-rc.2",
