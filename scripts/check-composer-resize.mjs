@@ -88,6 +88,47 @@ try {
     src.includes("'--dsh-composer-text-max-height'"))
   check('自动模式 cap 来自视口（manualCap ?? autoCap）', /manualCap \?\? autoCap\(\)/.test(src))
 
+  // —— 5. 抓手跟随输入条座位显隐（后台标签不浮在别的窗口上）——
+  // 用户反馈：「预览和主对话同组时，激活预览还能看到主对话的重置 / 高度数值」。
+  // 抓手是 body 上的 fixed 浮层，必须自己查座位显隐，不能只看 rect（隐藏座位也有 rect）。
+  {
+    const normal = { display: 'block', visibility: 'visible', opacity: '1' }
+    const makeChain = (seatStyle) => {
+      const grand = { parentElement: null }
+      const seat = { parentElement: grand }
+      const input = { parentElement: seat }
+      grand.style = normal
+      input.style = normal
+      const styles = new Map([[grand, grand.style], [seat, seatStyle], [input, input.style]])
+      return { input, seat, styles }
+    }
+    const styleOf = (styles) => (n) => styles.get(n) ?? normal
+
+    let c = makeChain({ display: 'block', visibility: 'hidden', opacity: '1' })
+    check('座位 visibility:hidden → 抓手隐藏',
+      m.composerSeatShown(c.input, styleOf(c.styles)) === false)
+
+    c = makeChain({ display: 'block', visibility: 'visible', opacity: '0' })
+    check('座位持焦隐身 opacity:0 → 抓手隐藏',
+      m.composerSeatShown(c.input, styleOf(c.styles)) === false)
+
+    c = makeChain({ display: 'none', visibility: 'visible', opacity: '1' })
+    check('座位 display:none → 抓手隐藏',
+      m.composerSeatShown(c.input, styleOf(c.styles)) === false)
+
+    c = makeChain({ display: 'block', visibility: 'visible', opacity: '1' })
+    check('座位可见 → 抓手显示',
+      m.composerSeatShown(c.input, styleOf(c.styles)) === true)
+
+    check('positionHandle 用座位可见性门控（后台标签不浮出抓手）',
+      /const visible = r\.width >= 40 && r\.height > 0 && composerSeatShown\(el\)/.test(src))
+    const watch = src.slice(src.indexOf('function watchSeatVisibility'), src.indexOf('function attach'))
+    check('盯座位移显隐变化（style/class）并重摆抓手',
+      watch.includes('new MutationObserver(() => schedule())') &&
+      watch.includes("attributeFilter: ['style', 'class']"))
+    check('解绑时断开座位观察器', /seatObserver\?\.disconnect\(\)/.test(src))
+  }
+
   console.log(fail === 0 ? '\nALL PASS' : `\n${fail} FAILED`)
   process.exitCode = fail === 0 ? 0 : 1
 } finally {

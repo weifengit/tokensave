@@ -70,6 +70,8 @@ let resetChip: HTMLButtonElement | null = null
 let sizeLabel: HTMLSpanElement | null = null
 let innerObserver: ResizeObserver | null = null
 let contentObserver: MutationObserver | null = null
+let seatObserver: MutationObserver | null = null
+let seatObserved: HTMLElement | null = null
 
 /** 手动固定的上限（px）；null = 未手动设置，完全交给自动加高。 */
 let manualCap: number | null = readManualCap()
@@ -229,6 +231,31 @@ function reflect(): void {
 }
 
 /**
+ * 输入条座位是否真的可见（沿祖先链查 display / visibility / opacity）。
+ *
+ * 为什么抓手必须跟着它走：抓手是挂在 body 上的 position:fixed 浮层（z-index 60），
+ * 不继承输入条 DOM 的可见性。工作台里主对话与其它窗口同组时，激活别的窗口后
+ * composer-dock 会把座位 visibility:hidden（持焦时则 opacity:0），
+ * 但抓手不跟着藏 —— 用户就会在「项目预览」上看到主对话的「重置」和高度数值
+ * （本次修复）。纯读，样式读取可注入以便自检。
+ */
+export function composerSeatShown(
+  el: HTMLElement,
+  styleOf: (node: HTMLElement) => { display?: string; visibility?: string; opacity?: string } =
+    (node) => getComputedStyle(node),
+): boolean {
+  const root = typeof document !== 'undefined' ? document.documentElement : null
+  for (let n: HTMLElement | null = el; n && n !== root; n = n.parentElement) {
+    const cs = styleOf(n)
+    if (cs.display === 'none') return false
+    if (cs.visibility === 'hidden' || cs.visibility === 'collapse') return false
+    const op = Number.parseFloat(cs.opacity ?? '')
+    if (Number.isFinite(op) && op <= 0) return false
+  }
+  return true
+}
+
+/**
  * 把抓手命中区摆到输入区上沿（fixed 定位，滚动/布局变化时重摆）。
  * 拖动中也按**实时** rect 摆位（不冻结 —— 冻结曾造成“残影”）；
  * 高度数学是 origin 基准（从不读抓手位置），实时摆位不影响跟手。
@@ -238,7 +265,7 @@ function positionHandle(): void {
   const el = current
   if (!el || !grabber) return
   const r = el.getBoundingClientRect()
-  const visible = r.width >= 40 && r.height > 0
+  const visible = r.width >= 40 && r.height > 0 && composerSeatShown(el)
   setStyle(grabber, 'display', visible ? '' : 'none')
   if (!visible) return
   // 命中区下沿压在滚动口上沿 8px（贴实时盒顶），拖动热区跟着盒子走
@@ -423,9 +450,30 @@ function detach(): void {
   innerObserver = null
   contentObserver?.disconnect()
   contentObserver = null
+  seatObserver?.disconnect()
+  seatObserver = null
+  seatObserved = null
   current = null
   contentH = 0
   hideHandle()
+}
+
+/**
+ * 盯住座位（含近祖先）的 style/class 变化：显隐一变就重摆抓手。
+ *
+ * 只能盯属性不能只看尺寸：后台标签的座位仍有正常 rect（只是 visibility:hidden），
+ * ResizeObserver 不会触发；而 dockview / composer-dock 切换显隐都写行内 style。
+ */
+function watchSeatVisibility(el: HTMLElement): void {
+  const seat = el.closest<HTMLElement>('[data-conversation-region="composer"]') ?? el
+  if (seatObserved === seat && seatObserver) return
+  seatObserver?.disconnect()
+  seatObserved = seat
+  seatObserver = new MutationObserver(() => schedule())
+  let node: HTMLElement | null = seat
+  for (let i = 0; node && i < 8; i++, node = node.parentElement) {
+    seatObserver.observe(node, { attributes: true, attributeFilter: ['style', 'class'] })
+  }
 }
 
 /** 绑定一个滚动口：接管上限，并盯住内容尺寸与文本变化。 */
@@ -435,6 +483,7 @@ function attach(el: HTMLElement): void {
   detach()
   current = el
   ensureHandle()
+  watchSeatVisibility(el)
   const inner = (el.querySelector(INPUT_SELECTOR) as HTMLElement | null) ?? el.firstElementChild
   try {
     innerObserver = new ResizeObserver(() => schedule())
