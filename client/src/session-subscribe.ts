@@ -697,7 +697,14 @@ export function subscribeSessionMetrics(sessionId: string, onMetrics: MetricsLis
  * @returns 是否成功发起并完成一次加载
  */
 export async function loadOlderHistory(sessionId: string): Promise<boolean> {
-  const face: any = channels.get(sessionId)?.binding?.session
+  // session face 可能还在物化（刚打开会话 / 断线重连）：等最多 1.5s，而不是
+  // 当场返回 false —— 用户点了「加载更早」却毫无反应，就是这里白跑了一次。
+  let face: any = channels.get(sessionId)?.binding?.session
+  for (let i = 0; i < 6; i++) {
+    if (face && typeof face.loadOlder === 'function') break
+    await new Promise<void>((resolve) => { window.setTimeout(resolve, 250) })
+    face = channels.get(sessionId)?.binding?.session
+  }
   if (!face || typeof face.loadOlder !== 'function') return false
   try {
     await face.loadOlder()
@@ -710,9 +717,17 @@ export async function loadOlderHistory(sessionId: string): Promise<boolean> {
 
 /** 读某会话的历史分页状态（会话流尚未建立时视为「没有更早」）。 */
 export function readHistoryState(sessionId: string): { hasMore: boolean; loadingOlder: boolean } {
+  const ch = channels.get(sessionId)
   try {
-    const snap = channels.get(sessionId)?.binding?.session?.getSnapshot?.()
-    return { hasMore: snap?.hasMore === true, loadingOlder: snap?.loadingOlder === true }
+    const snap = ch?.binding?.session?.getSnapshot?.()
+    if (snap?.hasMore === true) {
+      return { hasMore: true, loadingOlder: snap?.loadingOlder === true }
+    }
+    // 兜底：session 快照尚未刷新时，读事件窗口自己的 hasMore（同一个分页信号，
+    // 由 installWindow/prependWindow 同步写入）——避免「实际还有历史却没有按钮」。
+    let esMore = false
+    try { esMore = ch?.binding?.eventSource?.getSnapshot?.()?.hasMore === true } catch { /* noop */ }
+    return { hasMore: esMore, loadingOlder: snap?.loadingOlder === true }
   } catch {
     return { hasMore: false, loadingOlder: false }
   }
@@ -745,7 +760,11 @@ export function readTurnStartMs(sessionId: string): number | null {
  * 订阅历史分页状态（hasMore / loadingOlder）。
  *
  * session face 要等 openStream 异步拿到 binding 后才存在，而订阅方（主对话）
- * 在挂载时就会订阅——因此先尝试附加，未就绪则短暂重试（最多到附加成功）。
+ * 在挂载时就会订阅——因此每 500ms 兜底重挂 + 重读一次：
+ * ① binding 还没物化时能自动接上；
+ * ② binding 被重建（断线重连 / 重试）时旧 face 的 notifier 不会再通知，
+ *    靠重挂与重读把 hasMore 拉回来（用户反馈「加载更早的按钮经常消失」）。
+ * 回调只在状态真的变了时被调用方采纳（MainChat 做浅比较），轮询不会引发重渲染。
  * @param sessionId - 目标会话
  * @param fn - 状态回调（附加成功时立即推一次）
  * @returns 取消订阅函数
@@ -756,14 +775,23 @@ export function subscribeHistoryState(
 ): Unsub {
   let stopped = false
   let un: (() => void) | null = null
+  /** 当前订阅指向的 session face：换了就重挂（旧对象可能已经 dispose）。 */
+  let attachedFace: any = null
   const emit = () => { if (!stopped) fn(readHistoryState(sessionId)) }
   const attach = () => {
-    if (stopped || un) return
+    if (stopped) return
     const face: any = channels.get(sessionId)?.binding?.session
     if (!face || typeof face.subscribe !== 'function') return
+    if (face === attachedFace && un) return
+    try {
+      un?.()
+    } catch {
+      /* 旧 face 已释放 */
+    }
+    un = null
+    attachedFace = face
     try {
       un = face.subscribe(emit)
-      emit()
     } catch {
       un = null
     }
@@ -772,7 +800,7 @@ export function subscribeHistoryState(
   emit()
   const timer = window.setInterval(() => {
     attach()
-    if (un) window.clearInterval(timer)
+    emit()
   }, 500)
   return () => {
     stopped = true

@@ -42,6 +42,46 @@ export const COMPOSER_SEAT = '[data-conversation-region="composer"]'
 const PRE_DOCK_STYLES = new WeakMap<HTMLElement, Record<string, string>>()
 
 /**
+ * 宿主「模态浮层」的最小 z-index 门槛（输入条座位是 35，工作台内部浮层都 < 100）。
+ * 宿主设置面板的 overlay 实测是 fixed + z-index:1000，且内部是
+ * role="dialog" aria-modal="true"。
+ */
+export const HOST_MODAL_MIN_Z = 100
+
+/**
+ * 命中的元素是不是「宿主模态浮层」——这类遮挡**不该**把停靠输入条藏起来。
+ *
+ * 为什么（用户反馈）：「左侧边栏的设置面板打开之后，DSH 主对话的聊天输入框会隐藏」。
+ * 设置面板是宿主的模态对话框：整页被一层 mask 盖住、输入条本来就在对话框下面
+ * （座位 z-index 35 < 对话框 1000），把座位 visibility:hidden 只会让它在
+ * 关掉对话框后仍显得「凭空消失了一秒」，并且和旁边同样被盖住的内容不一致。
+ * 判定只在**工作台之外**（不在 .ts-dock 里）的宿主 UI 上生效；工作台内部的
+ * 最大化浮层 / 叠放窗口仍走原来的「被盖住就藏」逻辑。
+ *
+ * @param hit - 停靠点命中的元素
+ * @param dockRoot - 工作台根节点（hit 在它内部 = 工作台自己的遮挡）
+ * @param styleOf - 取样式（测试注入假实现；默认 getComputedStyle）
+ */
+export function isHostModalCover(
+  hit: Element | null,
+  dockRoot: Element | null,
+  styleOf: (el: Element) => { zIndex?: string } = (el) => getComputedStyle(el),
+): boolean {
+  if (!hit) return false
+  if (dockRoot && (hit === dockRoot || dockRoot.contains(hit))) return false
+  try {
+    if (hit.closest?.('[aria-modal="true"]')) return true
+  } catch {
+    /* 假 DOM / 异常：继续走 z-index 判定 */
+  }
+  for (let n: Element | null = hit; n; n = n.parentElement) {
+    const z = Number.parseInt(styleOf(n)?.zIndex || '', 10)
+    if (Number.isFinite(z) && z >= HOST_MODAL_MIN_Z) return true
+  }
+  return false
+}
+
+/**
  * 把宿主原生输入条停靠进给定容器（工作台的「DSH 主对话」面板）。
  *
  * @param ref - 停靠目标容器（内容内缩由它的 border/padding 决定）
@@ -254,9 +294,13 @@ export function useDockNativeComposer(
      * —— 设置面板这类小弹层（宽 238px、最高 72vh）从侧栏长上来，恰好压住中点
      * 就会让整条输入条消失。多点之后：任一点命中 cell 即算在最前；全部没命中、
      * 但命中的东西只有「自己人」弹层（OWN_POP_SEL）也算在前 —— 真正的遮挡者
-     * （最大化浮窗 / 叠放窗口 / 宿主弹窗）在场时这 5 个点一个都回不来，仍会藏。
+     * （最大化浮窗 / 叠放窗口 / 工作台外的非模态弹窗）在场时这 5 个点一个都回不来，仍会藏。
+     *
+     * 例外：命中的是**宿主模态浮层**（工作台之外的 aria-modal / z-index ≥ 100 的
+     * 浮层，如设置面板）时不算遮挡 —— 输入条本来就在它下面，藏了反而像消失了。
      */
     const cellFront = (cell: HTMLElement, r: DOMRect): boolean => {
+      const dockRoot = cell.closest('.ts-dock')
       // 视口下界取「布局视口」与「可视视口」的较大者：手机键盘弹出时可用高度会变小
       // （Android interactive-widget=resizes-content / iOS 视口收缩）。若按缩小后的值
       // 判定，停靠点会在键盘弹出那一瞬越界 → apply 把座位隐藏 → 正在编辑的输入条被
@@ -273,6 +317,8 @@ export function useDockNativeComposer(
       seat.style.pointerEvents = 'none'
       let front = false
       let ownPopSeen = false
+      /** 命中宿主模态浮层（设置面板）：它在座位之上，不算「被工作台窗口盖住」。 */
+      let hostModalSeen = false
       let otherCover = false
       try {
         for (const x of xs) {
@@ -280,13 +326,15 @@ export function useDockNativeComposer(
           if (hit && cell.contains(hit)) { front = true; break }
           if (!hit) { otherCover = true; continue }
           if (hit.closest?.(OWN_POP_SEL)) ownPopSeen = true
+          else if (isHostModalCover(hit, dockRoot)) hostModalSeen = true
           else otherCover = true
         }
       } catch {
         otherCover = true
       }
       seat.style.pointerEvents = prevPe
-      return front || (ownPopSeen && !otherCover)
+      // 命中 cell = 在最前；否则只要遮挡物全是「自己人弹层 / 宿主模态浮层」就仍算可见。
+      return front || (!otherCover && (ownPopSeen || hostModalSeen))
     }
 
     let raf = 0

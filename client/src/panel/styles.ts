@@ -1290,8 +1290,14 @@ body.ts-vsplit-dragging .ts-card { transition:none !important; animation:none !i
    项目自己声明了 color-scheme 的话以项目为准（iframe 内文档优先）。 */
 .ts-preview-frame { color-scheme: dark; }
 .ts-preview-frame { flex:1 1 0; min-height:0; width:100%; display:block; border:0; background:transparent; }
-/* 主对话顶部的「加载更早」行（瀑布式回翻的入口与忙碌提示） */
-.ts-msgs-topbar { flex:none; display:flex; align-items:center; justify-content:center; gap:8px; padding:2px 0 6px; }
+/* 预览未就绪（devUrl 还没拿到）：占满正文区居中提示，不渲染空 src 的 iframe */
+.ts-preview-empty { flex:1 1 0; min-height:0; display:grid; place-items:center; padding:16px; text-align:center; color:var(--ts-fg-mute); font-size:calc(var(--ts-fs, 12.5px) * 0.96); }
+/* 主对话的滚动层包一层：回翻控制条放在**滚动容器之外**（瀑布式回翻的入口与忙碌提示）。
+   ⚠️ 不能放在滚动内容里：回翻会把更早内容插到顶部，视口锚定在原来看的那一轮，
+   滚动内容里的按钮会被一并顶出可视区（用户反馈「滚到顶部还没点就自动加载，
+   按钮被顶走 / 很难刷新出来」）。放到外面后它始终占一行、随时能点。 */
+.ts-chat-wrap { flex:1; min-height:0; min-width:0; display:flex; flex-direction:column; }
+.ts-msgs-topbar { flex:none; display:flex; align-items:center; justify-content:center; gap:8px; padding:6px 0 2px; }
 /* 卡片：启动情况 + 按钮同排不跨行；创建于/更新于也永远一行 */
 .ts-center-actions { flex-wrap:nowrap; }
 .ts-center-meta { flex-wrap:nowrap; }

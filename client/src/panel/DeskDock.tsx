@@ -740,6 +740,15 @@ interface ProjectData {
   run?: ExplorerRunInfo | null
   devUrl?: string
   devRunning?: boolean
+  /**
+   * devUrl 是否已经**拿到过答案**（成功返回过 /dev-info）。
+   *
+   * 为什么必须有它：data 初始是空对象，`devUrl` 不存在并不等于「没有预览」。
+   * 旧实现只看 `!data.devUrl` 就把面板拆了 —— 恢复布局时刚把预览+主对话还原成
+   * 同一组，reconcile 却先把预览删掉，8s 后轮询到 devUrl 再以「分屏到主对话左边」
+   * 补回来，于是用户保存的同组标签变成了左右分栏（本次修复）。
+   */
+  devKnown?: boolean
 }
 
 /**
@@ -773,6 +782,8 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
    */
   const closedRef = useRef<Set<string>>(new Set(readClosed(project.id)))
   const suppressDirtyRef = useRef(false)
+  /** 本次挂载是否从用户保存 / 自动快照恢复了布局（决定要不要跑一次性迁移）。 */
+  const restoredFromSnapshotRef = useRef(false)
   const resetToBuiltinRef = useRef<null | (() => void)>(null)
   const paneOptsRef = useRef<(id: string, position?: any) => any>(() => null)
   const [, bump] = useState(0)
@@ -1088,6 +1099,7 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
         const info = await fetchProjectInfo(project.path)
         next.devUrl = info?.devUrl
         next.devRunning = info?.devRunning
+        next.devKnown = true
       } catch {
         /* 保留上次 */
       }
@@ -1458,6 +1470,7 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
     suppressDirtyRef.current = true
     restored = tryRestore(SAVED_KEY(project.id)) || tryRestore(SNAPSHOT_KEY(project.id))
     if (!restored) buildDefault()
+    restoredFromSnapshotRef.current = restored
     // 用户关过的窗口：快照/默认布局里都有它 → 这里当场摘掉，不带回来
     // （用户反馈：关掉后一刷新又冒出来，而且落在默认区、不是原来那块）。
     closedRef.current.forEach((id) => {
@@ -1679,10 +1692,17 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
       }
     }
     KINDS.forEach((k: Kind) => {
-      if (k === 'preview' && !data.devUrl) {
+      if (k === 'preview') {
         const id = paneId(project.id, k)
-        const r = regionOf(id)
-        if (r) apis[r].removePanel(apis[r].getPanel(id))
+        // 首帧 / 刚切项目时 devUrl 还**不知道**（不是「没有」）：保留布局里已恢复的
+        // 预览，既不删也不补。等第一次轮询拿到答案后再决定（见 data.devKnown）。
+        if (!data.devKnown) return
+        if (!data.devUrl) {
+          const r = regionOf(id)
+          if (r) apis[r].removePanel(apis[r].getPanel(id))
+          return
+        }
+        ensure(id)
         return
       }
       ensure(paneId(project.id, k))
@@ -1692,7 +1712,9 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
     //   两种都搬到「主对话左边的分屏位」。放 reconcile 里做：此刻预览面板才真存在。
     try {
       const mk = `tokensave:desk-preview-in-editor.v1:${project.id}`
-      if (window.localStorage.getItem(mk) !== 'v2') {
+      // 只迁移**内置默认布局**：用户保存 / 自动快照里的布局是他自己的意图。
+      // 旧行为无条件迁移，把用户刚保存的「预览+主对话同组」拆成左右分栏（本次修复）。
+      if (!restoredFromSnapshotRef.current && window.localStorage.getItem(mk) !== 'v2') {
         const pid = paneId(project.id, 'preview')
         const anchor = paneId(project.id, 'chat')
         let hit: { region: Region; panel: any } | null = null

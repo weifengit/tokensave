@@ -156,6 +156,19 @@ check('项目预览探测 + devUrl 可用才建面板（**默认落编辑区**�
   // 同区但挤在同一组的（旧版本踩过的坑）先摘下来再按分屏位摆回
   /apis\.center\.removePanel\(hit\.panel\)/.test(dock) &&
   /apis\.center\.addPanel\(paneOptsRef\.current\(pid, pos\)\)/.test(dock))
+check('恢复布局时不因「devUrl 还没拿到」拆掉预览（同组预览+主对话不会被拆成左右分栏）',
+  /devKnown\?: boolean/.test(dock) &&
+  /next\.devKnown = true/.test(dock) &&
+  // 首帧 devUrl 未知：不删也不补，尊重快照里已恢复的预览
+  /if \(!data\.devKnown\) return/.test(dock) &&
+  // 一次性「预览归位」迁移只跑内置默认布局，不碰用户保存/自动快照
+  /!restoredFromSnapshotRef\.current && window\.localStorage\.getItem\(mk\) !== 'v2'/.test(dock))
+
+const previewPanelSrc = readFileSync(join(root, 'client/src/panel/PreviewPanel.tsx'), 'utf8')
+check('预览未就绪不渲染空 src 的 iframe（src="" 会把 DSH 自己嵌进来）',
+  /\{url \? \(/.test(previewPanelSrc) &&
+  /<div className="ts-preview-empty">/.test(previewPanelSrc) &&
+  /disabled=\{!url\}/.test(previewPanelSrc))
 check('数据只用本项目一份（单项目语义，无跨项目分桶）',
   /setData\(\(prev\) => \(\{ \.\.\.prev, \.\.\.next \}\)\)/.test(dock) || /setData\(\(prev\) => \(\{ \.\.\.prev/.test(dock))
 check('自建输入框已删除（ProjectComposer 不在仓内）',
@@ -420,6 +433,14 @@ check('输入条随面板隐藏/被盖而藏（不再 fixed 高层级常浮在�
   /if \(!r \|\| !cellFront\(cell, r\)\) continue/.test(composerDock) &&
   /seat\.style\.visibility = ''/.test(composerDock) &&
   /'visibility',/.test(composerDock))
+check('宿主模态弹层（设置面板）在场时不再藏输入条',
+  // 用户反馈：「左侧边栏的设置面板打开之后，DSH 主对话的聊天输入框会隐藏」。
+  // 模态浮层本来就在座位之上（座位 35 < 对话框 1000），藏了反而像凭空消失。
+  /export function isHostModalCover/.test(composerDock) &&
+  /hit\.closest\?\.\('\[aria-modal="true"\]'\)/.test(composerDock) &&
+  /else if \(isHostModalCover\(hit, dockRoot\)\) hostModalSeen = true/.test(composerDock) &&
+  /!otherCover && \(ownPopSeen \|\| hostModalSeen\)/.test(composerDock) &&
+  /const dockRoot = cell\.closest\('\.ts-dock'\)/.test(composerDock))
 check('输入条持焦时只做视觉隐身（不 blur、也不停在宿主原位压状态栏）',
   // 手机键盘弹出会改可用高度/触发 resize+scroll；此刻若把含焦点的座位用
   // visibility/display 藏起来，其中的 contenteditable 立即失焦、系统收回键盘

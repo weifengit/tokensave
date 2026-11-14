@@ -89,23 +89,31 @@ export function PreviewPanel({
             type="button"
             className="ts-btn ts-btn-sm"
             onClick={onReload}
+            disabled={!url}
             title="刷新内嵌预览"
           >刷新</button>
           <button
             type="button"
             className="ts-btn ts-btn-sm"
             onClick={openExternal}
+            disabled={!url}
             title="在新标签页打开（站点带 X-Frame-Options 时用它）"
           >新窗口</button>
         </span>
         {actions}
       </div>
-      <iframe
-        key={reloadKey}
-        className="ts-preview-frame"
-        src={url}
-        title={`${project.name} 预览`}
-      />
+      {/* devUrl 还没拿到（刚恢复布局 / dev server 未启动）时不要渲染空 src 的
+          iframe —— 浏览器会把 src="" 当成当前页面地址，把 DSH 自己嵌进预览里。 */}
+      {url ? (
+        <iframe
+          key={reloadKey}
+          className="ts-preview-frame"
+          src={url}
+          title={`${project.name} 预览`}
+        />
+      ) : (
+        <div className="ts-preview-empty">预览未就绪：dev server 还没运行。</div>
+      )}
     </section>
   )
 }

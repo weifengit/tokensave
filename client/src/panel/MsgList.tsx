@@ -1071,14 +1071,11 @@ export function MsgList({
     setWindowTurns(MAX_TURNS)
   }, [followKey])
   return (
-    <div className="ts-chat-msgs" ref={ref} onScroll={onScroll}>
-      {messages.length === 0 && (
-        <div className="ts-hint">{emptyText ?? '等待会话消息…'}</div>
-      )}
-      {/* 消息在、只是被当前视图滤空了：明说是口径问题，别让人以为会话没内容 */}
-      {messages.length > 0 && visible.length === 0 && (
-        <div className="ts-hint">{VIEW_EMPTY[view]}</div>
-      )}
+    <div className="ts-chat-wrap">
+      {/* 回翻控制条放在**滚动容器之外**：回翻会把更早内容插到顶部，
+         如果按钮在滚动内容里，会跟着被顶出可视区（用户反馈「滚到顶部还没点
+         就自动加载，按钮被顶走 / 很难刷新出来」）。常驻在消息流上方后，
+         无论当前滚到哪里都能直接点。 */}
       {(canLoadOlder || loadingOlder) && (
         <div className="ts-msgs-topbar">
           {loadingOlder ? (
@@ -1091,62 +1088,71 @@ export function MsgList({
           {hasHiddenInDom && <span className="ts-dim">已折叠更早 {hiddenTurns} 轮</span>}
         </div>
       )}
-      {visible.map((t, ti) => (
-        <div className="ts-turn" key={visibleKeys[ti] ?? ti} data-turn-key={visibleKeys[ti]}>
-          {t.users.map((m, i) => (
-            <div className="ts-msg-block ts-msg-block-user" key={`u${i}`}>
-              <div className="ts-msg-user">{m.content}</div>
-              <MsgTime time={m.time} copyContent={m.content} />
-            </div>
-          ))}
-          <InjectionRow items={t.injects} />
-          {t.proc.length > 0 && <ProcessGroup items={t.proc} />}
-          {t.answer && (
-            <div className="ts-msg-block ts-msg-block-assistant">
-              <div className="ts-msg-assistant">
-                <RichText text={t.answer.content} />
+      <div className="ts-chat-msgs" ref={ref} onScroll={onScroll}>
+        {messages.length === 0 && (
+          <div className="ts-hint">{emptyText ?? '等待会话消息…'}</div>
+        )}
+        {/* 消息在、只是被当前视图滤空了：明说是口径问题，别让人以为会话没内容 */}
+        {messages.length > 0 && visible.length === 0 && (
+          <div className="ts-hint">{VIEW_EMPTY[view]}</div>
+        )}
+        {visible.map((t, ti) => (
+          <div className="ts-turn" key={visibleKeys[ti] ?? ti} data-turn-key={visibleKeys[ti]}>
+            {t.users.map((m, i) => (
+              <div className="ts-msg-block ts-msg-block-user" key={`u${i}`}>
+                <div className="ts-msg-user">{m.content}</div>
+                <MsgTime time={m.time} copyContent={m.content} />
               </div>
-              <MsgTime time={t.answer.time} copyContent={t.answer.content} />
-            </div>
-          )}
-          {/* 轮末变更卡：有宿主档案 seq 就用路由的完整清单（含 +N/-M 与悬浮预览），
-              没有则退回本地 tool/call 统计的纯路径清单（与原生对话 tab 同位置的报告） */}
-          {(t.changesSeq !== null || t.edits.length > 0) && (
-            <ChangesCard sessionId={sessionId} seq={t.changesSeq} fallbackFiles={t.edits} />
-          )}
-          {t.notice && <TurnNoticeRow notice={t.notice.notice!} />}
-          {t.queued.map((m, i) => (
-            <div className="ts-msg-block ts-msg-block-user" key={`q${i}`} data-turn-queued="">
-              <div className="ts-msg-user ts-msg-queued">
-                {m.content}
-                <span className="ts-queued-tag" title="会话正忙：这条消息在宿主收件箱队列里，下一轮开始时送达模型（与原生对话的队列面板同源）">排队中</span>
+            ))}
+            <InjectionRow items={t.injects} />
+            {t.proc.length > 0 && <ProcessGroup items={t.proc} />}
+            {t.answer && (
+              <div className="ts-msg-block ts-msg-block-assistant">
+                <div className="ts-msg-assistant">
+                  <RichText text={t.answer.content} />
+                </div>
+                <MsgTime time={t.answer.time} copyContent={t.answer.content} />
               </div>
-              <MsgTime time={m.time} copyContent={m.content} />
-            </div>
-          ))}
-        </div>
-      ))}
-      {/* 用户滚上去看细节时给一个“回到最新”入口（不自动抢滚动）。
-         注意：**始终渲染**，只用属性控制可见性。
-         以前是 `!pinned && <button>`——按钮是滚动容器里的一个 flex 项，
-         它的增删会改变 scrollHeight，而 scrollHeight 又决定 atBottom，
-         atBottom 再翻转 pinned：形成「贴底↔离开底部」的自激回路，
-         表现为底部附近持续数秒的微抖 / 重影。常驻 DOM 后 scrollHeight 恒定，
-         回路断开。（visibility 不脱离文档流，仍占位，正是我们要的。） */}
-      {messages.length > 0 && (
-        <button
-          className="ts-jump-latest"
-          // 可见性用独立于 pinned 的 jumpVisible：内容不足一屏时不出现，
-          // 离开底部后 5 秒自动收起（详见上面的 revealJump / hideJump）。
-          data-visible={jumpVisible ? '' : undefined}
-          aria-hidden={jumpVisible ? undefined : true}
-          tabIndex={jumpVisible ? undefined : -1}
-          onClick={jumpToBottom}
-          title="回到最新"
-        >
-          ↓ 回到最新
-        </button>
-      )}
+            )}
+            {/* 轮末变更卡：有宿主档案 seq 就用路由的完整清单（含 +N/-M 与悬浮预览），
+                没有则退回本地 tool/call 统计的纯路径清单（与原生对话 tab 同位置的报告） */}
+            {(t.changesSeq !== null || t.edits.length > 0) && (
+              <ChangesCard sessionId={sessionId} seq={t.changesSeq} fallbackFiles={t.edits} />
+            )}
+            {t.notice && <TurnNoticeRow notice={t.notice.notice!} />}
+            {t.queued.map((m, i) => (
+              <div className="ts-msg-block ts-msg-block-user" key={`q${i}`} data-turn-queued="">
+                <div className="ts-msg-user ts-msg-queued">
+                  {m.content}
+                  <span className="ts-queued-tag" title="会话正忙：这条消息在宿主收件箱队列里，下一轮开始时送达模型（与原生对话的队列面板同源）">排队中</span>
+                </div>
+                <MsgTime time={m.time} copyContent={m.content} />
+              </div>
+            ))}
+          </div>
+        ))}
+        {/* 用户滚上去看细节时给一个“回到最新”入口（不自动抢滚动）。
+           注意：**始终渲染**，只用属性控制可见性。
+           以前是 `!pinned && <button>`——按钮是滚动容器里的一个 flex 项，
+           它的增删会改变 scrollHeight，而 scrollHeight 又决定 atBottom，
+           atBottom 再翻转 pinned：形成「贴底↔离开底部」的自激回路，
+           表现为底部附近持续数秒的微抖 / 重影。常驻 DOM 后 scrollHeight 恒定，
+           回路断开。（visibility 不脱离文档流，仍占位，正是我们要的。） */}
+        {messages.length > 0 && (
+          <button
+            className="ts-jump-latest"
+            // 可见性用独立于 pinned 的 jumpVisible：内容不足一屏时不出现，
+            // 离开底部后 5 秒自动收起（详见上面的 revealJump / hideJump）。
+            data-visible={jumpVisible ? '' : undefined}
+            aria-hidden={jumpVisible ? undefined : true}
+            tabIndex={jumpVisible ? undefined : -1}
+            onClick={jumpToBottom}
+            title="回到最新"
+          >
+            ↓ 回到最新
+          </button>
+        )}
+      </div>
     </div>
   )
 }

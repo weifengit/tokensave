@@ -27,6 +27,7 @@ import { fileURLToPath } from 'node:url'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const src = readFileSync(join(root, 'client/src/panel/MsgList.tsx'), 'utf8')
+const styles = readFileSync(join(root, 'client/src/panel/styles.ts'), 'utf8')
 
 let fail = 0
 const check = (label, ok, detail = '') => {
@@ -105,6 +106,15 @@ check('卸载时取消锚 rAF（不留孤儿循环）',
 check('卸载 cleanup 仍在但只是兜底（onScroll 当场记账才是保命线）',
   /useEffect\(\(\) => rememberScroll, \[rememberScroll\]\)/.test(src) &&
   /真正的保命线是「用户一滚动就当场记账」/.test(src))
+check('「加载更早」控制条在滚动容器之外（回翻后不被顶出可视区，随时可点）',
+  // 放在滚动内容里时，回翻把内容插到顶部 → 视口锚定 → 按钮被一并顶走（用户反馈），
+  // 所以 MsgList 必须用 .ts-chat-wrap 把控制条包在 .ts-chat-msgs 外面：
+  /<div className="ts-chat-wrap">/.test(src) &&
+  /className="ts-msgs-topbar"/.test(src) &&
+  src.indexOf('ts-chat-wrap') < src.indexOf('className="ts-chat-msgs"') &&
+  // 理由必须写在 CSS 里
+  /按钮被顶走/.test(styles) &&
+  /\.ts-chat-wrap \{ flex:1; min-height:0/.test(styles))
 
 if (fail) {
   console.error(`\n${fail} 项 FAIL`)
