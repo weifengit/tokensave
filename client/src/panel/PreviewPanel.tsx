@@ -58,6 +58,7 @@ export function PreviewPanel({
   project,
   url,
   devRunning,
+  devKnown,
   actions,
   reloadKey = 0,
   onReload,
@@ -65,6 +66,14 @@ export function PreviewPanel({
   project: ProjectRecord
   url: string
   devRunning?: boolean
+  /**
+   * 是否**已经问过** dev server 探测（而不是还在问）。
+   *
+   * 为什么要区分：空态文案原来只有一句「dev server 还没运行」，于是探测还没回来
+   * 的那一小段时间也在冒充「没运行」—— 用户看到的就是「很久都是未就绪」。现在：
+   * 没问过 → 说「正在探测」，问过了且真没地址 → 才说「还没运行」。
+   */
+  devKnown?: boolean
   /** 窗口三键（最小化 / 最大化 / 关闭），由 HDesk 的卡片状态机提供 */
   actions?: React.ReactNode
   /** 刷新计数：变化即重挂 iframe */
@@ -112,7 +121,11 @@ export function PreviewPanel({
           title={`${project.name} 预览`}
         />
       ) : (
-        <div className="ts-preview-empty">预览未就绪：dev server 还没运行。</div>
+        <div className="ts-preview-empty">
+          {devKnown
+            ? '预览未就绪：dev server 还没运行。'
+            : '正在探测 dev server 地址…'}
+        </div>
       )}
     </section>
   )

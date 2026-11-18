@@ -1080,36 +1080,52 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
   )
   paneOptsRef.current = paneOpts
 
-  // —— 数据轮询（探索者 + 预览探测同一拍，8s）——
+  // —— 数据轮询（探索者 + 预览探测）——
+  //
+  // ⚠️ 两件事**必须并行**：旧实现先 await fetchExplorers 再 fetchProjectInfo，
+  // 于是「项目预览就绪」被探索者请求堵在后面（实测：探索者慢 6s → 预览空态也多等 6s，
+  // 用户看到的就是「有预览的界面要等很久，先卡在『预览未就绪』」）。
+  //
+  // ⚠️ 失败时**不能写回 undefined**：旧实现失败也写 next.devUrl（= undefined）并置
+  // devKnown，reconcile 看到 !devUrl 就把预览面板整个拆了（一次网络抖动 → 预览窗口消失，
+  // 下一拍再重建）。探测失败就保留上一次的结论。
   useEffect(() => {
     let alive = true
-    const poll = async () => {
-      // 用 Partial：网络抖动时**保留上次**的探索者/预览（旧实现先置空数组，
-      // 一次失败就把探索者窗口和协作对话整个抹掉，与注释承诺相反）。
-      const next: Partial<ProjectData> = {}
+    const pollExplorers = async () => {
+      let next: Partial<ProjectData> | null = null
       try {
         const snap = await fetchExplorers(project.path)
-        next.explorers = snap.sessions
         // 轮次归属（发起会话 / 开始时间）：工作台据此只在本会话发起的那一轮里展示
-        next.run = snap.run
+        next = { explorers: snap.sessions, run: snap.run }
       } catch {
-        /* 保留上次 */
+        /* 保留上次：网络抖动不该把探索者窗口和协作对话整个抹掉 */
       }
-      try {
-        const info = await fetchProjectInfo(project.path)
-        next.devUrl = info?.devUrl
-        next.devRunning = info?.devRunning
-        next.devKnown = true
-      } catch {
-        /* 保留上次 */
-      }
-      if (alive) setData((prev) => ({ ...prev, ...next }))
+      if (alive && next) setData((prev) => ({ ...prev, ...next }))
     }
-    void poll()
-    const t = window.setInterval(() => void poll(), 8_000)
+    const pollPreview = async () => {
+      let info: Awaited<ReturnType<typeof fetchProjectInfo>> = null
+      try {
+        info = await fetchProjectInfo(project.path)
+      } catch {
+        info = null
+      }
+      if (!alive) return
+      setData((prev) =>
+        info
+          ? { ...prev, devUrl: info.devUrl, devRunning: info.devRunning, devKnown: true }
+          // 拿不到就只标「问过了」（当次不拆面板），devUrl 保持上一次的值。
+          // 只有真的拿到空 devUrl（问到了、项目确实没 dev server）才拆预览。
+          : { ...prev, devKnown: true },
+      )
+    }
+    void pollExplorers()
+    void pollPreview()
+    const t1 = window.setInterval(() => void pollExplorers(), 8_000)
+    const t2 = window.setInterval(() => void pollPreview(), 8_000)
     return () => {
       alive = false
-      window.clearInterval(t)
+      window.clearInterval(t1)
+      window.clearInterval(t2)
     }
   }, [project.path])
 
@@ -2434,6 +2450,7 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
             project={project}
             url={absoluteUrl(data.devUrl || '')}
             devRunning={data.devRunning}
+            devKnown={data.devKnown}
             reloadKey={reloadKey}
             onReload={() => setReloadKey((n) => n + 1)}
           />

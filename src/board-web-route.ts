@@ -12,7 +12,7 @@
  */
 import fs from 'node:fs'
 import os from 'node:os'
-import net from 'node:net'
+import { guessDevUrl, probeUrl, projectMtimes } from './project-probe.ts'
 import { spawn, execFileSync, type ChildProcess } from 'node:child_process'
 import path from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
@@ -1026,144 +1026,10 @@ export function handleRepos(_ctx: Context, _req: any, res: any): void {
 
 // —— 项目信息：文件修改时间（真实 mtime）+ 开发服务器地址 —————
 //
-// 「上次更新」用户要求以**内部文件最后一次修改**为准（不是我们记的使用时间）。
-// 这里递归扫一遍项目目录，取最大 mtime；忽略 node_modules/.git/dist 等噪声目录，
-// 也不跟随符号链接（避免大目录卡死）。
-//
-// 同时尝试从 package.json 的 scripts 里推断开发服务器端口，给出「展示」用的 URL。
-
-/** 扫描时忽略的目录（体积大、与“项目代码改动”无关）。 */
-const IGNORE_DIRS = new Set([
-  'node_modules', '.git', 'dist', 'build', 'out', 'target', '.next', '.nuxt',
-  '.cache', 'coverage', '.venv', 'venv', '__pycache__', '.idea', '.vscode',
-  'vendor', '.turbo', '.parcel-cache', 'tmp', 'logs',
-])
-
-/**
- * 扫一遍项目目录，同时取**最新**与**最老**的文件修改时间。
- *
- * 「上次更新」= 最新（项目是否还在动）；「创建于」= 最老（项目里第一个文件是什么时候写的，
- * 比“加入项目中心的时间”更接近“项目创建时间”——用户要求两者同口径）。
- * 忽略同一组噪声目录（node_modules/.git/dist…）与点文件，不跟随符号链接，
- * 20000 条上限防止在大目录上卡死。
- * @param root - 项目根目录
- * @returns newest / oldest（mtimeMs，毫秒）；扫不到时两者均为 0
- */
-function scanProjectMtimes(root: string): { newest: number; oldest: number } {
-  let newest = 0
-  let oldest = 0
-  const stack: string[] = [root]
-  let guard = 0
-  while (stack.length > 0 && guard < 20000) {
-    const dir = stack.pop() as string
-    let items: fs.Dirent[]
-    try {
-      items = fs.readdirSync(dir, { withFileTypes: true })
-    } catch {
-      continue
-    }
-    for (const it of items) {
-      guard++
-      if (guard > 20000) break
-      const name = it.name
-      if (name.startsWith('.')) continue
-      if (IGNORE_DIRS.has(name)) continue
-      const full = path.join(dir, name)
-      if (it.isSymbolicLink()) continue
-      if (it.isDirectory()) {
-        stack.push(full)
-        continue
-      }
-      try {
-        const st = fs.statSync(full)
-        if (st.mtimeMs > newest) newest = st.mtimeMs
-        if (oldest === 0 || st.mtimeMs < oldest) oldest = st.mtimeMs
-      } catch {
-        /* 单个文件读不到：跳过 */
-      }
-    }
-  }
-  return { newest, oldest }
-}
-
-/** 只取最新（保留原入口，供其它调用点使用）。 */
-function latestMtimeMs(root: string): number {
-  return scanProjectMtimes(root).newest
-}
-
-/**
- * 项目的「展示」地址。
- *
- * 优先读 package.json 的 `previewUrl`（项目自带的显式声明）：可为完整 URL，
- * 也可为宿主自身的相对路径（如 `/api/intel/site/console/`）——后者由 DSH 自己
- * 托管，宿主换端口也不会失效。
- *
- * 没声明时回退到**显式**端口推断（`--port 3000` / `-p 5173` / `PORT=3000`）——
- * 不猜默认端口：猜错会让「展示」打开一个不相干的地址。
- */
-function guessDevUrl(root: string): string {
-  try {
-    const pkgPath = path.join(root, 'package.json')
-    if (!fs.existsSync(pkgPath)) return ''
-    const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'))
-    const declared = pkg && typeof pkg.previewUrl === 'string' ? pkg.previewUrl.trim() : ''
-    if (declared) return declared
-    const scripts = pkg && typeof pkg.scripts === 'object' ? pkg.scripts : {}
-    const text = ['dev', 'start', 'serve', 'preview']
-      .map((k) => (typeof scripts[k] === 'string' ? scripts[k] : ''))
-      .join(' ')
-    const m = /(?:--port[= ]|-p\s+|PORT=)(\d{2,5})/.exec(text)
-    if (!m) return ''
-    return `http://localhost:${m[1]}`
-  } catch {
-    return ''
-  }
-}
-
-/**
- * 探测该 URL 是否真的有人在监听（“项目已启动”的诚实判定）。
- * 用 net.connect 而不是 fetch：只关心端口通不通，不等 HTTP 响应；
- * 超时 400ms，避免列表渲染被拖慢。
- */
-function probeUrl(url: string): Promise<boolean> {
-  return new Promise((resolve) => {
-    if (!url) {
-      resolve(false)
-      return
-    }
-    let host = '127.0.0.1'
-    let port = 0
-    try {
-      const u = new URL(url)
-      host = u.hostname || host
-      port = Number(u.port) || (u.protocol === 'https:' ? 443 : 80)
-    } catch {
-      resolve(false)
-      return
-    }
-    if (!port) {
-      resolve(false)
-      return
-    }
-    const socket = new net.Socket()
-    let done = false
-    const finish = (ok: boolean) => {
-      if (done) return
-      done = true
-      try { socket.destroy() } catch { /* noop */ }
-      resolve(ok)
-    }
-    socket.setTimeout(400)
-    socket.once('connect', () => finish(true))
-    socket.once('timeout', () => finish(false))
-    socket.once('error', () => finish(false))
-    try {
-      socket.connect(port, host)
-    } catch {
-      finish(false)
-    }
-  })
-}
+// 探测逻辑（mtime 扫描 / 端口探测 / previewUrl 推断）已抽到 project-probe.ts：
+// 那个文件只做纯探测，这里只负责 HTTP 外壳（入参校验 + JSON 响应）。
+// 抽出去的直接原因：旧的同步全树扫描把宿主事件循环按住，并发时把「预览就绪」
+// 判定拖到秒级 —— 用户看到的「预览未就绪」停留很久就是这么来的。
 
 export async function handleProjectInfo(req: any, res: any): Promise<void> {
   let params: URLSearchParams
@@ -1193,9 +1059,12 @@ export async function handleProjectInfo(req: any, res: any): Promise<void> {
     // 未启动时 devUrl 仍返回（供 UI 提示“地址是 X，但当前未启动”）。
     // 相对路径（/…）由宿主 DSH 自己托管：本页能打开就说明宿主在跑，没有可探
     // 的独立端口，直接视为可用。
-    const devRunning = devUrl.startsWith('/') ? true : await probeUrl(devUrl)
-    // 一次扫描同时得到「最新」（更新于）与「最老」（创建于）文件时间。
-    const mtimes = scanProjectMtimes(target)
+    //
+    // 端口探测与 mtime 扫描**并行**：旧实现先等 probeUrl 再扫盘，两者串行相加。
+    // 扫描本身已经异步化（见 project-probe.ts），不再按住事件循环。
+    const probe = devUrl.startsWith('/') ? Promise.resolve(true) : probeUrl(devUrl)
+    const mtimes = await projectMtimes(target)
+    const devRunning = await probe
     writeJson(res, 200, {
       timestamp: Date.now(),
       path: target,

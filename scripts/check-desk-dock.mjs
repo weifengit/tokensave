@@ -158,7 +158,11 @@ check('项目预览探测 + devUrl 可用才建面板（**默认落编辑区**�
   /apis\.center\.addPanel\(paneOptsRef\.current\(pid, pos\)\)/.test(dock))
 check('恢复布局时不因「devUrl 还没拿到」拆掉预览（同组预览+主对话不会被拆成左右分栏）',
   /devKnown\?: boolean/.test(dock) &&
-  /next\.devKnown = true/.test(dock) &&
+  // 探测成功才置 devKnown（两条写回路径：拿到地址 / 只标记问过）
+  /devUrl: info\.devUrl, devRunning: info\.devRunning, devKnown: true/.test(dock) &&
+  // 探测**失败**不得写回 undefined：旧实现会把 devUrl 抹成空 → reconcile 拆掉预览面板，
+  // 一次网络抖动就让预览窗口消失（下一拍再重建）。失败只标记「问过了」，保留上次的值。
+  /: \{ \.\.\.prev, devKnown: true \}/.test(dock) &&
   // 首帧 devUrl 未知：不删也不补，尊重快照里已恢复的预览
   /if \(!data\.devKnown\) return/.test(dock) &&
   // 一次性「预览归位」迁移只跑内置默认布局，不碰用户保存/自动快照
@@ -477,7 +481,21 @@ check('探索者轮次按发起会话归属（新会话不继承上一轮的探�
   /s\.name === 'tokensave_delegate'/.test(dock) &&
   /const explorers = useMemo/.test(dock) &&
   /ownsRun \? data\.explorers : NO_EXPLORERS/.test(dock) &&
-  /next\.run = snap\.run/.test(dock))
+  /next = \{ explorers: snap\.sessions, run: snap\.run \}/.test(dock))
+check('预览探测与探索者探测**并行**（不再被探索者请求堵在就绪判定前）',
+  // 旧实现是单个 poll 里先 await fetchExplorers 再 fetchProjectInfo：探索者一慢，
+  // 「预览未就绪」就跟着一起等（实测慢 6s → 空态也多等 6s）。
+  /const pollExplorers = async \(\)/.test(dock) &&
+  /const pollPreview = async \(\)/.test(dock) &&
+  /void pollExplorers\(\)\s*\n\s*void pollPreview\(\)/.test(dock) &&
+  // 两条各自的 8s 心跳（不再共享一个 setInterval 串行跑）
+  /const t1 = window\.setInterval\(\(\) => void pollExplorers\(\), 8_000\)/.test(dock) &&
+  /const t2 = window\.setInterval\(\(\) => void pollPreview\(\), 8_000\)/.test(dock))
+check('预览空态不把「还在探测」冒充成「dev server 没运行」',
+  /devKnown\?: boolean/.test(previewPanelSrc) &&
+  /正在探测 dev server 地址/.test(previewPanelSrc) &&
+  /devKnown\s*\? '预览未就绪：dev server 还没运行。'/.test(previewPanelSrc) &&
+  /devKnown=\{data\.devKnown\}/.test(dock))
 check('服务端轮次登记发起会话，/explorers 返回归属元信息',
   // 轮次按 workspace 存（runs.json），旧实现不记「谁发起的」→ 新会话继承旧内容。
   /originSessionId\?: string/.test(runsSrc) &&
