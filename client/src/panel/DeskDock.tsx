@@ -230,7 +230,6 @@ const DOCK_CSS = `
 .ts-skin-scroll { display: flex; flex-direction: column; gap: 6px; max-height: 196px; overflow-y: auto; padding: 2px 4px 2px 2px; scrollbar-width: thin; scrollbar-color: rgba(127,127,127,.4) transparent; }
 .ts-skin-scroll::-webkit-scrollbar { width: 8px; }
 .ts-skin-scroll::-webkit-scrollbar-thumb { background: rgba(127,127,127,.35); border-radius: 4px; }
-.ts-skin-note { padding: 0 4px; line-height: 1.5; }
 .ts-dock[data-hide-left] { --ts-side-l: 0px; }
 .ts-dock[data-hide-right] { --ts-side-r: 0px; }
 /* 编辑区/面板区（center）也能收起：列宽塌陷到 0 + 区域内隐藏（面板不销毁，展开即回）。 */
@@ -2928,8 +2927,6 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
                 </div>
               ))}
             </div>
-            {/* 一句说明：这套皮同时盖住四个 tab（对话/轨迹/项目中心/工作台）的整页。 */}
-            <div className="ts-set-hint ts-skin-note">跟随系统深浅自动切换 · 四个页面一起生效</div>
           </div>
 
           {/* ④ 字体：字号档位 + 字族 */}

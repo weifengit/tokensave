@@ -8127,7 +8127,6 @@ var DOCK_CSS = `
 .ts-skin-scroll { display: flex; flex-direction: column; gap: 6px; max-height: 196px; overflow-y: auto; padding: 2px 4px 2px 2px; scrollbar-width: thin; scrollbar-color: rgba(127,127,127,.4) transparent; }
 .ts-skin-scroll::-webkit-scrollbar { width: 8px; }
 .ts-skin-scroll::-webkit-scrollbar-thumb { background: rgba(127,127,127,.35); border-radius: 4px; }
-.ts-skin-note { padding: 0 4px; line-height: 1.5; }
 .ts-dock[data-hide-left] { --ts-side-l: 0px; }
 .ts-dock[data-hide-right] { --ts-side-r: 0px; }
 /* \u7F16\u8F91\u533A/\u9762\u677F\u533A\uFF08center\uFF09\u4E5F\u80FD\u6536\u8D77\uFF1A\u5217\u5BBD\u584C\u9677\u5230 0 + \u533A\u57DF\u5185\u9690\u85CF\uFF08\u9762\u677F\u4E0D\u9500\u6BC1\uFF0C\u5C55\u5F00\u5373\u56DE\uFF09\u3002 */
@@ -10214,8 +10213,7 @@ function DeskDock({ project, sessionId, onBack }) {
                       s2.id
                     )) })
                   ] }, g.group))
-                ] }),
-                /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("div", { className: "ts-set-hint ts-skin-note", children: "\u8DDF\u968F\u7CFB\u7EDF\u6DF1\u6D45\u81EA\u52A8\u5207\u6362 \xB7 \u56DB\u4E2A\u9875\u9762\u4E00\u8D77\u751F\u6548" })
+                ] })
               ] }),
               /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("div", { className: "ts-set-block", "data-desk-set-block": "font", children: [
                 /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("div", { className: "ts-set-head", children: [

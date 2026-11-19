@@ -784,5 +784,6 @@ check('皮肤覆盖层的注入是幂等的（按 id 去重，重复调用不重
 check('皮肤设置面板：限高滚动 + 当前皮肤状态行（22 套皮不再把字体块顶出面板）',
   /data-desk-skin-scroll=""/.test(dock) &&
   /\.ts-skin-scroll \{[^}]*max-height: 196px;[^}]*overflow-y: auto;/.test(dock) &&
-  /data-desk-skin-status=""/.test(dock) &&
-  /ts-skin-note/.test(dock))
+  /data-desk-skin-status=""/.test(dock))
+check('皮肤块不再挂常驻说明行（状态看标题行右侧的 data-desk-skin-status，不另占一行）',
+  !/跟随系统深浅自动切换/.test(dock) && !/ts-skin-note/.test(dock))
