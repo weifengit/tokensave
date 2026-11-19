@@ -51,6 +51,15 @@ check(pkg.scripts?.install === undefined, 'scripts.install 是生命周期钩子
 const profileSource = readFileSync(join(ROOT, 'scripts/install/profile.mjs'), 'utf8')
 check(profileSource.includes('installIntoDesktopProfile'), 'profile.mjs 必须提供桌面端专用安装路径')
 check(!/installViaCli\([^)]*'desktop'/.test(profileSource), 'web 的 CLI 安装路径不应被复用到 desktop')
+// 6. 桌面端必须能在「没有 dsh CLI / 没有 pnpm」的机器上装：只装了 Electron
+//    桌面端的机器两者都没有，而宿主解析 bundle 只需 node_modules 里有链接。
+check(profileSource.includes('symlinkSync'), '桌面端必须用符号链接落地，不能依赖 pnpm install')
+check(!/execFileSync\('pnpm'/.test(profileSource), 'profile.mjs 不应再调 pnpm（桌面端要零外部依赖）')
+const installSource = readFileSync(join(ROOT, 'scripts/install.mjs'), 'utf8')
+check(
+  !/if \(!environment\.dsh\.ok\) \{\s*\n\s*report\.profiles\.push/.test(installSource),
+  'dsh CLI 不能作为全局前置：桌面端不需要它，否则只装桌面端的机器直接卡死',
+)
 
 if (failures.length > 0) {
   console.error('[check-install] FAIL')

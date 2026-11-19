@@ -97,16 +97,13 @@ function runInstall(options) {
     report.profiles.push({ profile: options.profile, ok: false, error: environment.node.reason })
     return { ok: false, report }
   }
-  if (!environment.dsh.ok) {
-    report.profiles.push({ profile: options.profile, ok: false, error: '未找到 dsh 命令；请先安装 DeepSeek Harness CLI' })
-    return { ok: false, report }
-  }
-  const pnpm = checkPnpm()
-  if (!pnpm.ok) {
-    report.profiles.push({ profile: options.profile, ok: false, error: pnpm.error })
-    return { ok: false, report }
-  }
-  report.pnpm = pnpm
+  // dsh CLI 与 pnpm 都**不是全局前置**，而是按目标分别要求：
+  //   web 需要 dsh CLI（官方 `dsh plugin add`）与 pnpm（它内部转发给 pnpm）；
+  //   桌面端两者都不需要 —— CLI 拒绝管理 desktop，我们直接改清单 + 建链接。
+  // 一开始就硬要求 dsh 会让「只装了 Electron 桌面端」的机器直接装不了。
+  // 缺 dsh CLI 时不在这里提前返回：交给下面的逐目标检查统一报错，
+  // 否则 `--profile all` 会把同一个 web 失败报两遍。
+  report.pnpm = checkPnpm()
 
   // 决定要装哪些 profile。桌面端目录不存在 = 没装过桌面端，跳过而不是报错。
   const targets = []
@@ -154,6 +151,13 @@ function runInstall(options) {
   let allOk = true
   for (const profile of targets) {
     const target = profile === 'desktop' ? environment.desktop : environment.web
+    // web 需要 dsh CLI 与 pnpm；桌面端只需要写清单 + 建链接，两者都不要。
+    // 缺 dsh 时在 `all` 下**不算整体失败**：很多机器只装了 Electron 桌面端，
+    // 那种情况下 desktop 装成功就该算成功，只是提示 web 需要 CLI。
+    if (profile === 'web' && (!environment.dsh.ok || !report.pnpm.ok)) {
+      report.profiles.push({ profile, ok: false, dir: target.dir, skippedForAll: options.profile === 'all', error: !environment.dsh.ok ? '未找到 dsh 命令；web 模式需要 dsh CLI' : report.pnpm.error })
+      continue
+    }
     const result = profile === 'desktop'
       ? installIntoDesktopProfile(target.dir, ROOT)
       : installViaCli(environment.dsh.command, 'web', ROOT)

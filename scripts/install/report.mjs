@@ -38,14 +38,17 @@ export function printReport(report) {
   for (const item of report.profiles) {
     if (item.ok && item.action === 'dry-run') push(`  ${dim('将安装')} ${bold(item.profile)}`)
     else if (item.ok) push(`  ${green('✓')} ${bold(item.profile)} ${dim(item.dir ?? '')}`)
-    else {
+    // `--profile all` 下因缺少 dsh CLI 而没装的 web：不是错误，是这台机器上没这个目标。
+    else if (item.skippedForAll) {
+      push(`  ${dim('–')} ${item.profile} ${dim(`已跳过：${String(item.error ?? '').split('\n')[0]}`)}`)
+    } else {
       push(`  ${red('✗')} ${bold(item.profile)}`)
       for (const line of String(item.error ?? '未知错误').split('\n')) push(`    ${line}`)
     }
   }
   for (const item of report.skipped) push(`  ${dim('–')} ${item.profile} ${dim(`已跳过：${item.reason}`)}`)
 
-  const failed = report.profiles.filter((item) => !item.ok)
+  const failed = report.profiles.filter((item) => !item.ok && !item.skippedForAll)
   const succeeded = report.profiles.filter((item) => item.ok && item.action !== 'dry-run')
 
   push()

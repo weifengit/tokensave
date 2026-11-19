@@ -58,11 +58,19 @@ node scripts/install.mjs --dry-run            # 只报告，不写文件
 | 目标 | 位置 | 机制 |
 | --- | --- | --- |
 | web | `~/.dsh/profiles/web/` | `dsh plugin --profile web add <目录>`，dsh 自己维护依赖与 bundles |
-| 桌面端 | `~/.dsh/profiles/desktop/` | 直接改该 profile 的清单并跑 `pnpm install`（CLI 拒绝管理 desktop） |
+| 桌面端 | `~/.dsh/profiles/desktop/` | 直接改该 profile 的清单 + 建 `node_modules` 符号链接（CLI 拒绝管理 desktop） |
 
 桌面端 profile 由 Electron 应用独占：`dsh plugin --profile desktop ...` 会被直接拒绝
 （`profile "desktop" is managed exclusively by the Electron application`）。
 所以安装器改它的清单前会先备份为 `package.json.bak-tokensave-install`，任何一步失败都回滚。
+
+**桌面端不需要 `dsh` CLI，也不需要 `pnpm`。** 宿主要能解析到插件，只需要
+`~/.dsh/profiles/desktop/node_modules/dsh-tokensave/package.json` 存在，一个符号链接就满足；
+于是「只装了 Electron 桌面端、机器上没有 dsh CLI / pnpm」也能装。
+web 模式才需要 dsh CLI（它走官方 `dsh plugin add`）。
+
+`--profile all` 在缺 dsh CLI 的机器上会把 web 标成「已跳过」而不是失败：
+只装桌面端的机器应该装完桌面端就算成功。
 
 `$DSH_HOME` 会覆盖 `~/.dsh`，安装器与 dsh 使用同一套解析规则。
 

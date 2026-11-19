@@ -72,8 +72,12 @@ const entry = lines.join('\n').trimEnd() + '\n'
 const changelogPath = join(root, 'CHANGELOG.md')
 const head = '# 变更日志\n\n> 本文件由 `scripts/release.mjs` 自动维护：每次发版把 git 提交按\n> 「新增/修复/改进/文档」分组追加到顶部。人工补充用 --notes。\n\n'
 const old = existsSync(changelogPath) ? readFileSync(changelogPath, 'utf8') : head
-const body = old.startsWith('# 变更日志') ? old.slice(old.indexOf('\n\n') + 2) : old
-const changelog = head + entry + '\n' + body
+// 切掉旧文件的「标题 + 说明块」再拼新段落。原实现只跳过一个空行，会把说明块
+// 留在 body 里，于是每发一次版就多复制一份头部（CHANGELOG 曾重复 7 次）。
+// 从第一个版本标题（'## v'）处切开：之前的是头部，之后的是历史正文。
+const firstRelease = old.search(/^## v/m)
+const body = firstRelease >= 0 ? old.slice(firstRelease) : old.startsWith('# 变更日志') ? '' : old
+const changelog = `${head}${entry}\n${body}`.trimEnd() + '\n'
 
 if (dry) {
   console.log(`[dry-run] version ${pkg.version} -> ${next} (${bump})`)

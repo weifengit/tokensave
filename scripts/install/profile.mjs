@@ -1,15 +1,19 @@
 // profile 安装：把一个本地 checkout 注册进 dsh 的某个 profile。
 //
 // 两条路径是**机制不同**，不是一个的特例：
-//   - web 等普通 profile 走 `dsh plugin --profile <name> add <dir>`，由 dsh 自己
+//   - web 等普通 profile 走 `dsh plugin --profile <name> add <目录>`，由 dsh 自己
 //     维护 package.json 依赖、bundles 列表与锁文件，是最稳的官方入口。
 //   - desktop 是 Electron 应用的保留 profile，CLI 会直接拒绝
 //     （`profile "desktop" is managed exclusively by the Electron application`），
-//     所以只能在它自己的目录里手写清单再跑 pnpm。手写要复刻 dsh 的做法，
-//     因此这里按「备份 → 写依赖 → 写 bundles → pnpm install」逐步做，
+//     所以只能在它自己的目录里手写清单 + 建链接。手写要复刻 dsh 的做法，
+//     因此这里按「备份 → 写依赖 → 写 bundles → 建链接」逐步做，
 //     任何一步失败都回滚到备份，避免把用户桌面端搞成启动不了的半成品。
+//
+// 桌面端刻意不依赖 pnpm：宿主解析 bundle 只要求 node_modules/<name>/package.json
+// 存在，一个符号链接即可。这让「只装了 Electron 桌面端、没有 dsh CLI / pnpm」的机器
+// 也能装——那种机器上 pnpm 往往根本不存在。
 import { execFileSync } from 'node:child_process'
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, symlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 /** 插件在 profile 依赖里的键名（= package.json 的 name）。 */
@@ -39,7 +43,7 @@ export function installViaCli(dshCommand, profile, root, onLine = () => {}) {
 }
 
 /**
- * 把插件挂进桌面端 profile 的清单，并在该目录跑 pnpm。
+ * 把插件挂进桌面端 profile 的清单，并建好 node_modules 链接。
  * 调用前必须确认 profile 已被 Electron 应用初始化过（有 package.json），
  * 否则这里凭空造一份清单会和桌面端自己的初始化逻辑打架。
  * @param {string} dir 桌面端 profile 目录。
@@ -63,8 +67,9 @@ export function installIntoDesktopProfile(dir, root, onLine = () => {}) {
 
   const bundles = Array.isArray(manifest?.dsh?.profile?.bundles) ? manifest.dsh.profile.bundles : []
   if (bundles.includes(PACKAGE_NAME)) {
-    // 幂等：已经登记过就只补一次 pnpm（用户可能删了 node_modules）。
-    return { ok: runPnpmInstall(dir, onLine), changed: false }
+    // 幂等：清单已登记过，只确保链接还在（用户可能删过 node_modules）。
+    const linked = linkIntoProfile(dir, root, onLine)
+    return { ok: linked.ok, changed: false, error: linked.error }
   }
 
   copyFileSync(manifestPath, backupPath)
@@ -76,10 +81,10 @@ export function installIntoDesktopProfile(dir, root, onLine = () => {}) {
 
   try {
     writeFileSync(manifestPath, `${JSON.stringify(updated, undefined, 2)}\n`)
-    const installed = runPnpmInstall(dir, onLine)
-    if (!installed.ok) {
+    const linked = linkIntoProfile(dir, root, onLine)
+    if (!linked.ok) {
       copyFileSync(backupPath, manifestPath)
-      return { ok: false, changed: false, error: 'pnpm install 失败，已回滚清单' }
+      return { ok: false, changed: false, error: `建立链接失败，已回滚清单：${linked.error}` }
     }
     return { ok: true, changed: true }
   } catch (error) {
@@ -89,28 +94,31 @@ export function installIntoDesktopProfile(dir, root, onLine = () => {}) {
 }
 
 /**
- * 在 profile 目录里跑一次安装，让 link 依赖真正落到 node_modules。
+ * 把插件链进 profile 的 node_modules，让宿主能解析到它。
+ * 不跑 pnpm：宿主解析 bundle 只需要 node_modules/<name>/package.json 存在，
+ * 一个符号链接就够——这让桌面端在「只装了 Electron 应用、没有 dsh CLI / pnpm」的机器上也能装。
  * @param {string} dir profile 目录。
+ * @param {string} root 插件根目录。
  * @param {(line: string) => void} onLine 逐行输出回调。
  * @returns {{ ok: boolean, error?: string }} 结果。
  */
-function runPnpmInstall(dir, onLine = () => {}) {
+function linkIntoProfile(dir, root, onLine = () => {}) {
+  const target = join(dir, 'node_modules', PACKAGE_NAME)
   try {
-    if (!existsSync(join(dir, 'pnpm-workspace.yaml'))) {
-      mkdirSync(dir, { recursive: true })
-      writeFileSync(join(dir, 'pnpm-workspace.yaml'), 'packages:\n  - .\n')
+    if (existsSync(target)) {
+      const stat = lstatSync(target)
+      // 已经是链到本 checkout 的软链：幂等，不用动。
+      if (stat.isSymbolicLink() && realpathSync(target) === realpathSync(root)) return { ok: true }
+      // 其他情况（pnpm 装的实体目录 / 旧链接 / 旧版本）先挪开，保证可回滚。
+      renameSync(target, `${target}.bak-tokensave-install`)
     }
-    const out = execFileSync('pnpm', ['install'], {
-      cwd: dir,
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-      timeout: 300_000,
-    })
-    for (const line of String(out).split('\n')) if (line.trim()) onLine(line.trim())
+    mkdirSync(join(dir, 'node_modules'), { recursive: true })
+    // junction 在 Windows 上不需要管理员权限；POSIX 上是普通软链。
+    symlinkSync(root, target, 'junction')
+    onLine(`linked ${target} -> ${root}`)
     return { ok: true }
   } catch (error) {
-    const detail = [error?.stdout, error?.stderr].filter(Boolean).join('\n').trim()
-    return { ok: false, error: detail || error?.message || String(error) }
+    return { ok: false, error: error?.message ?? String(error) }
   }
 }
 
@@ -125,8 +133,14 @@ export function verifyProfile(dir, root) {
     const manifest = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'))
     const dep = manifest?.dependencies?.[PACKAGE_NAME]
     const bundles = Array.isArray(manifest?.dsh?.profile?.bundles) ? manifest.dsh.profile.bundles : []
+    // 链接是否真的指向本 checkout：读回链接目标比对，避免「写进清单但盘上没落」。
+    let linkPointsHere = false
+    try {
+      const target = join(dir, 'node_modules', PACKAGE_NAME)
+      linkPointsHere = existsSync(target) && realpathSync(target) === realpathSync(root)
+    } catch { /* 链接不可读按未链接处理 */ }
     return {
-      linked: typeof dep === 'string' && dep.replace(/^(?:link|file):/, '') === root,
+      linked: typeof dep === 'string' && dep.replace(/^(?:link|file):/, '') === root && linkPointsHere,
       registered: bundles.includes(PACKAGE_NAME),
     }
   } catch {
