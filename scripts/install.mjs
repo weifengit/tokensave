@@ -131,17 +131,19 @@ function runInstall(options) {
     return { ok: true, report }
   }
 
-  // 第 1 步：依赖。没有它构建不出客户端产物。
-  if (!hasDependencies(ROOT)) {
+  // 第 1 步：客户端产物。缺失时宿主会静默跳过客户端半边，所以这是硬前置。
+  // 产物随源码分发，所以全新 clone 一般直接命中——此时**不装依赖**：
+  // link 安装靠宿主的 peer 解析取 dsh 包，插件自己的 node_modules 不是必需的，
+  // 多跑一次 pnpm install 只会把安装挂在网络上。
+  let artifact = ensureArtifact(ROOT)
+  if (!artifact.ok && artifact.reason === 'missing-node-modules') {
     const installed = installDependencies(ROOT)
     if (!installed.ok) {
       report.profiles.push({ profile: targets.join('+'), ok: false, error: `pnpm install 失败：\n${installed.error}` })
       return { ok: false, report }
     }
+    artifact = ensureArtifact(ROOT)
   }
-
-  // 第 2 步：客户端产物。缺失时宿主会静默跳过客户端半边，所以这里是硬前置。
-  const artifact = ensureArtifact(ROOT)
   report.artifact = { exists: artifact.ok, built: artifact.built, size: artifact.size }
   if (!artifact.ok) {
     report.profiles.push({ profile: targets.join('+'), ok: false, error: `客户端产物构建失败：${artifact.reason}` })

@@ -10,18 +10,25 @@ git clone https://github.com/weifengit/tokensave.git && cd tokensave && node scr
 
 默认 `--profile all`：装 dsh web（端口模式）；桌面端 profile 存在时一并装，不存在则跳过。
 
-也可以让 dsh 自己装（等价，但少做几步前置，见下节）：
+正常 clone 几秒就能装完，**不需要联网络，也不需要跑 `pnpm install`**：客户端产物（`dist/client.js`）已随源码提交，
+而插件自己的 `node_modules` 在 link 安装下不是必需的（dsh 包由宿主的 peer 解析提供）。
+只有产物缺失时，安装器才会补装依赖并重建。
+
+也可以直接用 dsh 自己装（单行、不跑前置换算）：
 
 ```bash
 dsh plugin --profile web add /path/to/tokensave
 ```
+
+> 前提：该 checkout 里 `dist/client.js` 存在（随源码提供）。删了它这个单行命令就会静默装成半个插件。
+> 不想记这个前提就用上面的安装器。
 
 ## 前置条件
 
 | 依赖 | 版本 | 说明 |
 | --- | --- | --- |
 | Node | ≥ 22 | 插件入口是 TypeScript，靠 Node 的类型剥离直接加载 |
-| pnpm | ≥ 10 | 装依赖、构建客户端产物 |
+| pnpm | ≥ 10 | 仅当需要重建客户端产物时才用（正常 clone 用不上） |
 | dsh | 0.2.0-rc.2 系列 | `npm i -g @deepseek-ai/dsh` |
 
 ## 参数
@@ -41,7 +48,7 @@ node scripts/install.mjs --dry-run            # 只报告，不写文件
 
 这是一个**源码插件**：入口是 `src/index.ts`，客户端是 `client/src/**`。全新 clone 直接 link 安装会**装得上但不生效**，有两处静默失败：
 
-1. **`dist/client.js` 缺失** —— 客户端产物被 git 忽略过，没有它宿主会跳过客户端半边：工作台界面完全不出现，**且不报任何错**。安装器会先 `pnpm install` 再 `pnpm build:client` 补上。
+1. **`dist/client.js` 缺失** —— 客户端产物曾被 git 忽略，没有它宿主会跳过客户端半边：工作台界面完全不出现，**且不报任何错**。现在产物随源码提交，所以正常 clone 直接命中；万一缺失，安装器才补 `pnpm install` → `pnpm build:client`。
 2. **dsh 包声明位置** —— 这些包必须是 `peerDependencies`。写在 `dependencies` 里时，link 安装下宿主的 peer 拦截不认它，插件 import 直接失败（启动日志里是 `dsh-tokensave (dsh-tokensave): failed to import`）。
 
 `pnpm test:install` 会把上面两条钉死，防止回归。
