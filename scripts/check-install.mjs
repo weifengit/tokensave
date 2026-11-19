@@ -42,7 +42,10 @@ check(existsSync(join(ROOT, 'dist', 'client.js')), 'dist/client.js 不存在：�
 for (const file of ['scripts/install.mjs', 'scripts/install/detect.mjs', 'scripts/install/build.mjs', 'scripts/install/profile.mjs', 'scripts/install/dependencies.mjs', 'scripts/install/report.mjs']) {
   check(existsSync(join(ROOT, file)), `缺少安装模块 ${file}`)
 }
-check(pkg.scripts?.install !== undefined, 'package.json 缺少 scripts.install')
+check(pkg.scripts?.['plugin:install'] !== undefined, 'package.json 缺少 scripts["plugin:install"]')
+// "install" 是 npm/pnpm 的生命周期钩子名：叫这个名字会被依赖安装顺带触发，
+// 而安装脚本自己又要跑 pnpm install —— 两者巧到一起就是递归。
+check(pkg.scripts?.install === undefined, 'scripts.install 是生命周期钩子名，会随 npm/pnpm install 触发；用 plugin:install')
 
 // 5. 桌面端只能改它自己的清单，不能走 `dsh plugin --profile desktop`（CLI 会拒）。
 const profileSource = readFileSync(join(ROOT, 'scripts/install/profile.mjs'), 'utf8')

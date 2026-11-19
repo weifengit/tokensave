@@ -33,7 +33,9 @@ node scripts/install.mjs --profile all        # 都装（默认）
 node scripts/install.mjs --dry-run            # 只报告，不写文件
 ```
 
-等价的 pnpm 脚本：`pnpm install`（注意这里的 `install` 是本项目的安装脚本，不是安装依赖）。
+等价的 pnpm 脚本：`pnpm run plugin:install`。
+（**不叫 `install`**：那是 npm/pnpm 的生命周期钩子名，`npm install` / `pnpm install` 会顺带触发它，
+而安装脚本自己又要跑一次依赖安装，名字巧到一起就成了递归。）
 
 ## 为什么不能「下载后直接选文件夹安装」
 

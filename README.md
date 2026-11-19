@@ -117,7 +117,8 @@ pnpm check          # TypeScript 类型检查
 pnpm test           # 全量自检（scripts/check-*.mjs）
 pnpm build:client   # 重建 dist/client.js，刷新页面生效
 ```
-> 这里的 `pnpm install` 是 pnpm 的依赖安装；`pnpm run install` 才是上面的插件安装脚本（`package.json` 里两者同名，pnpm 让内置命令优先）。
+`pnpm install` 是依赖安装；插件安装脚本是 `pnpm run plugin:install`。它不叫 `install` —— 那是
+npm/pnpm 的生命周期钩子名，会被依赖安装顺带触发，而它自己又要跑依赖安装，容易递归。
 
 两条铁律（详见 [docs/MAINTENANCE.md](docs/MAINTENANCE.md)）：
 
