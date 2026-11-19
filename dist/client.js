@@ -8261,8 +8261,6 @@ body.ts-resizing { cursor: col-resize !important; user-select: none !important; 
 .ts-set { padding: 8px 8px 6px; width: 238px; box-sizing: border-box; }
 .ts-set-block { display: flex; flex-direction: column; gap: 4px; padding: 4px 2px 8px; }
 .ts-set-block + .ts-set-block { border-top: 1px solid rgba(127,127,127,.2); margin-top: 2px; }
-/* \u9762\u677F\u5757\u91CC\u7684\u8BF4\u660E\u884C\uFF08\u4E3B\u9898\u5757\u7528\uFF09\uFF1A\u4E0E\u6807\u9898\u540C\u7F29\u8FDB\uFF0C\u6700\u591A\u4E24\u884C\uFF0C\u4E0D\u4E0E\u6309\u94AE\u540C\u9AD8 */
-.ts-set-note { padding: 0 4px; line-height: 1.5; }
 /* \u670D\u52A1\u7F3A\u5931\u65F6\u7684\u7981\u7528\u6001\uFF08\u4E3B\u9898\u5757\u7528\uFF09\uFF1A\u4ECD\u770B\u5F97\u89C1\u3001\u4F46\u770B\u5F97\u51FA\u4E0D\u80FD\u70B9 */
 .ts-set-opt[disabled] { opacity: .45; cursor: not-allowed; }
 .ts-set-opt[disabled]:hover { border-color: rgba(127,127,127,.3); }
@@ -10183,8 +10181,7 @@ function DeskDock({ project, sessionId, onBack }) {
                     children: THEME_MODE_LABEL[mode]
                   },
                   mode
-                )) }) }),
-                /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("div", { className: "ts-set-hint ts-set-note", children: "\u4E0E\u5BBF\u4E3B\u300C\u8BBE\u7F6E \u2192 \u5916\u89C2\u300D\u662F\u540C\u4E00\u4EFD\u504F\u597D \xB7 \u6574\u4E2A DSH \u754C\u9762\u4E00\u8D77\u5207" })
+                )) }) })
               ] }),
               /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("div", { className: "ts-set-block", "data-desk-set-block": "skin", children: [
                 /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("div", { className: "ts-set-head", children: [

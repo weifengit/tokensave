@@ -364,8 +364,6 @@ body.ts-resizing { cursor: col-resize !important; user-select: none !important; 
 .ts-set { padding: 8px 8px 6px; width: 238px; box-sizing: border-box; }
 .ts-set-block { display: flex; flex-direction: column; gap: 4px; padding: 4px 2px 8px; }
 .ts-set-block + .ts-set-block { border-top: 1px solid rgba(127,127,127,.2); margin-top: 2px; }
-/* 面板块里的说明行（主题块用）：与标题同缩进，最多两行，不与按钮同高 */
-.ts-set-note { padding: 0 4px; line-height: 1.5; }
 /* 服务缺失时的禁用态（主题块用）：仍看得见、但看得出不能点 */
 .ts-set-opt[disabled] { opacity: .45; cursor: not-allowed; }
 .ts-set-opt[disabled]:hover { border-color: rgba(127,127,127,.3); }
@@ -2887,8 +2885,6 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
                 ))}
               </span>
             </div>
-            {/* 只说「跟随系统」用户看不出到底跟成了什么，右边那个 hint 会补上当前实际深浅。 */}
-            <div className="ts-set-hint ts-set-note">与宿主「设置 → 外观」是同一份偏好 · 整个 DSH 界面一起切</div>
           </div>
 
           {/* ④ 背景皮肤（分组 + 分类，参考 info_report 的皮肤目录；点了不关面板方便连着试） */}
