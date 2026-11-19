@@ -69,10 +69,13 @@
 | `src/` | 插件服务端（cordis）：`tokensave_delegate` 委派工具、黑板三工具、系统提示词注入、编排 workflow、探索者会话创建、模型路由、场景识别、Web 路由 |
 | `src/auto-commit.ts` | 会话轮次结束自动提交（`agent/turn-stopping` → `git add -A && git commit`），配置 `~/.dsh/tokensave/auto-commit.json` |
 | `client/src/` | 工作台前端（React）：项目中心、DeskDock 布局、主对话 / 预览 / 探索者 / 黑板 / 时间轴 / 收益各面板、主题皮肤、提示音、滚动记忆 |
-| `dist/client.js` | esbuild 打包产物（`__ModuleLoader__` 注册格式，宿主直接加载它）。已被 `.gitignore` 忽略，克隆后需 `pnpm install && pnpm build:client` 生成 |
+| `dist/client.js` | esbuild 打包产物（`__ModuleLoader__` 注册格式，宿主直接加载它）。**随源码提交**（`.gitignore` 用 `!dist/client.js` 反忽略）：宿主按 `exports["./client"]` 直接读它，缺文件时客户端半边静默不注册 |
 | `scripts/check-*.mjs` | 自检断言（对源码做文本正则断言，不需要浏览器），`pnpm test` 全量跑 |
 | `scripts/build-client.mjs` | 客户端构建脚本 |
 | `scripts/release.mjs` | 版本递增 + CHANGELOG 生成 + git tag |
+| `scripts/install.mjs` + `scripts/install/` | 一行安装：探测环境 → 补依赖 → 构建产物 → 注册 profile（web 走 dsh CLI，desktop 直接改其清单并备份回滚） |
+| `scripts/check-install.mjs` | 安装器回归断言（`pnpm test:install`）：钉住 peer 声明、产物随源码分发、桌面端不走 CLI |
+| `docs/INSTALL.md` | 安装与排错：前置条件、参数、两处静默失败的原因 |
 | `docs/MAINTENANCE.md` | 维护约定：铁律、发版档位、commit 规范、接口冻结、排错备忘 |
 
 服务端通过 `cordis.patch.yml` 以组合包（bundle）形式挂载，注册宿主能力：`tools`（4 个工具）、`systemPrompt`（一段委派指引）、Web 路由（`/plugins/dsh-tokensave/board|fs|explorers|scope|project-info|mkdir|explorer-settings|clone|clone-status`）。
@@ -81,20 +84,30 @@
 
 ## 安装
 
-尚未发布到 npm，目前以开发模式安装（要求已安装 dsh CLI，Node ≥ 22）：
+从 git 下载源码后，**一行装完**（要求 Node ≥ 22、pnpm、已装 dsh CLI）：
 
 ```bash
-git clone https://github.com/weifengit/tokensave.git
-pnpm install                # 在仓库目录内
-ln -s /path/to/tokensave ~/.dsh/profiles/web/dsh-tokensave
-# 重启 dsh web 后生效（插件源码改动不热重载）
+git clone https://github.com/weifengit/tokensave.git && cd tokensave && node scripts/install.mjs
 ```
 
-或走正式的 profile 安装流程：
+默认两个模式都装：dsh web（端口模式）；桌面端 profile 存在时一并装，不存在则跳过。
+安装器会补完源码插件必需的前置（装依赖 → 构建 `dist/client.js` → 注册 profile），
+不补这些的话会「装得上但不生效」，原因见 [docs/INSTALL.md](docs/INSTALL.md)。
 
 ```bash
-dsh plugin --profile web add /path/to/tokensave
+node scripts/install.mjs --profile web        # 只装 dsh web
+node scripts/install.mjs --profile desktop    # 只装桌面端
+node scripts/install.mjs --dry-run            # 只报告不写文件
 ```
+
+装完启动：`dsh web`（端口模式）或直接打开桌面端应用。卸载：
+
+```bash
+dsh plugin --profile web remove dsh-tokensave
+```
+
+> 桌面端 profile 由 Electron 应用独占，`dsh plugin --profile desktop` 会被 CLI 拒绝；
+> 安装器改它的清单前会备份，失败自动回滚。详细说明与排错见 [docs/INSTALL.md](docs/INSTALL.md)。
 
 ## 开发
 
@@ -104,6 +117,7 @@ pnpm check          # TypeScript 类型检查
 pnpm test           # 全量自检（scripts/check-*.mjs）
 pnpm build:client   # 重建 dist/client.js，刷新页面生效
 ```
+> 这里的 `pnpm install` 是 pnpm 的依赖安装；`pnpm run install` 才是上面的插件安装脚本（`package.json` 里两者同名，pnpm 让内置命令优先）。
 
 两条铁律（详见 [docs/MAINTENANCE.md](docs/MAINTENANCE.md)）：
 

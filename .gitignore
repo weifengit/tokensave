@@ -1,8 +1,11 @@
 # 依赖
 node_modules/
 
-# 构建产物（scripts/build-client.mjs 生成 dist/client.js）
-dist/
+# 构建产物：dist/client.js 必须随源码分发，不能整目录忽略
+# 宿主按 package.json 的 exports[./client] 直接读它；缺文件时客户端半边静默不注册
+# （界面完全不出现、也不报错）。dist 里其余文件仍视为构建中间产物。
+dist/*
+!dist/client.js
 
 # ==================== 操作系统 ====================
 # macOS

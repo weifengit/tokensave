@@ -18,10 +18,15 @@
     }
   },
   "peerDependencies": {
-    "@deepseek-ai/cordis": "*"
+    "@deepseek-ai/cordis": "*",
+    "@deepseek-ai/dsh-brand": "^0.2.0-rc.2",
+    "@deepseek-ai/dsh-llm": "^0.2.0-rc.2",
+    "@deepseek-ai/dsh-tools": "^0.2.0-rc.2"
   },
   "scripts": {
     "check": "tsc --noEmit",
+    "install": "node scripts/install.mjs",
+    "test:install": "node scripts/check-install.mjs",
     "release": "node scripts/release.mjs",
     "build:client": "node scripts/build-client.mjs",
     "test:continue": "node scripts/check-continue-policy.mjs && node scripts/check-auto-continue-flow.mjs",
@@ -55,14 +60,12 @@
     "test:chrome": "node scripts/check-chrome-position.mjs",
     "test:chrome-geo": "node scripts/check-chrome-geometry.mjs",
     "test:expset": "node scripts/check-expset-panel.mjs",
-    "test": "pnpm check && pnpm test:auto-commit && pnpm test:continue && pnpm test:width && pnpm test:hover && pnpm test:sound && pnpm test:sound-sync && pnpm test:pending-alert && pnpm test:todo && pnpm test:chrome && pnpm test:expset && pnpm test:sidebar && pnpm test:composer-focus && pnpm test:nav && pnpm test:composer-resize && pnpm test:turn-edits && pnpm test:composer-status && pnpm test:changes-card && pnpm test:agent-preset && pnpm test:dockview && pnpm test:desk && pnpm test:desk-dock && pnpm test:chat-scroll && pnpm test:msg-queue && pnpm test:copy-btn && pnpm test:clone && pnpm test:project-remove && pnpm test:card-flip && pnpm test:card-layout && pnpm test:mobile && pnpm test:ui"
-  },
-  "dependencies": {
-    "@deepseek-ai/dsh-brand": "0.2.0-rc.2",
-    "@deepseek-ai/dsh-llm": "0.2.0-rc.2",
-    "@deepseek-ai/dsh-tools": "0.2.0-rc.2"
+    "test": "pnpm check && pnpm test:auto-commit && pnpm test:continue && pnpm test:width && pnpm test:hover && pnpm test:sound && pnpm test:sound-sync && pnpm test:pending-alert && pnpm test:todo && pnpm test:chrome && pnpm test:expset && pnpm test:sidebar && pnpm test:composer-focus && pnpm test:nav && pnpm test:composer-resize && pnpm test:turn-edits && pnpm test:composer-status && pnpm test:changes-card && pnpm test:agent-preset && pnpm test:dockview && pnpm test:desk && pnpm test:desk-dock && pnpm test:chat-scroll && pnpm test:msg-queue && pnpm test:copy-btn && pnpm test:clone && pnpm test:project-remove && pnpm test:card-flip && pnpm test:card-layout && pnpm test:mobile && pnpm test:install && pnpm test:ui"
   },
   "devDependencies": {
+    "@deepseek-ai/dsh-brand": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-llm": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-tools": "0.2.0-rc.2",
     "@deepseek-ai/dsh-agent": "0.2.0-rc.2",
     "@deepseek-ai/dsh-session": "0.2.0-rc.2",
     "@deepseek-ai/dsh-system-prompt": "0.2.0-rc.2",
