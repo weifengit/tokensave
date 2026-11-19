@@ -150,7 +150,8 @@ try {
   if (hostFile && existsSync(hostFile)) {
     const src = readFileSync(hostFile, 'utf8')
     check('宿主确有 data-input-scroll / data-composer-input 标记',
-      src.includes('"data-input-scroll": true') && src.includes('"data-composer-input": true'))
+      // 宿主产物是压缩过的：冒号后未必有空格（实测 `"data-input-scroll":true`）。
+      /"data-input-scroll"\s*:\s*true/.test(src) && /"data-composer-input"\s*:\s*true/.test(src))
     check('占位符 pointer-events:none（点击穿透到背景，即不聚焦的根因）',
       src.includes('pointer-events:none') && src.includes('data-composer-placeholder'))
   } else {

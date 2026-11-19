@@ -98,7 +98,8 @@ try {
       (src.match(/data-sidebar-collapsed/g) || []).length >= 3)
     check('宿主 store 无 persist（根因未变：刷新必回默认值）',
       /defineStore/.test(src) && !/persist:\s*["'`]/.test(src))
-    check('宿主分界常量 1024 与我们一致', /SIDEBAR_AUTO_COLLAPSE = 1024/.test(src))
+    // 宿主产物是压缩过的，赋值号两边常常没空格：`SIDEBAR_AUTO_COLLAPSE=1024`。
+    check('宿主分界常量 1024 与我们一致', /SIDEBAR_AUTO_COLLAPSE\s*=\s*1024/.test(src))
   } else {
     console.log('SKIP  宿主 dsh-client-ui-layout 包不可解析，跳过源码锚定校验')
   }

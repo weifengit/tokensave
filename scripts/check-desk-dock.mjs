@@ -285,9 +285,11 @@ check('⋯ 菜单：每窗口一行 + 三个区域按钮（当前区高亮，再
 check('标题行图标化（区域三键 + 设置齿轮），不再是一堆文字按钮',
   /data-desk-region-toggle=\{r\}/.test(dock) && /data-desk-settings=""/.test(dock) &&
   /iconSvg\('gear', 16\)/.test(dock) && /dangerouslySetInnerHTML/.test(dock))
-check('右上角「设置」浮层分三块：显示/隐藏窗口 · 皮肤 · 字体',
+check('右上角「设置」浮层分五块：窗口 · 标题栏 · 主题 · 皮肤 · 字体',
   /data-desk-settings-panel=""/.test(dock) &&
   /data-desk-set-block="windows"/.test(dock) &&
+  /data-desk-set-block="chrome"/.test(dock) &&
+  /data-desk-set-block="theme"/.test(dock) &&
   /data-desk-set-block="skin"/.test(dock) &&
   /data-desk-set-block="font"/.test(dock) &&
   /data-desk-font=\{f\.id\}/.test(dock) &&

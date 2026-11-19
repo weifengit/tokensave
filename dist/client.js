@@ -7795,6 +7795,80 @@ function bootSkin() {
   applySkin();
 }
 
+// client/src/panel/theme-mode.ts
+var THEME_MODES = ["system", "dark", "light"];
+var THEME_MODE_LABEL = {
+  system: "\u8DDF\u968F\u7CFB\u7EDF",
+  dark: "\u6DF1\u8272",
+  light: "\u6D45\u8272"
+};
+var THEME_MODE_HINT = {
+  system: "\u8DDF\u968F\u7CFB\u7EDF\u5916\u89C2\uFF1A\u7CFB\u7EDF\u5207\u6DF1 / \u6D45\uFF0C\u6574\u4E2A\u754C\u9762\u4E00\u8D77\u5207\uFF08\u9ED8\u8BA4\uFF09",
+  dark: "\u59CB\u7EC8\u6DF1\u8272\uFF0C\u5FFD\u7565\u7CFB\u7EDF\u8BBE\u7F6E",
+  light: "\u59CB\u7EC8\u6D45\u8272\uFF0C\u5FFD\u7565\u7CFB\u7EDF\u8BBE\u7F6E"
+};
+function normalizeThemeMode(value) {
+  return THEME_MODES.includes(String(value)) ? String(value) : null;
+}
+function getThemeService(ctx) {
+  const svc2 = readService(ctx, "theme");
+  return svc2 && typeof svc2 === "object" ? svc2 : void 0;
+}
+function readThemeMode(ctx) {
+  const svc2 = getThemeService(ctx);
+  if (!svc2 || typeof svc2.getTheme !== "function") return null;
+  try {
+    return normalizeThemeMode(svc2.getTheme()?.preference);
+  } catch {
+    return null;
+  }
+}
+function readActiveScheme(ctx) {
+  const svc2 = getThemeService(ctx);
+  if (!svc2 || typeof svc2.getTheme !== "function") return null;
+  try {
+    const scheme = svc2.getTheme()?.active?.colorScheme;
+    return scheme === "light" || scheme === "dark" ? scheme : null;
+  } catch {
+    return null;
+  }
+}
+function writeThemeMode(ctx, mode) {
+  const next = normalizeThemeMode(mode);
+  if (!next) return false;
+  const svc2 = getThemeService(ctx);
+  if (!svc2 || typeof svc2.setTheme !== "function") return false;
+  try {
+    svc2.setTheme(next);
+    return true;
+  } catch (e) {
+    console.warn("[tokensave] \u5207\u6362\u4E3B\u9898\u5931\u8D25", e);
+    return false;
+  }
+}
+function subscribeThemeMode(ctx, listener) {
+  const anyCtx = ctx;
+  const offs = [];
+  try {
+    const off2 = anyCtx?.on?.("theme/change", () => listener());
+    if (typeof off2 === "function") offs.push(off2);
+  } catch {
+  }
+  try {
+    const off2 = anyCtx?.inject?.(["theme"], () => listener());
+    if (typeof off2 === "function") offs.push(off2);
+  } catch {
+  }
+  return () => {
+    for (const off2 of offs) {
+      try {
+        off2();
+      } catch {
+      }
+    }
+  };
+}
+
 // client/src/panel/skin-layer.ts
 var SKIN_LAYER_CSS_ID = "tokensave-skin-layer-css";
 var SKIN_LAYER_CSS = `
@@ -8180,13 +8254,18 @@ body.ts-resizing { cursor: col-resize !important; user-select: none !important; 
 /* \u4FA7\u680F\u6536\u8D77\u540E\u628A\u624B\u4ECD\u7559\u5728\u539F\u4F4D\uFF08\u53EF\u4ECE\u7A84\u7F1D\u62C9\u51FA\u6765\uFF09\uFF1A\u5DE6\u533A\u7684\u628A\u624B\u8D34\u53F3\u7F18\u3001\u53F3\u533A\u7684\u8D34\u5DE6\u7F18 */
 .ts-dock[data-hide-left] .ts-region[data-region="left"] .ts-resizer { right: -5px; z-index: 101; }
 .ts-dock[data-hide-right] .ts-region[data-region="right"] .ts-resizer { left: -5px; z-index: 101; }
-/* \u2500\u2500 \u53F3\u4E0A\u89D2\u300C\u8BBE\u7F6E\u300D\u6D6E\u5C42\uFF1A\u56DB\u5757\uFF08\u663E\u793A/\u9690\u85CF\u7A97\u53E3 \xB7 \u6807\u9898\u680F\u4F4D\u7F6E \xB7 \u76AE\u80A4 \xB7 \u5B57\u4F53\uFF09 \u2500\u2500\u2500\u2500\u2500\u2500 */
+/* \u2500\u2500 \u53F3\u4E0A\u89D2\u300C\u8BBE\u7F6E\u300D\u6D6E\u5C42\uFF1A\u4E94\u5757\uFF08\u663E\u793A/\u9690\u85CF\u7A97\u53E3 \xB7 \u6807\u9898\u680F\u4F4D\u7F6E \xB7 \u4E3B\u9898 \xB7 \u76AE\u80A4 \xB7 \u5B57\u4F53\uFF09 \u2500\u2500\u2500\u2500\u2500\u2500 */
 /* \u5BBD\u5EA6\u6309\u5185\u5BB9\u5B9A\uFF1A\u6BD4\u65E7\u7248\u7A84\u4E00\u622A\uFF08\u7528\u6237\u53CD\u9988\u592A\u5BBD\uFF09\uFF0C\u4E14\u4E0D\u518D\u88AB .ts-pop \u7684 min-width \u6491\u5F00 */
 .ts-pop.ts-set { min-width: 0; }
 /* box-sizing:border-box\uFF1A\u5BBD\u5EA6\u542B padding/border\uFF0C\u5426\u5219 238+\u5185\u8FB9\u8DDD+\u63CF\u8FB9\u4F1A\u8D85\u51FA\u9762\u677F\u951A\u5B9A\u7B97\u51FA\u7684\u53F3\u8FB9\u7F18 */
 .ts-set { padding: 8px 8px 6px; width: 238px; box-sizing: border-box; }
 .ts-set-block { display: flex; flex-direction: column; gap: 4px; padding: 4px 2px 8px; }
 .ts-set-block + .ts-set-block { border-top: 1px solid rgba(127,127,127,.2); margin-top: 2px; }
+/* \u9762\u677F\u5757\u91CC\u7684\u8BF4\u660E\u884C\uFF08\u4E3B\u9898\u5757\u7528\uFF09\uFF1A\u4E0E\u6807\u9898\u540C\u7F29\u8FDB\uFF0C\u6700\u591A\u4E24\u884C\uFF0C\u4E0D\u4E0E\u6309\u94AE\u540C\u9AD8 */
+.ts-set-note { padding: 0 4px; line-height: 1.5; }
+/* \u670D\u52A1\u7F3A\u5931\u65F6\u7684\u7981\u7528\u6001\uFF08\u4E3B\u9898\u5757\u7528\uFF09\uFF1A\u4ECD\u770B\u5F97\u89C1\u3001\u4F46\u770B\u5F97\u51FA\u4E0D\u80FD\u70B9 */
+.ts-set-opt[disabled] { opacity: .45; cursor: not-allowed; }
+.ts-set-opt[disabled]:hover { border-color: rgba(127,127,127,.3); }
 
 /* \u2500\u2500 \u9879\u76EE\u5207\u6362\u6D6E\u5C42\uFF08\u70B9\u6807\u9898\u884C\u5DE6\u4FA7\u56FE\u6807\u5F39\u51FA\uFF09 \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 */
 .ts-projsw { max-height: 62vh; }
@@ -8218,6 +8297,9 @@ body.ts-resizing { cursor: col-resize !important; user-select: none !important; 
 .ts-set-row { display: flex; align-items: center; gap: 8px; padding: 3px 4px; }
 .ts-set-k { flex: none; width: 62px; color: var(--ts-fg-dim); font-size:calc(var(--ts-fs, 12.5px) * 0.88); }
 .ts-set-seg { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+/* \u5360\u6EE1\u4E00\u6574\u884C\u3001\u4E09\u679A\u7B49\u5206\uFF08\u4E3B\u9898\u5757\u7528\uFF09\uFF1A238px \u9762\u677F\u91CC\u518D\u6392\u300C\u6807\u7B7E + \u4E09\u679A\u300D\u4F1A\u6362\u884C */
+.ts-set-seg--fill { display: flex; flex: 1; flex-wrap: nowrap; }
+.ts-set-seg--fill > .ts-set-opt { flex: 1; min-width: 0; padding: 2px 4px; white-space: nowrap; }
 .ts-set-opt { border: 1px solid rgba(127,127,127,.3); border-radius: 6px; background: rgba(127,127,127,.08); color: inherit; font: inherit; font-size:calc(var(--ts-fs, 12.5px) * 0.88); padding: 2px 9px; cursor: pointer; }
 .ts-set-opt:hover { border-color: rgba(127,127,127,.55); }
 .ts-set-opt[data-on] { color: #4f8ef7; border-color: rgba(79,142,247,.5); background: rgba(79,142,247,.15); }
@@ -8535,6 +8617,17 @@ function DeskDock({ project, sessionId, onBack }) {
     };
     window.addEventListener("ts-theme-changed", on);
     return () => window.removeEventListener("ts-theme-changed", on);
+  }, []);
+  const [themeMode, setThemeMode] = (0, import_react19.useState)(() => readThemeMode(getClientContext()));
+  const [themeScheme, setThemeScheme] = (0, import_react19.useState)(() => readActiveScheme(getClientContext()));
+  (0, import_react19.useEffect)(() => {
+    const ctx = getClientContext();
+    const sync2 = () => {
+      setThemeMode(readThemeMode(ctx));
+      setThemeScheme(readActiveScheme(ctx));
+    };
+    sync2();
+    return subscribeThemeMode(ctx, sync2);
   }, []);
   const closePanelRef = (0, import_react19.useRef)(null);
   const teardownRef = (0, import_react19.useRef)(false);
@@ -9540,6 +9633,12 @@ function DeskDock({ project, sessionId, onBack }) {
       if (projOpen) placePop(projBtnRef.current, panelW(272), rail);
     });
   };
+  const switchThemeMode = (next) => {
+    const ok = writeThemeMode(getClientContext(), next);
+    setThemeMode(readThemeMode(getClientContext()));
+    setThemeScheme(readActiveScheme(getClientContext()));
+    if (!ok) console.warn("[tokensave] \u4E3B\u9898\u5207\u6362\u672A\u751F\u6548\uFF1A\u5BBF\u4E3B theme \u670D\u52A1\u4E0D\u53EF\u7528");
+  };
   const hoverProj = (open) => {
     if (narrow) return;
     if (projHoverRef.current) window.clearTimeout(projHoverRef.current);
@@ -9885,7 +9984,7 @@ function DeskDock({ project, sessionId, onBack }) {
                 className: "ts-tg",
                 "data-desk-settings": "",
                 "data-on": settingsOpen ? "1" : void 0,
-                title: "\u8BBE\u7F6E\uFF1A\u7A97\u53E3 \xB7 \u6807\u9898\u680F \xB7 \u76AE\u80A4 \xB7 \u5B57\u4F53",
+                title: "\u8BBE\u7F6E\uFF1A\u7A97\u53E3 \xB7 \u6807\u9898\u680F \xB7 \u4E3B\u9898 \xB7 \u76AE\u80A4 \xB7 \u5B57\u4F53",
                 onClick: () => {
                   const next = !settingsOpen;
                   if (next) {
@@ -10066,6 +10165,26 @@ function DeskDock({ project, sessionId, onBack }) {
                     p
                   )) })
                 ] })
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("div", { className: "ts-set-block", "data-desk-set-block": "theme", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("div", { className: "ts-set-head", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("span", { className: "ts-set-title", children: "\u4E3B\u9898" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("span", { className: "ts-set-hint", "data-desk-theme-status": "", children: themeMode ? THEME_MODE_LABEL[themeMode] + (themeMode === "system" && themeScheme ? ` \xB7 \u5F53\u524D${themeScheme === "light" ? "\u6D45\u8272" : "\u6DF1\u8272"}` : "") : "\u5BBF\u4E3B\u672A\u63D0\u4F9B\u4E3B\u9898\u670D\u52A1" })
+                ] }),
+                /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("div", { className: "ts-set-row", children: /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("span", { className: "ts-set-seg ts-set-seg--fill", children: THEME_MODES.map((mode) => /* @__PURE__ */ (0, import_jsx_runtime15.jsx)(
+                  "button",
+                  {
+                    className: "ts-set-opt",
+                    "data-desk-theme": mode,
+                    "data-on": themeMode === mode ? "1" : void 0,
+                    disabled: !themeMode,
+                    title: themeMode ? THEME_MODE_HINT[mode] : "\u5F53\u524D DSH \u6CA1\u6709\u63D0\u4F9B\u4E3B\u9898\u670D\u52A1\uFF08ui-theme \u672A\u542F\u7528\uFF09\uFF0C\u65E0\u6CD5\u5207\u6362",
+                    onClick: () => switchThemeMode(mode),
+                    children: THEME_MODE_LABEL[mode]
+                  },
+                  mode
+                )) }) }),
+                /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("div", { className: "ts-set-hint ts-set-note", children: "\u4E0E\u5BBF\u4E3B\u300C\u8BBE\u7F6E \u2192 \u5916\u89C2\u300D\u662F\u540C\u4E00\u4EFD\u504F\u597D \xB7 \u6574\u4E2A DSH \u754C\u9762\u4E00\u8D77\u5207" })
               ] }),
               /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("div", { className: "ts-set-block", "data-desk-set-block": "skin", children: [
                 /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("div", { className: "ts-set-head", children: [

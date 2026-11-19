@@ -88,13 +88,16 @@ for (const base of [join(homedir(), '.dsh', 'profiles', 'x.js'), join(root, 'x.j
 }
 if (hostLayout && existsSync(hostLayout)) {
   const src = readFileSync(hostLayout, 'utf8')
+  // 宿主产物是压缩过的：冒号/箭头两边都没有空格，所以三条都按正则匹配（不再用字面 includes）。
   check('宿主 layout.selectPanel(null) = 回到 Conversation（官方语义）',
-    src.includes('Select a global panel or return to the Conversation'))
+    // null 是合法入参（只有非 null 的未注册面板才 throw），store 动作就是把 activePanelId 置 null
+    /selectPanel\(panelId\)\{[\s\S]{0,160}?panels\.selectPanel\(panelId\)/.test(src) &&
+    /selectPanel:\(d,panelId\)=>\{d\.panelInfo\.activePanelId=panelId/.test(src))
   check('宿主 main 槽是 keyed 且 activePanelId 驱动（呼吸灯失效的根因存在）',
     src.includes('activePanelId') && src.includes('entryKey'))
   check('宿主 panelInfo 是可快照/可订阅的共享源（getSnapshot + subscribe）',
-    src.includes('getSnapshot: () => instance.getSnapshot().panelInfo')
-    && src.includes('subscribe: (listener) => instance.subscribe(listener)'))
+    /getSnapshot:\s*\(\)\s*=>\s*instance\.getSnapshot\(\)\.panelInfo/.test(src)
+    && /subscribe:\s*listener\s*=>\s*instance\.subscribe\(listener\)/.test(src))
 } else {
   console.log('SKIP  宿主 dsh-client-ui-layout 包不可解析，跳过源码锚定校验')
 }

@@ -60,6 +60,7 @@ import {
   SKINS, SKIN_GROUPS, readSkinId, chooseSkin, applySkin as applySkinVars, bootSkin, currentThemeMode,
 } from './skins'
 import { startThemeWatch } from './theme'
+import { THEME_MODES, THEME_MODE_LABEL, THEME_MODE_HINT, readThemeMode, readActiveScheme, writeThemeMode, subscribeThemeMode, type ThemeMode } from './theme-mode'
 import { installSkinLayerCss } from './skin-layer'
 import { getClientContext, subscribeSession, subscribeSessionMetrics } from '../session-subscribe'
 import { KINDS, paneId, parsePaneId, paneTitle, paneIcon, type Kind } from './desk-panes'
@@ -356,13 +357,18 @@ body.ts-resizing { cursor: col-resize !important; user-select: none !important; 
 /* 侧栏收起后把手仍留在原位（可从窄缝拉出来）：左区的把手贴右缘、右区的贴左缘 */
 .ts-dock[data-hide-left] .ts-region[data-region="left"] .ts-resizer { right: -5px; z-index: 101; }
 .ts-dock[data-hide-right] .ts-region[data-region="right"] .ts-resizer { left: -5px; z-index: 101; }
-/* ── 右上角「设置」浮层：四块（显示/隐藏窗口 · 标题栏位置 · 皮肤 · 字体） ────── */
+/* ── 右上角「设置」浮层：五块（显示/隐藏窗口 · 标题栏位置 · 主题 · 皮肤 · 字体） ────── */
 /* 宽度按内容定：比旧版窄一截（用户反馈太宽），且不再被 .ts-pop 的 min-width 撑开 */
 .ts-pop.ts-set { min-width: 0; }
 /* box-sizing:border-box：宽度含 padding/border，否则 238+内边距+描边会超出面板锚定算出的右边缘 */
 .ts-set { padding: 8px 8px 6px; width: 238px; box-sizing: border-box; }
 .ts-set-block { display: flex; flex-direction: column; gap: 4px; padding: 4px 2px 8px; }
 .ts-set-block + .ts-set-block { border-top: 1px solid rgba(127,127,127,.2); margin-top: 2px; }
+/* 面板块里的说明行（主题块用）：与标题同缩进，最多两行，不与按钮同高 */
+.ts-set-note { padding: 0 4px; line-height: 1.5; }
+/* 服务缺失时的禁用态（主题块用）：仍看得见、但看得出不能点 */
+.ts-set-opt[disabled] { opacity: .45; cursor: not-allowed; }
+.ts-set-opt[disabled]:hover { border-color: rgba(127,127,127,.3); }
 
 /* ── 项目切换浮层（点标题行左侧图标弹出） ─────────────────────────── */
 .ts-projsw { max-height: 62vh; }
@@ -394,6 +400,9 @@ body.ts-resizing { cursor: col-resize !important; user-select: none !important; 
 .ts-set-row { display: flex; align-items: center; gap: 8px; padding: 3px 4px; }
 .ts-set-k { flex: none; width: 62px; color: var(--ts-fg-dim); font-size:calc(var(--ts-fs, 12.5px) * 0.88); }
 .ts-set-seg { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+/* 占满一整行、三枚等分（主题块用）：238px 面板里再排「标签 + 三枚」会换行 */
+.ts-set-seg--fill { display: flex; flex: 1; flex-wrap: nowrap; }
+.ts-set-seg--fill > .ts-set-opt { flex: 1; min-width: 0; padding: 2px 4px; white-space: nowrap; }
 .ts-set-opt { border: 1px solid rgba(127,127,127,.3); border-radius: 6px; background: rgba(127,127,127,.08); color: inherit; font: inherit; font-size:calc(var(--ts-fs, 12.5px) * 0.88); padding: 2px 9px; cursor: pointer; }
 .ts-set-opt:hover { border-color: rgba(127,127,127,.55); }
 .ts-set-opt[data-on] { color: #4f8ef7; border-color: rgba(79,142,247,.5); background: rgba(79,142,247,.15); }
@@ -809,6 +818,27 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
     return () => window.removeEventListener('ts-theme-changed', on)
   }, [])
 
+  /**
+   * 主题偏好三态（跟随系统 / 深色 / 浅色）。
+   *
+   * **真相源是宿主 ctx.theme**（宿主用户设置里那一份），本组件只留镜像：
+   * 插件自己再存一份的话，宿主设置页切一次、这边还显示旧值，两个真相源必然对不上。
+   * 三态与「宿主设置页那三个按钮」是同一份偏好，改哪边另一边都跟着变。
+   */
+  const [themeMode, setThemeMode] = useState<ThemeMode | null>(() => readThemeMode(getClientContext()))
+  /** 偏好解析后的实际配色（`system` 由宿主解析）：面板里显示「跟随系统 · 当前深色」用。 */
+  const [themeScheme, setThemeScheme] = useState<'dark' | 'light' | null>(() => readActiveScheme(getClientContext()))
+  useEffect(() => {
+    const ctx = getClientContext()
+    const sync = () => {
+      setThemeMode(readThemeMode(ctx))
+      setThemeScheme(readActiveScheme(ctx))
+    }
+    sync()
+    // 宿主设置页改主题、系统深浅变化（system 模式）都会推 theme/change，这里统一重读。
+    return subscribeThemeMode(ctx, sync)
+  }, [])
+
   /** 挂载 effect（右键菜单）里要用最新的 closePanel。 */
   const closePanelRef = useRef<((id: string) => void) | null>(null)
   /** 工作台正在拆除（卸载/恢复布局）：布局脏标记与关闭记账都不要动。 */
@@ -825,7 +855,7 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
   /** 由挂载 effect 赋值的「输入条要不要藏」判定：hiddenRegions 变化（收起编辑区）时也要重跑。 */
   const syncChatSeatRef = useRef<() => void>(() => {})
   const [layoutDirty, setLayoutDirty] = useState(false)
-  /** 右上角「设置」面板（显示/隐藏窗口 + 标题栏位置 + 皮肤 + 字体，四块合一）。 */
+  /** 右上角「设置」面板（显示/隐藏窗口 + 标题栏位置 + 主题 + 皮肤 + 字体，五块合一）。 */
   const [settingsOpen, setSettingsOpen] = useState(false)
   /** 标题行左侧「项目切换」面板。 */
   const [projOpen, setProjOpen] = useState(false)
@@ -2191,6 +2221,21 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
   }
 
   /**
+   * 切主题（三态，同 info_report 的「跟随系统 / 深色 / 浅色」）。
+   *
+   * 只调宿主 ctx.theme.setTheme：宿主负责落库（用户设置）+ 推到 presenter 切整页配色，
+   * 插件不自己存一份（否则宿主设置页与这里会出现两个不同步的显值）。
+   * 宿主服务拿不到时按钮本来就是置灰的，这里再兑一次底：不假装切成功了。
+   */
+  const switchThemeMode = (next: ThemeMode) => {
+    const ok = writeThemeMode(getClientContext(), next)
+    // 成功时 theme/change 会回调重读；失败也要刷一次，把界面拉回真实状态（不让高亮留在没生效的按钮上）。
+    setThemeMode(readThemeMode(getClientContext()))
+    setThemeScheme(readActiveScheme(getClientContext()))
+    if (!ok) console.warn('[tokensave] 主题切换未生效：宿主 theme 服务不可用')
+  }
+
+  /**
    * 项目清单的**悬浮开合**（用户要求「鼠标浮动就弹出，不一定需要点击」）。
    * 开：进按钮/面板后 110ms（防手滑）；关：离开后 260ms（够时间从按钮移到面板）。
    * 窄屏（触屏没有 hover）不启用，点击照旧可用。
@@ -2606,7 +2651,7 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
             className="ts-tg"
             data-desk-settings=""
             data-on={settingsOpen ? '1' : undefined}
-            title="设置：窗口 · 标题栏 · 皮肤 · 字体"
+            title="设置：窗口 · 标题栏 · 主题 · 皮肤 · 字体"
             onClick={() => {
               const next = !settingsOpen
               if (next) {
@@ -2723,7 +2768,7 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
         </span>
       </footer>
 
-      {/* 设置面板：四块 —— 显示/隐藏窗口 · 标题栏位置 · 皮肤 · 字体 */}
+      {/* 设置面板：五块 —— 显示/隐藏窗口 · 标题栏位置 · 主题 · 皮肤 · 字体 */}
       {settingsOpen ? (
         <div
           className="ts-pop ts-set"
@@ -2806,7 +2851,47 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
             </div>
           )}
 
-          {/* ③ 背景皮肤（分组 + 分类，参考 info_report 的皮肤目录；点了不关面板方便连着试） */}
+          {/* ③ 主题：跟随系统 / 深色 / 浅色（照抄 info_report 的三态；值与宿主设置页同一份）。
+              放在皮肤之前：主题决定整页配色，皮肤只是在它上面的花纹。 */}
+          <div className="ts-set-block" data-desk-set-block="theme">
+            <div className="ts-set-head">
+              <span className="ts-set-title">主题</span>
+              <span className="ts-set-hint" data-desk-theme-status="">
+                {themeMode
+                  ? THEME_MODE_LABEL[themeMode] +
+                    (themeMode === 'system' && themeScheme ? ` · 当前${themeScheme === 'light' ? '浅色' : '深色'}` : '')
+                  : '宿主未提供主题服务'}
+              </span>
+            </div>
+            <div className="ts-set-row">
+              {/* 不放「模式」标签：块标题已经写着「主题」，右边 hint 还显示当前值；
+                  在 238px 宽的面板里再占 62px 会把三枚按钮挤成换行（实测「浅色」掉行）。 */}
+              <span className="ts-set-seg ts-set-seg--fill">
+                {THEME_MODES.map((mode) => (
+                  <button
+                    key={mode}
+                    className="ts-set-opt"
+                    data-desk-theme={mode}
+                    data-on={themeMode === mode ? '1' : undefined}
+                    // 服务缺失时置灰：能点却没反应的按钮，比看得见的禁用难排得多。
+                    disabled={!themeMode}
+                    title={
+                      themeMode
+                        ? THEME_MODE_HINT[mode]
+                        : '当前 DSH 没有提供主题服务（ui-theme 未启用），无法切换'
+                    }
+                    onClick={() => switchThemeMode(mode)}
+                  >
+                    {THEME_MODE_LABEL[mode]}
+                  </button>
+                ))}
+              </span>
+            </div>
+            {/* 只说「跟随系统」用户看不出到底跟成了什么，右边那个 hint 会补上当前实际深浅。 */}
+            <div className="ts-set-hint ts-set-note">与宿主「设置 → 外观」是同一份偏好 · 整个 DSH 界面一起切</div>
+          </div>
+
+          {/* ④ 背景皮肤（分组 + 分类，参考 info_report 的皮肤目录；点了不关面板方便连着试） */}
           <div className="ts-set-block" data-desk-set-block="skin">
             {/* 标题行右侧直接显示「当前选了哪套 + 属于哪种主题」：皮肤现在覆盖整页，
                 用户需要一眼确认到底生效的是哪一套（以前只有格子高亮，列表一长就看不见）。 */}
@@ -2817,7 +2902,7 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
               </span>
             </div>
             {/* 列表限高 + 内部滚动：22 套皮排开会把下面的「字体」块顶出面板（实测皮肤块 695px、
-                面板只有 415px，字体要滚很久才看得到）。限高后四块一眼都在。 */}
+                面板只有 415px，字体要滚很久才看得到）。限高后五块一眼都在。 */}
             <div className="ts-skin-scroll" data-desk-skin-scroll="">
               <button
                 className="ts-skin-cell ts-skin-none"

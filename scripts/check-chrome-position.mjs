@@ -169,8 +169,9 @@ try {
   check('浮层落点统一走纯函数（两处浮层共用一套口径）',
     /popPlacement\(\{/.test(dockSrc) && /anchor: anchor\?\.getBoundingClientRect\(\) \?\? null/.test(dockSrc))
   check('窄屏按顶部渲染（抽屉布局）', /const chromePos = effectiveChrome\(chrome, narrow\)/.test(dockSrc))
-  check('设置面板的窗口/皮肤/字体之外多出「标题栏」一块',
+  check('设置面板的窗口/标题栏/主题/皮肤/字体五块齐全',
     /data-desk-set-block="chrome"/.test(dockSrc) &&
+    /data-desk-set-block="theme"/.test(dockSrc) &&
     /data-desk-set-block="skin"/.test(dockSrc) &&
     /data-desk-set-block="font"/.test(dockSrc))
 
