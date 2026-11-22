@@ -157,8 +157,14 @@ check('完成态才允许落库，且成功与完成是同一套 addProject',
   /onClick=\{source === 'clone' \? finishClone : confirm\}/.test(dialog) &&
   /const record = addProject\(name\.trim\(\) \|\| repoNameFrom\(repoUrl\), dir, description\)/.test(dialog))
 
-check('本地专属控件（新建/重命名/选择当前文件夹）只在 local 态出现',
-  (dialog.match(/\{source === 'local' && \(/g) || []).length === 2)
+check('本地专属控件（新建/重命名/选择当前文件夹）只在 local 态出现，且都在**右列**',
+  // 本轮把这三块从左侧目录栏搬到了右列（用户要求：「更协调一些」）→ 只剩一个 local 分支。
+  (dialog.match(/\{source === 'local' && \(/g) || []).length === 1 &&
+  // 它们在 ts-addproj-folderops 里，且这个块位于右列之后
+  /className="ts-addproj-folderops"/.test(dialog) &&
+  dialog.indexOf('ts-addproj-col-right') < dialog.indexOf('ts-addproj-folderops') &&
+  // 搬走后左侧只留目录浏览器
+  dialog.indexOf('ts-addproj-col-left') < dialog.indexOf('ts-addproj-col-right'))
 
 check('仓库名推导与服务端同规则（去 .git / 取末段）',
   dialog.includes('cleaned.split(/[/:]/)') &&

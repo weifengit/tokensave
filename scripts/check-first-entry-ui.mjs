@@ -27,6 +27,7 @@ const dialog = readFileSync(join(root, 'client/src/panel/AddProjectDialog.tsx'),
 const styles = readFileSync(join(root, 'client/src/panel/styles.ts'), 'utf8')
 const icons = readFileSync(join(root, 'client/src/panel/icons.ts'), 'utf8')
 const ghCli = readFileSync(join(root, 'src/gh-cli.ts'), 'utf8')
+const route = readFileSync(join(root, 'src/board-web-route.ts'), 'utf8')
 
 console.log('— 1. 首次进入的界面布局 —')
 
@@ -118,10 +119,71 @@ check('弹窗里的目录项用线条图标（不再用 emoji 📁）',
   /<Icon name="folder" size=\{13\} \/>/.test(dialog) &&
   /<Icon name="pencil" size=\{12\} \/>/.test(dialog))
 
-check('「选择当前文件夹」一行：按钮不换行、路径省略（长路径不撑破面板）',
-  /\.ts-addproj-pickbtn \{ flex:none; white-space:nowrap; \}/.test(styles) &&
-  /\.ts-addproj-picked-path \{[^}]*min-width:0;[^}]*text-overflow:ellipsis/.test(styles) &&
-  /className="ts-sub ts-addproj-picked-path"/.test(dialog))
+check('「新建文件夹 / 选择当前文件夹」已归到**右列**，且不再占提示文字',
+  /className="ts-addproj-folderops"/.test(dialog) &&
+  dialog.indexOf('ts-addproj-col-right') < dialog.indexOf('ts-addproj-folderops') &&
+  /\.ts-addproj-folderops \{ display:flex; flex-direction:column; gap:8px; flex:none; \}/.test(styles) &&
+  /\.ts-addproj-pickbtn \{ flex:none; white-space:nowrap; align-self:flex-start; \}/.test(styles) &&
+  // 旧提示文字不得复活（用户明确要求去掉）
+  !/浏览到目标文件夹后/.test(dialog) &&
+  !/ts-addproj-picked-path/.test(dialog) &&
+  // 旧提示「将建在：」也不在界面上（只保留 title）
+  !/将建在：/.test(dialog))
+
+check('仓库清单只留**一根**滚动条（外层列藏、内层列表显）',
+  // 外层列可滚但滚动条隐藏
+  /\.ts-addproj-col-right \{[^}]*overflow-y:auto;[^}]*scrollbar-width:none;/.test(styles) &&
+  /\.ts-addproj-col-right::-webkit-scrollbar \{ width:0; height:0; \}/.test(styles) &&
+  // 内层列表以 clamp 限高并自带滚动（不再写死 190px，也不会被压成 2px）
+  /\.ts-repo-items \{ height:clamp\(140px, 22vh, 200px\); overflow-y:auto;/.test(styles) &&
+  !/\.ts-repo-items \{ height:190px/.test(styles))
+
+check('克隆区控件不被压缩（面板矮时不会把选择按钮顶出可视区）',
+  /\.ts-clone > \.ts-clone-head,/.test(styles) &&
+  /\.ts-clone > \.ts-clone-progress \{ flex:none; \}/.test(styles) &&
+  /\.ts-addproj-col-right \.ts-clone \{ flex:none; \}/.test(styles))
+
+console.log('— 6. 呼吸灯面板：对话清单的归档 —')
+
+const entrySrc = readFileSync(join(root, 'client/src/panel/ControlRoomEntry.tsx'), 'utf8')
+
+check('单一归档：每条对话后面有归档按钮',
+  /className="ts-warn-archive-btn"/.test(entrySrc) &&
+  /onArchive\(it\)/.test(entrySrc) &&
+  /归档这条对话/.test(entrySrc))
+
+check('所有归档：对话清单标题行有「归档」按钮',
+  /className="ts-warn-archive-all-btn"/.test(entrySrc) &&
+  /onArchiveAll/.test(entrySrc) &&
+  /ts-warn-headops/.test(entrySrc) &&
+  /className="ts-warn-headops"/.test(entrySrc))
+
+check('归档走宿主 uiWorkspace.archiveSession（复用 sessions.ts 的封装）',
+  /archiveSession/.test(entrySrc) &&
+  /import \{[\s\S]{0,400}?archiveSession[\s\S]{0,200}?\} from '\.\/sessions'/.test(entrySrc) &&
+  // 正在运行被拒 → 弹确认框「停止并归档」
+  /pendingArchive/.test(entrySrc) &&
+  /停止并归档/.test(entrySrc) &&
+  // 归档当前会话后留在本项目工作台（不掉回 Hero）
+  /stayInProjectAfterArchive/.test(entrySrc))
+
+check('归档按钮与图标样式齐全（线条归档盒，非 emoji）',
+  /\.ts-warn-archive-btn, \.ts-warn-archive-all-btn \{/.test(styles) &&
+  /\.ts-warn-archive-ico svg \{ display:block; \}/.test(styles) &&
+  /\.ts-warn-headops \{/.test(styles) &&
+  // 图标在共享 icons.ts，且是线条 SVG（无 emoji）
+  /archive: '<rect x="3\.5" y="4\.5" width="17" height="4\.5"/.test(icons) &&
+  !/📥/.test(entrySrc))
+
+console.log('— 7. Windows 默认盘符：E → D → C —')
+
+check('盘符优先级 E → D → C，且默认起点取首选盘',
+  /const PREFERRED_DRIVES = \['E', 'D', 'C'\] as const/.test(route) &&
+  /function fsDefaultRoot\(\): string \| null/.test(route) &&
+  // 默认起点先试首选盘（而不是直接跳 HOME / C:）
+  /if \(IS_WINDOWS\) \{[\s\S]{0,200}?const preferred = fsDefaultRoot\(\)/.test(route) &&
+  // 排序：首选盘在前，其余保持字母序
+  /\.sort\(\(a, b\) => rank\(a\.root\) - rank\(b\.root\) \|\| a\.index - b\.index\)/.test(route))
 
 console.log('— 5. Windows：装了 gh 却报「未安装」 —')
 

@@ -46,12 +46,14 @@ import React, { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { getClientContext } from '../session-subscribe'
 import {
-  activeHostPanelId, enterProjectWorkbench, getLiveScreen, onRequestProjectList, onRequestWorkbench, openControlRoom,
-  sendToSession,
+  activeHostPanelId, archiveSession, enterProjectWorkbench, getLiveScreen, onRequestProjectList, onRequestWorkbench, openControlRoom,
+  sendToSession, stayInProjectAfterArchive,
 } from './sessions'
 import { markPulseRead, useActivityPulse, type InterruptKind } from './pulse'
 import { iconSvg } from './icons'
 import { injectProjectCenterStyles } from './styles'
+import { loadProjects } from './store'
+import { ConfirmDialog } from './ConfirmDialog'
 import {
   DURATION_OPTIONS, SOUND_OPTIONS, getSoundSettings, initSoundBridge, playRole,
   setSoundSettings, stopSoundEverywhere, subscribePlaying,
@@ -376,7 +378,7 @@ function ContinueSettingsBlock() {
  *     两块设置区与清单区因此永远同宽（此前是清单撐宽、设置区被拉得很难看）；
  *   - 说明文字全部走 title 悬浮提示，面板内不出现解释段（极简）。
  */
-function HoverPanel({ pos, panelRef, items, onPick, onHover, onMarkRead, onMarkAllRead, onContinue, onClose }: {
+function HoverPanel({ pos, panelRef, items, onPick, onHover, onMarkRead, onMarkAllRead, onContinue, onArchive, onArchiveAll, onClose }: {
   pos: PanelPos
   /** 面板自己的 DOM 引用（父级的走廊命中测试要读它的真实矩形） */
   panelRef: React.RefObject<HTMLDivElement | null>
@@ -389,7 +391,12 @@ function HoverPanel({ pos, panelRef, items, onPick, onHover, onMarkRead, onMarkA
   /** 一键把需要处理的全部标为已读 */
   onMarkAllRead: () => void
   /** 发送继续 */
+  /** 发送继续 */
   onContinue: (item: PopItem) => Promise<void>
+  /** 归档单条对话 */
+  onArchive: (item: PopItem) => void
+  /** 归档清单里全部对话 */
+  onArchiveAll: () => void
   /** 手机摆法下的显式关闭（见下面 ✕；手机不靠 hover 自动收） */
   onClose: () => void
 }) {
@@ -592,15 +599,28 @@ function HoverPanel({ pos, panelRef, items, onPick, onHover, onMarkRead, onMarkA
       {/* 区域三：对话清单（标题行 + 右侧「全部已读」，条目也用 card 包住） */}
       <div className="ts-sec ts-sec-list">
         <SectionHead title="对话清单" note={String(items.length)}>
-          <button
-            type="button"
-            className="ts-mark-all-read-btn"
-            disabled={readable === 0}
-            title={readable === 0 ? '没有需要标注已读的对话' : `把清单里这 ${readable} 条全部标为已读，不再提醒（新一轮 / 新的待确认会重新提醒）`}
-            onClick={onMarkAllRead}
-          >
-            <span aria-hidden="true">✓</span> 已读
-          </button>
+          {/* 同行两个操作：「全部已读」与「全部归档」（用户要求） */}
+          <span className="ts-warn-headops">
+            <button
+              type="button"
+              className="ts-mark-all-read-btn"
+              disabled={readable === 0}
+              title={readable === 0 ? '没有需要标注已读的对话' : `把清单里这 ${readable} 条全部标为已读，不再提醒（新一轮 / 新的待确认会重新提醒）`}
+              onClick={onMarkAllRead}
+            >
+              <span aria-hidden="true">✓</span> 已读
+            </button>
+            <button
+              type="button"
+              className="ts-warn-archive-all-btn"
+              disabled={items.length === 0}
+              title={items.length === 0 ? '清单里没有对话' : `把清单里这 ${items.length} 条对话全部归档（可在侧栏「全部对话（显示已归档）」里恢复）`}
+              onClick={onArchiveAll}
+            >
+              <span className="ts-warn-archive-ico" aria-hidden="true" dangerouslySetInnerHTML={{ __html: iconSvg('archive', 12) }} />
+              归档
+            </button>
+          </span>
         </SectionHead>
         {/* 清单区与提示音 / 自动继续同构：外层给 0 12px 10px 的外距，外框才是 .ts-box */}
         <div className="ts-list-body">
@@ -668,6 +688,20 @@ function HoverPanel({ pos, panelRef, items, onPick, onHover, onMarkRead, onMarkA
                     <path d="M2.5 6.4l2.4 2.4 4.6-5.2" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
                   </svg>
                   已读
+                </button>
+                {/* 单一归档：每条对话后面的归档按钮 */}
+                <button
+                  type="button"
+                  className="ts-warn-archive-btn"
+                  title={`归档这条对话：${it.title}（可在侧栏「全部对话（显示已归档）」里恢复）`}
+                  aria-label={`归档：${it.title}`}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onArchive(it)
+                  }}
+                >
+                  <span className="ts-warn-archive-ico" aria-hidden="true" dangerouslySetInnerHTML={{ __html: iconSvg('archive', 12) }} />
+                  归档
                 </button>
               </div>
             </div>
@@ -760,7 +794,60 @@ export function ControlRoomEntry({ wide }: { wide?: boolean }) {
       console.warn('[tokensave] 定位对话失败', e)
     }
   }
-
+  /**
+   * 归档一条对话（宿主 uiWorkspace.archiveSession）。
+   *
+   * 流程与原生侧栏一致：先不带 stopActivity 试一次；宿主对**正在运行**的会话会拒绕，
+   * 此时用弹窗问「停止并归档」，确认后带 stopActivity=true 重试。
+   * 归档的若是当前会话，宿主会顺手清掉主会话（界面掉回「新建会话」Hero）——
+   * 因此归档后必须显式留在本项目工作台（stayInProjectAfterArchive）。
+   */
+  const doArchive = async (it: PopItem, stopActivity = false) => {
+    setArchivingId(it.sessionId)
+    const res = await archiveSession(it.sessionId, stopActivity)
+    setArchivingId('')
+    if (res.ok) {
+      // 归档成功后：这条对话从清单里消失（宿主归档集已更新 → pulse 下一拍不再列它）
+      setHoverPos(null)
+      // 归档的若是当前会话 → 留在本项目工作台，不掉回 Hero
+      try {
+        const project = loadProjects().find((p) => p.id === it.projectId)
+        if (project) stayInProjectAfterArchive(project.path, project.id, it.sessionId)
+      } catch (e) {
+        console.warn('[tokensave] 归档后恢复工作台失败', e)
+      }
+      return
+    }
+    if (res.active) {
+      // 正在运行：问用户要不要先停下来
+      setPendingArchive(it)
+      return
+    }
+    setArchiveError(`归档失败：${res.error}`)
+  }
+  /** 正在归档的会话 id（防连点）。 */
+  const [archivingId, setArchivingId] = useState<string>('')
+  /** 因「正在运行」被拒、待用户确认「停止并归档」的对话。 */
+  const [pendingArchive, setPendingArchive] = useState<PopItem | null>(null)
+  /** 归档失败的原因（就地显示，不弹窗）。 */
+  const [archiveError, setArchiveError] = useState('')
+  /** 批量归档：清单里全部对话（用户要求「所有」同行一个按钮）。 */
+  const archiveAll = async () => {
+    const list = hoverItems.filter((it) => it.sessionId)
+    if (list.length === 0) return
+    setArchiveError('')
+    let failed = 0
+    for (const it of list) {
+      const res = await archiveSession(it.sessionId, false)
+      if (!res.ok) {
+        failed++
+        // 正在运行的那条：停下来问用户（其余先归档完）
+        if (res.active) setPendingArchive(it)
+      }
+    }
+    if (failed > 0) setArchiveError(`有 ${failed} 条归档失败（可能正在运行，需先停止）`)
+    if (failed < list.length) setHoverPos(null)
+  }
 
   const toDesk = screen === 'list'
   const head = toDesk ? '项目中心：回到工作台' : '项目中心：查看项目列表'
@@ -1242,6 +1329,25 @@ export function ControlRoomEntry({ wide }: { wide?: boolean }) {
             noteManualContinue(it.sessionId)
             await sendToSession(it.sessionId, CONTINUE_TEXT)
           }}
+          onArchive={(it) => { void doArchive(it) }}
+          onArchiveAll={() => { void archiveAll() }}
+        />
+      )}
+      {/* 归档确认：会话正在运行时，宿主会拒绕 → 问用户「停止并归档」。 */}
+      {pendingArchive && (
+        <ConfirmDialog
+          title="停止并归档这条对话？"
+          message={
+            <>「{pendingArchive.title}」还有正在进行的工作。归档会先停止这些工作；之后可在侧栏「全部对话（显示已归档）」里恢复，被停止的工作不会自动继续。</>
+          }
+          confirmText="停止并归档"
+          busy={archivingId === pendingArchive.sessionId}
+          onConfirm={() => {
+            const target = pendingArchive
+            setPendingArchive(null)
+            void doArchive(target, true)
+          }}
+          onCancel={() => setPendingArchive(null)}
         />
       )}
     </>

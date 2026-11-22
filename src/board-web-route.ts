@@ -316,7 +316,15 @@ function normalizeWorkspace(rawPath?: string | null): string {
 
 const IS_WINDOWS = process.platform === 'win32'
 
-/** 文件系统根列表：Windows 上是所有真实存在的盘符，类 Unix 上是 "/"。 */
+/**
+ * 文件系统根列表：Windows 上是所有真实存在的盘符，类 Unix 上是 "/"。
+ *
+ * 顺序即优先级：E: → D: → C: → 其余（字母序）。
+ * 为什么不是字母序：用户把代码放数据盘（E: 或 D:），C: 只装系统，
+ * 从 C: 起浏览是纯粹的绕路（用户反馈：「默认不要是 C 盘」）。
+ */
+const PREFERRED_DRIVES = ['E', 'D', 'C'] as const
+
 function fsRoots(): string[] {
   if (!IS_WINDOWS) return ['/']
   const roots: string[] = []
@@ -326,13 +334,39 @@ function fsRoots(): string[] {
       if (fs.statSync(drive).isDirectory()) roots.push(drive)
     } catch { /* 该盘符不存在 */ }
   }
-  return roots.length > 0 ? roots : ['C:/']
+  if (roots.length === 0) return ['C:/']
+  // 按首选顺序排：preferred 集合里的在前（按 PREFERRED_DRIVES 给定顺序），其余保持字母序。
+  const rank = (root: string): number => {
+    const i = (PREFERRED_DRIVES as readonly string[]).indexOf(root[0].toUpperCase())
+    return i < 0 ? PREFERRED_DRIVES.length : i
+  }
+  return roots
+    .map((root, index) => ({ root, index }))
+    .sort((a, b) => rank(a.root) - rank(b.root) || a.index - b.index)
+    .map((r) => r.root)
+}
+
+/**
+ * 浏览器的默认起点（Windows）：E: → D: → C:（不存在的跳过）。
+ * roots 已按首选顺序排好，取第一个即可。
+ */
+function fsDefaultRoot(): string | null {
+  if (!IS_WINDOWS) return '/'
+  return fsRoots()[0] ?? null
 }
 
 /** 把请求参数解析成可被 fs 使用的绝对路径；空值 / 无效值回落到默认起点（HOME，再不行根）。 */
 function fsResolve(rawPath?: string | null): string {
   const raw = typeof rawPath === 'string' ? rawPath.trim() : ''
   if (!raw) {
+    // Windows：用户把代码放数据盘（E: / D:），默认不要从 C 盘起浏览。
+    // 先试首选盘根，再试 HOME（两者都存在时取首选盘）。
+    if (IS_WINDOWS) {
+      const preferred = fsDefaultRoot()
+      if (preferred) {
+        try { if (fs.statSync(preferred).isDirectory()) return preferred } catch { /* 回落 HOME */ }
+      }
+    }
     const home = process.env.HOME || process.env.USERPROFILE || ''
     if (home) {
       try { if (fs.statSync(home).isDirectory()) return home } catch { /* 回落 */ }

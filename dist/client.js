@@ -1745,6 +1745,15 @@ function enterProjectWorkbench(projectId, targetSessionId, intent) {
   }
   return switchToView(VIEW_ID, WORKBENCH_LABEL);
 }
+function stayInProjectAfterArchive(projectPath, projectId, archivedId) {
+  const ctx = getClientContext();
+  if (!ctx || !projectPath || !projectId) return false;
+  const remaining = readProjectSessions(ctx, projectPath).filter((s) => s.id !== archivedId);
+  const next = pickOwnSession(remaining);
+  if (next) return enterProjectWorkbench(projectId, next.id);
+  void startProjectSession(projectPath, projectId, archivedId);
+  return true;
+}
 function openControlRoom(target) {
   const ctx = getClientContext();
   if (!ctx) return false;
@@ -2458,6 +2467,16 @@ body.ts-desk-nochat [data-conversation-region="composer"] {
 .ts-warn-read { flex:none; display:inline-flex; align-items:center; gap:3px; border:1px solid rgba(127,127,127,.34); background:rgba(127,127,127,.12); color:inherit; font-size:calc(var(--ts-fs, 12.5px) * 0.84); line-height:1; padding:4px 8px; border-radius:999px; cursor:pointer; opacity:.68; transition:background .12s, opacity .12s, border-color .12s; }
 .ts-warn-read:hover { opacity:1; background:rgba(74,222,128,.18); border-color:rgba(74,222,128,.5); color:#86efac; }
 .ts-warn-read:focus-visible { outline:2px solid rgba(96,165,250,.85); outline-offset:1px; }
+/* \u5F52\u6863\u6309\u94AE\uFF08\u884C\u5185 + \u6807\u9898\u884C\u300C\u5F52\u6863\u6240\u6709\u300D\uFF09\uFF1A\u540C\u300C\u5DF2\u8BFB\u300D\u7684\u8F7B\u724C\u98CE\u683C\uFF0C\u4F46\u7528\u4E2D\u6027\u8272\u533A\u5206\u3002
+   \u56FE\u6807\u662F\u7EBF\u6761\u5F52\u6863\u76D2\uFF08icons.ts \u7684 archive\uFF09\uFF0C\u4E0D\u662F emoji\u3002 */
+.ts-warn-archive-btn, .ts-warn-archive-all-btn { flex:none; display:inline-flex; align-items:center; gap:3px; border:1px solid rgba(127,127,127,.34); background:rgba(127,127,127,.12); color:inherit; font-size:calc(var(--ts-fs, 12.5px) * 0.84); line-height:1; padding:4px 8px; border-radius:999px; cursor:pointer; opacity:.68; transition:background .12s, opacity .12s, border-color .12s; }
+.ts-warn-archive-btn:hover, .ts-warn-archive-all-btn:hover { opacity:1; background:rgba(148,163,184,.22); border-color:rgba(148,163,184,.55); }
+.ts-warn-archive-btn:focus-visible, .ts-warn-archive-all-btn:focus-visible { outline:2px solid rgba(96,165,250,.85); outline-offset:1px; }
+.ts-warn-archive-btn:disabled, .ts-warn-archive-all-btn:disabled { opacity:.4; cursor:not-allowed; pointer-events:none; }
+.ts-warn-archive-ico { display:inline-flex; align-items:center; justify-content:center; }
+.ts-warn-archive-ico svg { display:block; }
+/* \u6807\u9898\u884C\u91CC\u7684\u4E24\u4E2A\u64CD\u4F5C\uFF08\u5DF2\u8BFB / \u5F52\u6863\uFF09\u540C\u884C\u6392\uFF1A\u5DE6\u5BF9\u9F50\u8FDB\u6807\u9898\u53F3\u4FA7\uFF0C\u6574\u4F53\u4E0D\u6362\u884C\u3002 */
+.ts-warn-headops { flex:none; display:inline-flex; align-items:center; gap:6px; }
 /* \u884C\u5185\u300C\u7EE7\u7EED\u300D\uFF1A\u4E0D\u80FD\u81EA\u52A8\u65F6\u7684\u552F\u4E00\u624B\u52A8\u5165\u53E3\uFF0C\u505A\u6210\u4E3B\u8272\u8C03\u5F3A\u8C03 */
 .ts-warn-continue-btn { flex:none; border:1px solid rgba(96,165,250,.6); background:rgba(96,165,250,.18); color:#93c5fd; font-size:calc(var(--ts-fs, 12.5px) * 0.84); font-weight:600; line-height:1; padding:5px 9px; border-radius:999px; cursor:pointer; transition:background .12s; }
 .ts-warn-continue-btn:hover:not(:disabled) { background:rgba(96,165,250,.34); }
@@ -2931,16 +2950,22 @@ body.ts-vsplit-dragging .ts-card { transition:none !important; animation:none !i
    \u59CB\u7EC8\u53EF\u89C1 \u2014\u2014 \u4E0D\u80FD\u6574\u5217\u4E00\u8D77\u6EDA\uFF08\u90A3\u6837\u5E95\u90E8\u6309\u94AE\u4F1A\u88AB\u63A8\u5230\u770B\u4E0D\u89C1\u7684\u5730\u65B9\uFF09\u3002 */
 .ts-addproj-col-left { overflow:hidden; }
 .ts-addproj-picker { flex:1 1 auto; min-height:0; display:flex; flex-direction:column; }
-/* \u53F3\u5217\uFF1A\u8868\u5355\u5757\u4E4B\u95F4\u7559\u767D\uFF0C\u4E0D\u6EDA\uFF08\u5185\u5BB9\u8D85\u51FA\u65F6\u8FD9\u4E00\u5217\u81EA\u5DF1\u6EDA\uFF09\u3002 */
-.ts-addproj-col-right { gap:12px; }
+/* \u53F3\u5217\uFF1A\u5185\u5BB9\u591A\u65F6\u6574\u5217\u53EF\u6EDA\uFF0C\u4F46**\u6EDA\u52A8\u6761\u9690\u85CF**\uFF08scrollbar-width:none\uFF09\u3002
+   \u4E3A\u4EC0\u4E48\uFF1A\u4ED3\u5E93\u6E05\u5355\u81EA\u5DF1\u6709\u4E00\u6839\u53EF\u89C1\u6EDA\u52A8\u6761\uFF0C\u82E5\u6574\u5217\u4E5F\u753B\u4E00\u6839\uFF0C\u4E24\u6839\u5C31\u5E76\u6392\u9ECF\u5728\u4E00\u8D77
+   \uFF08\u7528\u6237\u53CD\u9988\u7684\u539F\u8BDD\uFF09\u3002\u9690\u85CF\u5916\u5C42\u3001\u4FDD\u7559\u5185\u5C42 \u2014\u2014 \u53EF\u89C6\u4E0A\u6C38\u8FDC\u53EA\u6709\u4E00\u6839\uFF0C\u6EDA\u8F6E\u4E24\u5C42\u90FD\u80FD\u6EDA\u3002 */
+.ts-addproj-col-right { gap:12px; overflow-y:auto; overflow-x:hidden; scrollbar-width:none; }
+.ts-addproj-col-right::-webkit-scrollbar { width:0; height:0; }
+/* \u514B\u9686\u533A\u4E0D\u53C2\u4E0E\u4F38\u7F29\uFF1A\u5B83\u91CC\u9762\u7684\u63A7\u4EF6\u5404\u6709\u56FA\u5B9A\u9AD8\u5EA6\uFF0C\u4ED3\u5E93\u6E05\u5355\u81EA\u5DF1\u9650\u9AD8\u3002 */
+.ts-addproj-col-right .ts-clone { flex:none; }
 .ts-addproj-col-left .ts-fs { display:flex; flex-direction:column; flex:1 1 auto; min-height:0; }
 .ts-addproj-col-left .ts-fs-list { flex:1 1 auto; height:auto; min-height:120px; overflow:auto; }
 /* \u76EE\u5F55\u9879\uFF1A\u56FE\u6807 + \u540D\u79F0\uFF08\u540D\u79F0\u8FC7\u957F\u65F6\u7701\u7565\uFF0C\u4E0D\u6491\u7834\u5217\u8868\uFF09\u3002 */
 .ts-fs-item-name { display:inline-flex; align-items:center; gap:6px; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-/* \u300C\u9009\u4E2D\u5F53\u524D\u6587\u4EF6\u5939\u300D\u4E00\u884C\uFF1A\u6309\u94AE\u4E0D\u6362\u884C\uFF0C\u8DEF\u5F84\u5360\u5269\u4F59\u5BBD\u5EA6\u5E76\u7701\u7565\uFF08\u957F\u8DEF\u5F84\u4E0D\u6491\u7834\u9762\u677F\uFF09\u3002 */
-.ts-addproj-picked { display:flex; align-items:center; gap:8px; min-width:0; margin-top:8px; }
-.ts-addproj-pickbtn { flex:none; white-space:nowrap; }
-.ts-addproj-picked-path { flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+/* \u76EE\u5F55\u64CD\u4F5C\u5757\uFF08\u53F3\u5217\uFF09\uFF1A\u300C+ \u65B0\u5EFA\u6587\u4EF6\u5939 / \u91CD\u547D\u540D / \u9009\u62E9\u5F53\u524D\u6587\u4EF6\u5939\u300D\u3002
+   \u8FD9\u4E9B\u6309\u94AE\u5F52\u5230\u53F3\u5217\u540E\u4E0D\u518D\u5E26\u63D0\u793A\u6587\u5B57\uFF08\u7528\u6237\u8981\u6C42\uFF09\u2014\u2014 \u8BED\u4E49\u5168\u9760\u6309\u94AE\u6587\u6848 + title\u3002 */
+.ts-addproj-folderops { display:flex; flex-direction:column; gap:8px; flex:none; }
+.ts-addproj-folderops .ts-newfolder { margin-top:0; }
+.ts-addproj-pickbtn { flex:none; white-space:nowrap; align-self:flex-start; }
 /* \u7A84\u5C4F\uFF08\u5355\u5217\uFF09\uFF1A\u4E24\u5217\u4E0A\u4E0B\u6392\uFF0C\u5F39\u7A97\u4ECD\u4E0D\u6EDA\u52A8 \u2014\u2014 \u6BCF\u4E00\u5757\u5185\u90E8\u81EA\u5DF1\u6EDA\u3002 */
 @media (max-width: 780px) {
   .ts-addproj-body { grid-template-columns:minmax(0,1fr); grid-template-rows:auto minmax(0,1fr) minmax(0,1fr); }
@@ -2978,8 +3003,16 @@ body.ts-vsplit-dragging .ts-card { transition:none !important; animation:none !i
 .ts-srcbtn:disabled { cursor:not-allowed; opacity:.45; }
 /* \u9009\u4E2D\u6001\uFF1A\u63CF\u8FB9 + \u6DE1\u5E95\uFF08\u4E0E\u9879\u76EE\u5361\u7247\u7684\u9009\u4E2D\u53E3\u5F84\u4E00\u81F4\uFF09\uFF0C\u4E0D\u7528\u6574\u5757\u5B9E\u5E95\u8272 */
 .ts-srcbtn-on { opacity:1; border-color:rgba(96,165,250,.7); background:rgba(96,165,250,.16); }
-/* \u514B\u9686\u9762\u677F\uFF1A\u4ED3\u5E93\u5730\u5740 / \u76EE\u6807\u6587\u4EF6\u5939\u540D / \u8FDB\u5EA6\uFF08\u76EE\u5F55\u6D4F\u89C8\u5668\u4E0B\u65B9\u7684\u514B\u9686\u4E13\u5C5E\u533A\uFF09 */
-.ts-clone { display:flex; flex-direction:column; gap:8px; margin-top:8px; }
+/* \u514B\u9686\u9762\u677F\uFF1A\u4ED3\u5E93\u5730\u5740 / \u76EE\u6807\u6587\u4EF6\u5939\u540D / \u8FDB\u5EA6\u3002
+   margin-top \u53BB\u6389\uFF1A\u5B83\u73B0\u5728\u662F\u53F3\u5217\u7684\u7B2C\u4E00\u4E2A\u5757\uFF0C\u4E0A\u9762\u5C31\u662F\u5217\u95F4\u8DDD\uFF08\u91CD\u590D\u4F1A\u591A\u7A7A\u4E00\u622A\uFF09\u3002 */
+.ts-clone { display:flex; flex-direction:column; gap:8px; }
+/* \u9664\u4ED3\u5E93\u6E05\u5355\u4EE5\u5916\u7684\u63A7\u4EF6\u90FD\u5FC5\u987B**\u4E0D\u88AB\u538B\u7F29**\uFF08flex:none\uFF09\uFF0C\u5426\u5219\u9762\u677F\u77EE\u65F6\u5B83\u4EEC\u4F1A\u88AB
+   \u538B\u6241/\u9876\u51FA\u53EF\u89C6\u533A\uFF08\u7528\u6237\u53CD\u9988\u7684\u300C\u5185\u5BB9\u770B\u4E0D\u5B8C\u6574\u300D\uFF09\u3002 */
+.ts-clone > .ts-clone-head,
+.ts-clone > .ts-input,
+.ts-clone > .ts-clone-row,
+.ts-clone > .ts-newfolder-hint,
+.ts-clone > .ts-clone-progress { flex:none; }
 .ts-clone-row { display:flex; align-items:center; gap:8px; }
 .ts-clone .ts-newfolder-hint { max-width:none; white-space:normal; }
 .ts-clone-progress { display:flex; flex-direction:column; gap:6px; }
@@ -2996,14 +3029,19 @@ body.ts-vsplit-dragging .ts-card { transition:none !important; animation:none !i
 .ts-modal-title { display:inline-flex; align-items:center; }
 .ts-clone-head { display:flex; align-items:center; justify-content:space-between; gap:8px; }
 .ts-clone-head .ts-field-label { margin:0; }
-/* \u4ED3\u5E93\u6E05\u5355\uFF1A\u56FA\u5B9A\u9AD8\u5EA6\u5185\u6EDA\u52A8\uFF0C\u4E0E\u76EE\u5F55\u6D4F\u89C8\u5668\u540C\u4E00\u53E3\u5F84\uFF08\u5C11\u5185\u5BB9\u4E5F\u4E0D\u5854\uFF09 */
-.ts-repolist { display:flex; flex-direction:column; gap:6px; border:1px solid var(--ts-line); border-radius:8px; overflow:hidden; }
+/* \u4ED3\u5E93\u6E05\u5355\uFF1A\u5728**\u81EA\u8EAB\u5185\u90E8**\u9650\u9AD8\u6EDA\u52A8\uFF08\u53EA\u8FD9\u4E00\u6839\u6EDA\u52A8\u6761\uFF09\u3002
+   \u9AD8\u5EA6\u53D6 flex \u4F38\u7F29\u800C\u4E0D\u662F\u5199\u6B7B 190px\uFF1A\u9762\u677F\u77EE\u65F6\u5B83\u8DDF\u7740\u53D8\u77EE\uFF0C\u4E0D\u4F1A\u628A\u6574\u5217\u9876\u51FA\u53EF\u89C6\u533A
+   \uFF08\u7528\u6237\u53CD\u9988\uFF1A\u9009\u4E86\u300C\u6211\u7684\u4ED3\u5E93\u300D\u540E\u5185\u5BB9\u770B\u4E0D\u5B8C\u6574 + \u5916\u5C42/\u5185\u5C42\u4E24\u6839\u6EDA\u52A8\u6761\u9ECF\u5728\u4E00\u8D77\uFF09\u3002 */
+.ts-repolist { display:flex; flex-direction:column; gap:0; border:1px solid var(--ts-line); border-radius:8px; overflow:hidden; flex:1 1 auto; min-height:0; }
 .ts-repo-search { display:flex; align-items:center; gap:6px; padding:6px 10px; border-bottom:1px solid var(--ts-line); }
 .ts-repo-search .ts-ico { margin:0; opacity:.55; flex:0 0 auto; }
 .ts-repo-search-input { flex:1 1 auto; border:none; background:transparent; color:inherit; outline:none; font-size:calc(var(--ts-fs, 12.5px) * 1.0); }
 .ts-repo-clear { display:inline-flex; align-items:center; border:none; background:transparent; color:inherit; cursor:pointer; opacity:.6; padding:2px; flex:0 0 auto; }
 .ts-repo-clear:hover { opacity:1; }
-.ts-repo-items { height:190px; overflow:auto; }
+/* \u5217\u8868\u672C\u4F53\uFF1A\u56FA\u5B9A\u4E0A\u9650\u9AD8\u5EA6 + \u81EA\u8EAB\u6EDA\u52A8\uFF08\u552F\u4E00\u53EF\u89C1\u7684\u7AD6\u5411\u6EDA\u52A8\u6761\uFF09\u3002
+   \u4E0A\u9650\u53D6 clamp(140px, 22vh, 200px)\uFF1A\u81F3\u5C11\u80FD\u5B8C\u6574\u770B\u5230 3~4 \u884C\u4ED3\u5E93\uFF0C
+   \u53C8\u4E0D\u81F3\u4E8E\u628A\u4E0B\u9762\u7684\u300C\u76EE\u6807\u6587\u4EF6\u5939\u540D / \u5F00\u59CB\u514B\u9686 / \u9879\u76EE\u540D\u79F0\u300D\u9876\u51FA\u53EF\u89C6\u533A\u3002 */
+.ts-repo-items { height:clamp(140px, 22vh, 200px); overflow-y:auto; overflow-x:hidden; flex:none; }
 .ts-repo-item { display:flex; align-items:center; gap:8px; padding:6px 12px; cursor:pointer; border:none; background:transparent; color:inherit; width:100%; text-align:left; font-size:calc(var(--ts-fs, 12.5px) * 1.0); }
 .ts-repo-item:hover { background:rgba(127,127,127,.15); }
 .ts-repo-name { font-weight:600; flex:0 0 auto; }
@@ -8071,6 +8109,8 @@ var ICON_BODIES = {
   close: '<path d="M7 7l10 10"/><path d="M17 7 7 17"/>',
   /** 铅笔：重命名 */
   pencil: '<path d="M4.5 19.5h4L19 9a2.1 2.1 0 0 0-3-3L4.5 17.5z"/><path d="M14.5 6.5l3 3"/>',
+  /** 归档盒：归档对话 */
+  archive: '<rect x="3.5" y="4.5" width="17" height="4.5" rx="1.5"/><path d="M5.5 9v9a1.5 1.5 0 0 0 1.5 1.5h10a1.5 1.5 0 0 0 1.5-1.5V9"/><path d="M10 13h4"/>',
   /** 列表：项目中心（原来的 🗂️） */
   list: '<rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M7 9.5h10"/><path d="M7 13.5h6"/>',
   /** 书：项目预览 */
@@ -10863,120 +10903,6 @@ function AddProjectDialog({ onClose, onCreated }) {
               entry.isProject && /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("span", { className: "ts-tag", children: "\u68C0\u6D4B\u5230\u9879\u76EE" })
             ] }, entry.path))
           ] })
-        ] }),
-        source === "local" && /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "ts-newfolder", children: [
-          !newOpen ? /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(
-            "button",
-            {
-              className: "ts-btn ts-btn-sm",
-              onClick: () => {
-                setNewOpen(true);
-                setNewName("");
-                setActionError(null);
-              },
-              disabled: !cwd || folderBusy,
-              title: "\u5728\u5F53\u524D\u76EE\u5F55\u4E0B\u65B0\u5EFA\u4E00\u4E2A\u6587\u4EF6\u5939\uFF08\u5B83\u672C\u8EAB\u5C31\u662F\u65B0\u9879\u76EE\uFF09",
-              children: "\uFF0B \u65B0\u5EFA\u6587\u4EF6\u5939"
-            }
-          ) : /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)(import_jsx_runtime17.Fragment, { children: [
-            /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(
-              "input",
-              {
-                className: "ts-input ts-newfolder-input",
-                autoFocus: true,
-                value: newName,
-                placeholder: "\u65B0\u6587\u4EF6\u5939\u540D\uFF08\u5373\u65B0\u9879\u76EE\u540D\uFF09",
-                onChange: (e) => setNewName(e.target.value),
-                onKeyDown: (e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    void doCreate();
-                  }
-                  if (e.key === "Escape") setNewOpen(false);
-                }
-              }
-            ),
-            /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(
-              "button",
-              {
-                className: "ts-btn ts-btn-primary ts-btn-sm",
-                disabled: folderBusy || !newName.trim(),
-                onClick: () => void doCreate(),
-                children: folderBusy ? "\u521B\u5EFA\u4E2D\u2026" : "\u521B\u5EFA"
-              }
-            ),
-            /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("button", { className: "ts-btn ts-btn-sm", onClick: () => setNewOpen(false), children: "\u53D6\u6D88" }),
-            /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("span", { className: "ts-newfolder-hint", children: [
-              "\u5C06\u5EFA\u5728\uFF1A",
-              cwd || "/"
-            ] })
-          ] }),
-          selectedPath && (!renameOpen ? /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)(
-            "button",
-            {
-              className: "ts-btn ts-btn-sm",
-              onClick: () => {
-                setRenameOpen(true);
-                setRenameName(baseName(selectedPath));
-                setActionError(null);
-              },
-              disabled: folderBusy,
-              title: "\u91CD\u547D\u540D\u5DF2\u9009\u4E2D\u7684\u6587\u4EF6\u5939\uFF08\u540C\u76EE\u5F55\u5185\u6539\u540D\uFF09",
-              children: [
-                /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(Icon, { name: "pencil", size: 12 }),
-                " \u91CD\u547D\u540D"
-              ]
-            }
-          ) : /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)(import_jsx_runtime17.Fragment, { children: [
-            /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(
-              "input",
-              {
-                className: "ts-input ts-newfolder-input",
-                autoFocus: true,
-                value: renameName,
-                placeholder: "\u65B0\u7684\u6587\u4EF6\u5939\u540D",
-                onChange: (e) => setRenameName(e.target.value),
-                onKeyDown: (e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    void doRename();
-                  }
-                  if (e.key === "Escape") setRenameOpen(false);
-                }
-              }
-            ),
-            /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(
-              "button",
-              {
-                className: "ts-btn ts-btn-primary ts-btn-sm",
-                disabled: folderBusy || !renameName.trim(),
-                onClick: () => void doRename(),
-                children: folderBusy ? "\u6539\u540D\u4E2D\u2026" : "\u786E\u8BA4\u6539\u540D"
-              }
-            ),
-            /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("button", { className: "ts-btn ts-btn-sm", onClick: () => setRenameOpen(false), children: "\u53D6\u6D88" }),
-            /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("span", { className: "ts-newfolder-hint", children: [
-              "\u91CD\u547D\u540D\uFF1A",
-              baseName(selectedPath)
-            ] })
-          ] })),
-          actionError && /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("span", { className: "ts-newfolder-err", children: [
-            "\u26A0\uFE0F ",
-            actionError
-          ] })
-        ] }),
-        source === "local" && /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "ts-addproj-picked", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(
-            "button",
-            {
-              className: `ts-btn ${selectedPath === cwd ? "ts-btn-picked" : "ts-btn-primary"} ts-addproj-pickbtn`,
-              onClick: pickCurrent,
-              disabled: !cwd,
-              title: selectedPath === cwd ? "\u518D\u6B21\u70B9\u51FB\u53D6\u6D88\u9009\u62E9" : "\u9009\u4E2D\u5F53\u524D\u6587\u4EF6\u5939\u4F5C\u4E3A\u9879\u76EE\u8DEF\u5F84",
-              children: selectedPath === cwd ? "\u5DF2\u9009\u4E2D\uFF08\u70B9\u51FB\u53D6\u6D88\uFF09" : "\u9009\u62E9\u5F53\u524D\u6587\u4EF6\u5939"
-            }
-          ),
-          /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("span", { className: "ts-sub ts-addproj-picked-path", children: selectedPath ? `\u5DF2\u9009\uFF1A${selectedPath}` : "\u6D4F\u89C8\u5230\u76EE\u6807\u6587\u4EF6\u5939\u540E\u70B9\u300C\u9009\u62E9\u5F53\u524D\u6587\u4EF6\u5939\u300D\uFF0C\u6216\u76F4\u63A5\u300C\uFF0B \u65B0\u5EFA\u6587\u4EF6\u5939\u300D" })
         ] })
       ] }) }),
       /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "ts-addproj-col ts-addproj-col-right", children: [
@@ -11102,6 +11028,111 @@ function AddProjectDialog({ onClose, onCreated }) {
             ] }),
             cloneLog.length > 0 && cloneStatus.state === "running" && /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("div", { className: "ts-clone-log", children: cloneLog.slice(-3).join("\n") })
           ] })
+        ] }),
+        source === "local" && /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "ts-addproj-folderops", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "ts-newfolder", children: [
+            !newOpen ? /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(
+              "button",
+              {
+                className: "ts-btn ts-btn-sm",
+                onClick: () => {
+                  setNewOpen(true);
+                  setNewName("");
+                  setActionError(null);
+                },
+                disabled: !cwd || folderBusy,
+                title: "\u5728\u5F53\u524D\u76EE\u5F55\u4E0B\u65B0\u5EFA\u4E00\u4E2A\u6587\u4EF6\u5939\uFF08\u5B83\u672C\u8EAB\u5C31\u662F\u65B0\u9879\u76EE\uFF09",
+                children: "\uFF0B \u65B0\u5EFA\u6587\u4EF6\u5939"
+              }
+            ) : /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)(import_jsx_runtime17.Fragment, { children: [
+              /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(
+                "input",
+                {
+                  className: "ts-input ts-newfolder-input",
+                  autoFocus: true,
+                  value: newName,
+                  placeholder: "\u65B0\u6587\u4EF6\u5939\u540D\uFF08\u5373\u65B0\u9879\u76EE\u540D\uFF09",
+                  onChange: (e) => setNewName(e.target.value),
+                  onKeyDown: (e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      void doCreate();
+                    }
+                    if (e.key === "Escape") setNewOpen(false);
+                  }
+                }
+              ),
+              /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(
+                "button",
+                {
+                  className: "ts-btn ts-btn-primary ts-btn-sm",
+                  disabled: folderBusy || !newName.trim(),
+                  onClick: () => void doCreate(),
+                  children: folderBusy ? "\u521B\u5EFA\u4E2D\u2026" : "\u521B\u5EFA"
+                }
+              ),
+              /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("button", { className: "ts-btn ts-btn-sm", onClick: () => setNewOpen(false), children: "\u53D6\u6D88" })
+            ] }),
+            selectedPath && (!renameOpen ? /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)(
+              "button",
+              {
+                className: "ts-btn ts-btn-sm",
+                onClick: () => {
+                  setRenameOpen(true);
+                  setRenameName(baseName(selectedPath));
+                  setActionError(null);
+                },
+                disabled: folderBusy,
+                title: "\u91CD\u547D\u540D\u5DF2\u9009\u4E2D\u7684\u6587\u4EF6\u5939\uFF08\u540C\u76EE\u5F55\u5185\u6539\u540D\uFF09",
+                children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(Icon, { name: "pencil", size: 12 }),
+                  " \u91CD\u547D\u540D"
+                ]
+              }
+            ) : /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)(import_jsx_runtime17.Fragment, { children: [
+              /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(
+                "input",
+                {
+                  className: "ts-input ts-newfolder-input",
+                  autoFocus: true,
+                  value: renameName,
+                  placeholder: "\u65B0\u7684\u6587\u4EF6\u5939\u540D",
+                  onChange: (e) => setRenameName(e.target.value),
+                  onKeyDown: (e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      void doRename();
+                    }
+                    if (e.key === "Escape") setRenameOpen(false);
+                  }
+                }
+              ),
+              /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(
+                "button",
+                {
+                  className: "ts-btn ts-btn-primary ts-btn-sm",
+                  disabled: folderBusy || !renameName.trim(),
+                  onClick: () => void doRename(),
+                  children: folderBusy ? "\u6539\u540D\u4E2D\u2026" : "\u786E\u8BA4\u6539\u540D"
+                }
+              ),
+              /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("button", { className: "ts-btn ts-btn-sm", onClick: () => setRenameOpen(false), children: "\u53D6\u6D88" })
+            ] }))
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(
+            "button",
+            {
+              className: `ts-btn ${selectedPath === cwd ? "ts-btn-picked" : "ts-btn-primary"} ts-addproj-pickbtn`,
+              onClick: pickCurrent,
+              disabled: !cwd,
+              title: selectedPath === cwd ? "\u518D\u6B21\u70B9\u51FB\u53D6\u6D88\u9009\u62E9" : "\u9009\u4E2D\u5F53\u524D\u6587\u4EF6\u5939\u4F5C\u4E3A\u9879\u76EE\u8DEF\u5F84",
+              children: selectedPath === cwd ? "\u5DF2\u9009\u4E2D\uFF08\u70B9\u51FB\u53D6\u6D88\uFF09" : "\u9009\u62E9\u5F53\u524D\u6587\u4EF6\u5939"
+            }
+          )
+        ] }),
+        actionError && /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("span", { className: "ts-newfolder-err", children: [
+          "\u26A0\uFE0F ",
+          actionError
         ] }),
         /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { children: [
           /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("label", { className: "ts-field-label", children: "\u9879\u76EE\u540D\u79F0\uFF08\u53EF\u9009\uFF0C\u9ED8\u8BA4\u53D6\u6587\u4EF6\u5939\u540D\uFF09" }),
@@ -13403,7 +13434,7 @@ function ContinueSettingsBlock() {
     ] }) })
   ] });
 }
-function HoverPanel({ pos, panelRef, items, onPick, onHover, onMarkRead, onMarkAllRead, onContinue, onClose }) {
+function HoverPanel({ pos, panelRef, items, onPick, onHover, onMarkRead, onMarkAllRead, onContinue, onArchive, onArchiveAll, onClose }) {
   const [, bumpAuto] = (0, import_react24.useState)(0);
   (0, import_react24.useEffect)(() => subscribeAutoContinue(() => bumpAuto((n) => n + 1)), []);
   const [s, setS] = (0, import_react24.useState)(() => getSoundSettings());
@@ -13593,20 +13624,36 @@ function HoverPanel({ pos, panelRef, items, onPick, onHover, onMarkRead, onMarkA
           ] }),
           /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { className: "ts-sec", children: /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(ContinueSettingsBlock, {}) }),
           /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-sec ts-sec-list", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(SectionHead, { title: "\u5BF9\u8BDD\u6E05\u5355", note: String(items.length), children: /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)(
-              "button",
-              {
-                type: "button",
-                className: "ts-mark-all-read-btn",
-                disabled: readable === 0,
-                title: readable === 0 ? "\u6CA1\u6709\u9700\u8981\u6807\u6CE8\u5DF2\u8BFB\u7684\u5BF9\u8BDD" : `\u628A\u6E05\u5355\u91CC\u8FD9 ${readable} \u6761\u5168\u90E8\u6807\u4E3A\u5DF2\u8BFB\uFF0C\u4E0D\u518D\u63D0\u9192\uFF08\u65B0\u4E00\u8F6E / \u65B0\u7684\u5F85\u786E\u8BA4\u4F1A\u91CD\u65B0\u63D0\u9192\uFF09`,
-                onClick: onMarkAllRead,
-                children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { "aria-hidden": "true", children: "\u2713" }),
-                  " \u5DF2\u8BFB"
-                ]
-              }
-            ) }),
+            /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(SectionHead, { title: "\u5BF9\u8BDD\u6E05\u5355", note: String(items.length), children: /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("span", { className: "ts-warn-headops", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)(
+                "button",
+                {
+                  type: "button",
+                  className: "ts-mark-all-read-btn",
+                  disabled: readable === 0,
+                  title: readable === 0 ? "\u6CA1\u6709\u9700\u8981\u6807\u6CE8\u5DF2\u8BFB\u7684\u5BF9\u8BDD" : `\u628A\u6E05\u5355\u91CC\u8FD9 ${readable} \u6761\u5168\u90E8\u6807\u4E3A\u5DF2\u8BFB\uFF0C\u4E0D\u518D\u63D0\u9192\uFF08\u65B0\u4E00\u8F6E / \u65B0\u7684\u5F85\u786E\u8BA4\u4F1A\u91CD\u65B0\u63D0\u9192\uFF09`,
+                  onClick: onMarkAllRead,
+                  children: [
+                    /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { "aria-hidden": "true", children: "\u2713" }),
+                    " \u5DF2\u8BFB"
+                  ]
+                }
+              ),
+              /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)(
+                "button",
+                {
+                  type: "button",
+                  className: "ts-warn-archive-all-btn",
+                  disabled: items.length === 0,
+                  title: items.length === 0 ? "\u6E05\u5355\u91CC\u6CA1\u6709\u5BF9\u8BDD" : `\u628A\u6E05\u5355\u91CC\u8FD9 ${items.length} \u6761\u5BF9\u8BDD\u5168\u90E8\u5F52\u6863\uFF08\u53EF\u5728\u4FA7\u680F\u300C\u5168\u90E8\u5BF9\u8BDD\uFF08\u663E\u793A\u5DF2\u5F52\u6863\uFF09\u300D\u91CC\u6062\u590D\uFF09`,
+                  onClick: onArchiveAll,
+                  children: [
+                    /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-warn-archive-ico", "aria-hidden": "true", dangerouslySetInnerHTML: { __html: iconSvg("archive", 12) } }),
+                    "\u5F52\u6863"
+                  ]
+                }
+              )
+            ] }) }),
             /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { className: "ts-list-body", children: /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { className: "ts-box ts-box-list", children: /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-warn-pop-list", children: [
               items.map((it) => {
                 const auto = autoStateOf(it.sessionId);
@@ -13662,6 +13709,23 @@ function HoverPanel({ pos, panelRef, items, onPick, onHover, onMarkRead, onMarkA
                         children: [
                           /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("svg", { width: "11", height: "11", viewBox: "0 0 12 12", "aria-hidden": "true", focusable: "false", children: /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("path", { d: "M2.5 6.4l2.4 2.4 4.6-5.2", fill: "none", stroke: "currentColor", strokeWidth: "1.8", strokeLinecap: "round", strokeLinejoin: "round" }) }),
                           "\u5DF2\u8BFB"
+                        ]
+                      }
+                    ),
+                    /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)(
+                      "button",
+                      {
+                        type: "button",
+                        className: "ts-warn-archive-btn",
+                        title: `\u5F52\u6863\u8FD9\u6761\u5BF9\u8BDD\uFF1A${it.title}\uFF08\u53EF\u5728\u4FA7\u680F\u300C\u5168\u90E8\u5BF9\u8BDD\uFF08\u663E\u793A\u5DF2\u5F52\u6863\uFF09\u300D\u91CC\u6062\u590D\uFF09`,
+                        "aria-label": `\u5F52\u6863\uFF1A${it.title}`,
+                        onClick: (e) => {
+                          e.stopPropagation();
+                          onArchive(it);
+                        },
+                        children: [
+                          /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-warn-archive-ico", "aria-hidden": "true", dangerouslySetInnerHTML: { __html: iconSvg("archive", 12) } }),
+                          "\u5F52\u6863"
                         ]
                       }
                     )
@@ -13732,6 +13796,44 @@ function ControlRoomEntry({ wide }) {
     } catch (e) {
       console.warn("[tokensave] \u5B9A\u4F4D\u5BF9\u8BDD\u5931\u8D25", e);
     }
+  };
+  const doArchive = async (it, stopActivity = false) => {
+    setArchivingId(it.sessionId);
+    const res = await archiveSession(it.sessionId, stopActivity);
+    setArchivingId("");
+    if (res.ok) {
+      setHoverPos(null);
+      try {
+        const project = loadProjects().find((p) => p.id === it.projectId);
+        if (project) stayInProjectAfterArchive(project.path, project.id, it.sessionId);
+      } catch (e) {
+        console.warn("[tokensave] \u5F52\u6863\u540E\u6062\u590D\u5DE5\u4F5C\u53F0\u5931\u8D25", e);
+      }
+      return;
+    }
+    if (res.active) {
+      setPendingArchive(it);
+      return;
+    }
+    setArchiveError(`\u5F52\u6863\u5931\u8D25\uFF1A${res.error}`);
+  };
+  const [archivingId, setArchivingId] = (0, import_react24.useState)("");
+  const [pendingArchive, setPendingArchive] = (0, import_react24.useState)(null);
+  const [archiveError, setArchiveError] = (0, import_react24.useState)("");
+  const archiveAll = async () => {
+    const list = hoverItems.filter((it) => it.sessionId);
+    if (list.length === 0) return;
+    setArchiveError("");
+    let failed = 0;
+    for (const it of list) {
+      const res = await archiveSession(it.sessionId, false);
+      if (!res.ok) {
+        failed++;
+        if (res.active) setPendingArchive(it);
+      }
+    }
+    if (failed > 0) setArchiveError(`\u6709 ${failed} \u6761\u5F52\u6863\u5931\u8D25\uFF08\u53EF\u80FD\u6B63\u5728\u8FD0\u884C\uFF0C\u9700\u5148\u505C\u6B62\uFF09`);
+    if (failed < list.length) setHoverPos(null);
   };
   const toDesk = screen === "list";
   const head = toDesk ? "\u9879\u76EE\u4E2D\u5FC3\uFF1A\u56DE\u5230\u5DE5\u4F5C\u53F0" : "\u9879\u76EE\u4E2D\u5FC3\uFF1A\u67E5\u770B\u9879\u76EE\u5217\u8868";
@@ -14094,7 +14196,32 @@ ${pulse.tip}`,
         onContinue: async (it) => {
           noteManualContinue(it.sessionId);
           await sendToSession(it.sessionId, CONTINUE_TEXT);
+        },
+        onArchive: (it) => {
+          void doArchive(it);
+        },
+        onArchiveAll: () => {
+          void archiveAll();
         }
+      }
+    ),
+    pendingArchive && /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
+      ConfirmDialog,
+      {
+        title: "\u505C\u6B62\u5E76\u5F52\u6863\u8FD9\u6761\u5BF9\u8BDD\uFF1F",
+        message: /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)(import_jsx_runtime19.Fragment, { children: [
+          "\u300C",
+          pendingArchive.title,
+          "\u300D\u8FD8\u6709\u6B63\u5728\u8FDB\u884C\u7684\u5DE5\u4F5C\u3002\u5F52\u6863\u4F1A\u5148\u505C\u6B62\u8FD9\u4E9B\u5DE5\u4F5C\uFF1B\u4E4B\u540E\u53EF\u5728\u4FA7\u680F\u300C\u5168\u90E8\u5BF9\u8BDD\uFF08\u663E\u793A\u5DF2\u5F52\u6863\uFF09\u300D\u91CC\u6062\u590D\uFF0C\u88AB\u505C\u6B62\u7684\u5DE5\u4F5C\u4E0D\u4F1A\u81EA\u52A8\u7EE7\u7EED\u3002"
+        ] }),
+        confirmText: "\u505C\u6B62\u5E76\u5F52\u6863",
+        busy: archivingId === pendingArchive.sessionId,
+        onConfirm: () => {
+          const target = pendingArchive;
+          setPendingArchive(null);
+          void doArchive(target, true);
+        },
+        onCancel: () => setPendingArchive(null)
       }
     )
   ] });

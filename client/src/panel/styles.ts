@@ -368,6 +368,16 @@ body.ts-desk-nochat [data-conversation-region="composer"] {
 .ts-warn-read { flex:none; display:inline-flex; align-items:center; gap:3px; border:1px solid rgba(127,127,127,.34); background:rgba(127,127,127,.12); color:inherit; font-size:calc(var(--ts-fs, 12.5px) * 0.84); line-height:1; padding:4px 8px; border-radius:999px; cursor:pointer; opacity:.68; transition:background .12s, opacity .12s, border-color .12s; }
 .ts-warn-read:hover { opacity:1; background:rgba(74,222,128,.18); border-color:rgba(74,222,128,.5); color:#86efac; }
 .ts-warn-read:focus-visible { outline:2px solid rgba(96,165,250,.85); outline-offset:1px; }
+/* 归档按钮（行内 + 标题行「归档所有」）：同「已读」的轻牌风格，但用中性色区分。
+   图标是线条归档盒（icons.ts 的 archive），不是 emoji。 */
+.ts-warn-archive-btn, .ts-warn-archive-all-btn { flex:none; display:inline-flex; align-items:center; gap:3px; border:1px solid rgba(127,127,127,.34); background:rgba(127,127,127,.12); color:inherit; font-size:calc(var(--ts-fs, 12.5px) * 0.84); line-height:1; padding:4px 8px; border-radius:999px; cursor:pointer; opacity:.68; transition:background .12s, opacity .12s, border-color .12s; }
+.ts-warn-archive-btn:hover, .ts-warn-archive-all-btn:hover { opacity:1; background:rgba(148,163,184,.22); border-color:rgba(148,163,184,.55); }
+.ts-warn-archive-btn:focus-visible, .ts-warn-archive-all-btn:focus-visible { outline:2px solid rgba(96,165,250,.85); outline-offset:1px; }
+.ts-warn-archive-btn:disabled, .ts-warn-archive-all-btn:disabled { opacity:.4; cursor:not-allowed; pointer-events:none; }
+.ts-warn-archive-ico { display:inline-flex; align-items:center; justify-content:center; }
+.ts-warn-archive-ico svg { display:block; }
+/* 标题行里的两个操作（已读 / 归档）同行排：左对齐进标题右侧，整体不换行。 */
+.ts-warn-headops { flex:none; display:inline-flex; align-items:center; gap:6px; }
 /* 行内「继续」：不能自动时的唯一手动入口，做成主色调强调 */
 .ts-warn-continue-btn { flex:none; border:1px solid rgba(96,165,250,.6); background:rgba(96,165,250,.18); color:#93c5fd; font-size:calc(var(--ts-fs, 12.5px) * 0.84); font-weight:600; line-height:1; padding:5px 9px; border-radius:999px; cursor:pointer; transition:background .12s; }
 .ts-warn-continue-btn:hover:not(:disabled) { background:rgba(96,165,250,.34); }
@@ -841,16 +851,22 @@ body.ts-vsplit-dragging .ts-card { transition:none !important; animation:none !i
    始终可见 —— 不能整列一起滚（那样底部按钮会被推到看不见的地方）。 */
 .ts-addproj-col-left { overflow:hidden; }
 .ts-addproj-picker { flex:1 1 auto; min-height:0; display:flex; flex-direction:column; }
-/* 右列：表单块之间留白，不滚（内容超出时这一列自己滚）。 */
-.ts-addproj-col-right { gap:12px; }
+/* 右列：内容多时整列可滚，但**滚动条隐藏**（scrollbar-width:none）。
+   为什么：仓库清单自己有一根可见滚动条，若整列也画一根，两根就并排黏在一起
+   （用户反馈的原话）。隐藏外层、保留内层 —— 可视上永远只有一根，滚轮两层都能滚。 */
+.ts-addproj-col-right { gap:12px; overflow-y:auto; overflow-x:hidden; scrollbar-width:none; }
+.ts-addproj-col-right::-webkit-scrollbar { width:0; height:0; }
+/* 克隆区不参与伸缩：它里面的控件各有固定高度，仓库清单自己限高。 */
+.ts-addproj-col-right .ts-clone { flex:none; }
 .ts-addproj-col-left .ts-fs { display:flex; flex-direction:column; flex:1 1 auto; min-height:0; }
 .ts-addproj-col-left .ts-fs-list { flex:1 1 auto; height:auto; min-height:120px; overflow:auto; }
 /* 目录项：图标 + 名称（名称过长时省略，不撑破列表）。 */
 .ts-fs-item-name { display:inline-flex; align-items:center; gap:6px; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-/* 「选中当前文件夹」一行：按钮不换行，路径占剩余宽度并省略（长路径不撑破面板）。 */
-.ts-addproj-picked { display:flex; align-items:center; gap:8px; min-width:0; margin-top:8px; }
-.ts-addproj-pickbtn { flex:none; white-space:nowrap; }
-.ts-addproj-picked-path { flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+/* 目录操作块（右列）：「+ 新建文件夹 / 重命名 / 选择当前文件夹」。
+   这些按钮归到右列后不再带提示文字（用户要求）—— 语义全靠按钮文案 + title。 */
+.ts-addproj-folderops { display:flex; flex-direction:column; gap:8px; flex:none; }
+.ts-addproj-folderops .ts-newfolder { margin-top:0; }
+.ts-addproj-pickbtn { flex:none; white-space:nowrap; align-self:flex-start; }
 /* 窄屏（单列）：两列上下排，弹窗仍不滚动 —— 每一块内部自己滚。 */
 @media (max-width: 780px) {
   .ts-addproj-body { grid-template-columns:minmax(0,1fr); grid-template-rows:auto minmax(0,1fr) minmax(0,1fr); }
@@ -888,8 +904,16 @@ body.ts-vsplit-dragging .ts-card { transition:none !important; animation:none !i
 .ts-srcbtn:disabled { cursor:not-allowed; opacity:.45; }
 /* 选中态：描边 + 淡底（与项目卡片的选中口径一致），不用整块实底色 */
 .ts-srcbtn-on { opacity:1; border-color:rgba(96,165,250,.7); background:rgba(96,165,250,.16); }
-/* 克隆面板：仓库地址 / 目标文件夹名 / 进度（目录浏览器下方的克隆专属区） */
-.ts-clone { display:flex; flex-direction:column; gap:8px; margin-top:8px; }
+/* 克隆面板：仓库地址 / 目标文件夹名 / 进度。
+   margin-top 去掉：它现在是右列的第一个块，上面就是列间距（重复会多空一截）。 */
+.ts-clone { display:flex; flex-direction:column; gap:8px; }
+/* 除仓库清单以外的控件都必须**不被压缩**（flex:none），否则面板矮时它们会被
+   压扁/顶出可视区（用户反馈的「内容看不完整」）。 */
+.ts-clone > .ts-clone-head,
+.ts-clone > .ts-input,
+.ts-clone > .ts-clone-row,
+.ts-clone > .ts-newfolder-hint,
+.ts-clone > .ts-clone-progress { flex:none; }
 .ts-clone-row { display:flex; align-items:center; gap:8px; }
 .ts-clone .ts-newfolder-hint { max-width:none; white-space:normal; }
 .ts-clone-progress { display:flex; flex-direction:column; gap:6px; }
@@ -906,14 +930,19 @@ body.ts-vsplit-dragging .ts-card { transition:none !important; animation:none !i
 .ts-modal-title { display:inline-flex; align-items:center; }
 .ts-clone-head { display:flex; align-items:center; justify-content:space-between; gap:8px; }
 .ts-clone-head .ts-field-label { margin:0; }
-/* 仓库清单：固定高度内滚动，与目录浏览器同一口径（少内容也不塔） */
-.ts-repolist { display:flex; flex-direction:column; gap:6px; border:1px solid var(--ts-line); border-radius:8px; overflow:hidden; }
+/* 仓库清单：在**自身内部**限高滚动（只这一根滚动条）。
+   高度取 flex 伸缩而不是写死 190px：面板矮时它跟着变矮，不会把整列顶出可视区
+   （用户反馈：选了「我的仓库」后内容看不完整 + 外层/内层两根滚动条黏在一起）。 */
+.ts-repolist { display:flex; flex-direction:column; gap:0; border:1px solid var(--ts-line); border-radius:8px; overflow:hidden; flex:1 1 auto; min-height:0; }
 .ts-repo-search { display:flex; align-items:center; gap:6px; padding:6px 10px; border-bottom:1px solid var(--ts-line); }
 .ts-repo-search .ts-ico { margin:0; opacity:.55; flex:0 0 auto; }
 .ts-repo-search-input { flex:1 1 auto; border:none; background:transparent; color:inherit; outline:none; font-size:calc(var(--ts-fs, 12.5px) * 1.0); }
 .ts-repo-clear { display:inline-flex; align-items:center; border:none; background:transparent; color:inherit; cursor:pointer; opacity:.6; padding:2px; flex:0 0 auto; }
 .ts-repo-clear:hover { opacity:1; }
-.ts-repo-items { height:190px; overflow:auto; }
+/* 列表本体：固定上限高度 + 自身滚动（唯一可见的竖向滚动条）。
+   上限取 clamp(140px, 22vh, 200px)：至少能完整看到 3~4 行仓库，
+   又不至于把下面的「目标文件夹名 / 开始克隆 / 项目名称」顶出可视区。 */
+.ts-repo-items { height:clamp(140px, 22vh, 200px); overflow-y:auto; overflow-x:hidden; flex:none; }
 .ts-repo-item { display:flex; align-items:center; gap:8px; padding:6px 12px; cursor:pointer; border:none; background:transparent; color:inherit; width:100%; text-align:left; font-size:calc(var(--ts-fs, 12.5px) * 1.0); }
 .ts-repo-item:hover { background:rgba(127,127,127,.15); }
 .ts-repo-name { font-weight:600; flex:0 0 auto; }

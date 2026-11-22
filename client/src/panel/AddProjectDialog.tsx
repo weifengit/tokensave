@@ -407,88 +407,6 @@ export function AddProjectDialog({ onClose, onCreated }: Props) {
                 ))}
               </div>
             </div>
-            {source === 'local' && (
-            <div className="ts-newfolder">
-              {!newOpen ? (
-                <button
-                  className="ts-btn ts-btn-sm"
-                  onClick={() => { setNewOpen(true); setNewName(''); setActionError(null) }}
-                  disabled={!cwd || folderBusy}
-                  title="在当前目录下新建一个文件夹（它本身就是新项目）"
-                >＋ 新建文件夹</button>
-              ) : (
-                <>
-                  <input
-                    className="ts-input ts-newfolder-input"
-                    autoFocus
-                    value={newName}
-                    placeholder="新文件夹名（即新项目名）"
-                    onChange={(e) => setNewName(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') { e.preventDefault(); void doCreate() }
-                      if (e.key === 'Escape') setNewOpen(false)
-                    }}
-                  />
-                  <button
-                    className="ts-btn ts-btn-primary ts-btn-sm"
-                    disabled={folderBusy || !newName.trim()}
-                    onClick={() => void doCreate()}
-                  >{folderBusy ? '创建中…' : '创建'}</button>
-                  <button className="ts-btn ts-btn-sm" onClick={() => setNewOpen(false)}>取消</button>
-                  <span className="ts-newfolder-hint">将建在：{cwd || '/'}</span>
-                </>
-              )}
-
-              {selectedPath && (
-                !renameOpen ? (
-                  <button
-                    className="ts-btn ts-btn-sm"
-                    onClick={() => { setRenameOpen(true); setRenameName(baseName(selectedPath)); setActionError(null) }}
-                    disabled={folderBusy}
-                    title="重命名已选中的文件夹（同目录内改名）"
-                  ><Icon name="pencil" size={12} /> 重命名</button>
-                ) : (
-                  <>
-                    <input
-                      className="ts-input ts-newfolder-input"
-                      autoFocus
-                      value={renameName}
-                      placeholder="新的文件夹名"
-                      onChange={(e) => setRenameName(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') { e.preventDefault(); void doRename() }
-                        if (e.key === 'Escape') setRenameOpen(false)
-                      }}
-                    />
-                    <button
-                      className="ts-btn ts-btn-primary ts-btn-sm"
-                      disabled={folderBusy || !renameName.trim()}
-                      onClick={() => void doRename()}
-                    >{folderBusy ? '改名中…' : '确认改名'}</button>
-                    <button className="ts-btn ts-btn-sm" onClick={() => setRenameOpen(false)}>取消</button>
-                    <span className="ts-newfolder-hint">重命名：{baseName(selectedPath)}</span>
-                  </>
-                )
-              )}
-              {actionError && <span className="ts-newfolder-err">⚠️ {actionError}</span>}
-            </div>
-            )}
-
-            {source === 'local' && (
-            <div className="ts-addproj-picked">
-              <button
-                className={`ts-btn ${selectedPath === cwd ? 'ts-btn-picked' : 'ts-btn-primary'} ts-addproj-pickbtn`}
-                onClick={pickCurrent}
-                disabled={!cwd}
-                title={selectedPath === cwd ? '再次点击取消选择' : '选中当前文件夹作为项目路径'}
-              >
-                {selectedPath === cwd ? '已选中（点击取消）' : '选择当前文件夹'}
-              </button>
-              <span className="ts-sub ts-addproj-picked-path">
-                {selectedPath ? `已选：${selectedPath}` : '浏览到目标文件夹后点「选择当前文件夹」，或直接「＋ 新建文件夹」'}
-              </span>
-            </div>
-            )}
           </div>
           </div>
           {/* —— 右列：来源相关表单 + 项目信息 —— */}
@@ -607,6 +525,82 @@ export function AddProjectDialog({ onClose, onCreated }: Props) {
               )}
             </div>
           )}
+
+          {/* —— 目录操作（用户要求从左侧栏移到右列）：新建文件夹 / 选择当前文件夹。
+                提示文字全部去掉 —— 按钮本身的 title 已足够，界面上不再占一行。 */}
+          {source === 'local' && (
+            <div className="ts-addproj-folderops">
+              <div className="ts-newfolder">
+                {!newOpen ? (
+                  <button
+                    className="ts-btn ts-btn-sm"
+                    onClick={() => { setNewOpen(true); setNewName(''); setActionError(null) }}
+                    disabled={!cwd || folderBusy}
+                    title="在当前目录下新建一个文件夹（它本身就是新项目）"
+                  >＋ 新建文件夹</button>
+                ) : (
+                  <>
+                    <input
+                      className="ts-input ts-newfolder-input"
+                      autoFocus
+                      value={newName}
+                      placeholder="新文件夹名（即新项目名）"
+                      onChange={(e) => setNewName(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') { e.preventDefault(); void doCreate() }
+                        if (e.key === 'Escape') setNewOpen(false)
+                      }}
+                    />
+                    <button
+                      className="ts-btn ts-btn-primary ts-btn-sm"
+                      disabled={folderBusy || !newName.trim()}
+                      onClick={() => void doCreate()}
+                    >{folderBusy ? '创建中…' : '创建'}</button>
+                    <button className="ts-btn ts-btn-sm" onClick={() => setNewOpen(false)}>取消</button>
+                  </>
+                )}
+                {selectedPath && (
+                  !renameOpen ? (
+                    <button
+                      className="ts-btn ts-btn-sm"
+                      onClick={() => { setRenameOpen(true); setRenameName(baseName(selectedPath)); setActionError(null) }}
+                      disabled={folderBusy}
+                      title="重命名已选中的文件夹（同目录内改名）"
+                    ><Icon name="pencil" size={12} /> 重命名</button>
+                  ) : (
+                    <>
+                      <input
+                        className="ts-input ts-newfolder-input"
+                        autoFocus
+                        value={renameName}
+                        placeholder="新的文件夹名"
+                        onChange={(e) => setRenameName(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') { e.preventDefault(); void doRename() }
+                          if (e.key === 'Escape') setRenameOpen(false)
+                        }}
+                      />
+                      <button
+                        className="ts-btn ts-btn-primary ts-btn-sm"
+                        disabled={folderBusy || !renameName.trim()}
+                        onClick={() => void doRename()}
+                      >{folderBusy ? '改名中…' : '确认改名'}</button>
+                      <button className="ts-btn ts-btn-sm" onClick={() => setRenameOpen(false)}>取消</button>
+                    </>
+                  )
+                )}
+              </div>
+              <button
+                className={`ts-btn ${selectedPath === cwd ? 'ts-btn-picked' : 'ts-btn-primary'} ts-addproj-pickbtn`}
+                onClick={pickCurrent}
+                disabled={!cwd}
+                title={selectedPath === cwd ? '再次点击取消选择' : '选中当前文件夹作为项目路径'}
+              >
+                {selectedPath === cwd ? '已选中（点击取消）' : '选择当前文件夹'}
+              </button>
+            </div>
+          )}
+          {actionError && <span className="ts-newfolder-err">⚠️ {actionError}</span>}
 
           {/* 项目名称 */}
           <div>

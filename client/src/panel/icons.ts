@@ -27,6 +27,8 @@ export const ICON_BODIES: Record<string, string> = {
   close: '<path d="M7 7l10 10"/><path d="M17 7 7 17"/>',
   /** 铅笔：重命名 */
   pencil: '<path d="M4.5 19.5h4L19 9a2.1 2.1 0 0 0-3-3L4.5 17.5z"/><path d="M14.5 6.5l3 3"/>',
+  /** 归档盒：归档对话 */
+  archive: '<rect x="3.5" y="4.5" width="17" height="4.5" rx="1.5"/><path d="M5.5 9v9a1.5 1.5 0 0 0 1.5 1.5h10a1.5 1.5 0 0 0 1.5-1.5V9"/><path d="M10 13h4"/>',
   /** 列表：项目中心（原来的 🗂️） */
   list: '<rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M7 9.5h10"/><path d="M7 13.5h6"/>',
   /** 书：项目预览 */
