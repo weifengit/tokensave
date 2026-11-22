@@ -81,6 +81,43 @@ try {
   check('无预览：辅助侧栏 3 个（黑板/协作对话/收益）',
     Object.values(noP.region).filter((r) => r === 'right').length === 3 &&
     ['board', 'talk', 'save'].every((k) => noP.region[k] === 'right'))
+
+  // —— 插入顺序模拟：复现 v0.9.0 的白屏事故 ——
+  // buildDefault 是「前一块当后一块的 position.referencePanel」，参照面一旦还没建就
+  // 被引用，dockview 直接抛 `referencePanel '…' does not exist`，整个工作台 tab 白屏
+  // （实测：无预览时面板区推成 preview、chat 未建却被当参照）。
+  // 这里按 DeskDock 的同一顺序重放一遍，任何悬空参照都会当场报错。
+  const simulateBuild = (layout) => {
+    const built = new Set()
+    const order = []
+    const addPanel = (kind) => {
+      const anchorKind = layout.region[kind] === 'right' ? layout.stack[kind] : undefined
+      if (anchorKind && !built.has(anchorKind)) {
+        throw new Error(`referencePanel 悬空：${anchorKind}（加 ${kind} 时尚未创建）`)
+      }
+      built.add(kind)
+      order.push(kind)
+    }
+    addPanel(layout.primary)
+    const rightKinds = ['chat', 'board', 'talk', 'save'].filter((k) => layout.region[k] === 'right')
+    rightKinds.filter((k) => layout.stack[k] === undefined).forEach(addPanel)
+    rightKinds.filter((k) => layout.stack[k] !== undefined).forEach(addPanel)
+    return order
+  }
+  for (const [label, layout] of [['有预览', withP], ['无预览', noP]]) {
+    let order = null
+    let err = ''
+    try {
+      order = simulateBuild(layout)
+    } catch (e) {
+      err = e.message
+    }
+    check(`${label}：按默认顺序建面板不会引用未创建的参照`, !err, err)
+    if (order) check(`${label}：面板区那块最先建（primary）`, order[0] === layout.primary, order.join('→'))
+  }
+  check('有预览：primary 是 preview（主对话在侧栏）', withP.primary === 'preview')
+  check('无预览：primary 是 chat（不先建预览）',
+    noP.primary === 'chat' && simulateBuild(noP).includes('preview') === false)
 } finally {
   rmSync(dir, { recursive: true, force: true })
 }

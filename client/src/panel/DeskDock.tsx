@@ -1511,11 +1511,12 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
       apis[region].addPanel(paneOptsRef.current(paneId(project.id, kind), position))
     }
     // 默认摆位（用户要求：首次进入的界面）：
-    //   面板区（center）：项目预览 + DSH 主对话 —— 两个图标**紧紧相邻**（左右并排）。
-    //   辅助侧栏（right）：共享黑板 / 协作对话 / 协作收益（竖向排列）。
+    // 默认摆位由 desk-first-layout.ts 的两套表决定（用户给的两张截图）：
+    //   有项目预览：面板区 = 预览；辅助侧栏 = 主对话 / 黑板 / 协作对话 / 协作收益（四行）。
+    //   无项目预览：面板区 = 主对话；辅助侧栏 = 黑板 / 协作对话 / 协作收益（三行）。
     //   主侧栏（left）：默认**收起**（首次进入不留一条空栏）。
     const buildDefault = () => {
-      // 布局表在 desk-layout.ts（纯模块，可单测）：有/无预览两套。
+      // 布局表在 desk-first-layout.ts（纯模块，可单测）：有/无预览两套。
       const hasPreview = !!data.devUrl
       const layout = layoutFor(hasPreview)
       /**
@@ -1525,43 +1526,50 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
        *   · `{ below, referencePanel }` —— 分屏到参照块**下方**（辅助侧栏的竖排都用这个）
        *   · `{ direction, referencePanel }` —— 同上的通用写法
        *   · `undefined` —— 落进**当前活动分组**当标签页
-       *
-       * 关键：辅助侧栏**每一块都必须显式给 position**，包括第一块。
-       * 第一块若用 undefined，它会落进「此刻活动」的那一格（而活动格可能是
-       * 刚加完的另一块），于是两块叠成标签页（实测 save+chat 同格 → 侧栏只有 3 行）。
-       * 第一块改为「分屏到面板区那一块的右侧」，落点确定且不依赖活动态。
+       * ⚠️ 参照面必须与本块**同一个 dockview 实例**：跨实例引用（比如辅助侧栏第一块
+       * 去参照面板区的 chat）dockview 直接抛 `referencePanel does not exist`。
+       * 所以区内第一块不给 position（空实例会自动建出首个分组），区内其余块才
+       * 「坐上一块下面」。
        */
-      const add = (kind: Kind, firstOfRegion = false) => {
+      const add = (kind: Kind) => {
         const region = layout.region[kind]
         const anchorKind = region === 'right' ? layout.stack[kind] : undefined
-        let position: any
-        if (anchorKind) {
-          position = { direction: 'below', referencePanel: paneId(project.id, anchorKind) }
-        } else if (firstOfRegion) {
-          // 该区第一块：分屏到面板区那块旁边（region 由方向决定，不必精确）
-          const centerAnchor = paneId(project.id, hasPreview ? 'preview' : 'chat')
-          position = { direction: region === 'right' ? 'right' : 'left', referencePanel: centerAnchor }
+        // 同实例内解析参照面：查不到（首块 / 被用户关了）就不给 position。
+        const anchor = anchorKind ? apis[region].getPanel(paneId(project.id, anchorKind)) : undefined
+        const position: any = anchor
+          ? { direction: 'below', referencePanel: String(anchor.id) }
+          : undefined
+        // 定位失败（参照面不存在）不能让整个工作台 tab 白屏：退化成「不带 position」重试一次。
+        // 这是 v0.9.0 的实际事故——一次悬空 referencePanel 抛错就顶掉了整个 slot 条目。
+        try {
+          apis[region].addPanel(paneOptsRef.current(paneId(project.id, kind), position))
+        } catch (e) {
+          console.warn('[desk-dock] 默认摆位失败，回退到当前分组', kind, e)
+          try {
+            apis[region].addPanel(paneOptsRef.current(paneId(project.id, kind)))
+          } catch (e2) {
+            console.warn('[desk-dock] 面板创建失败', kind, e2)
+          }
         }
-        apis[region].addPanel(paneOptsRef.current(paneId(project.id, kind), position))
       }
       // 插入顺序必须**确定**，否则 dockview 会把「没有 position」的 addPanel 落进
       // 当前活动分组、和上一块叠成标签页（实测 save+chat 同格 → 只看到 3 行）。
       //
       // 规则：
-      //   ① 锚链起点（stack 为 undefined 的那块）先上 —— 有预览时是辅助侧栏的 chat，
-      //      无预览时是面板区的 chat；
-      //   ② 面板区另一个窗口（有预览时的 preview）紧随其后；
+      //   ① 辅助侧栏的锚链起点（stack 为 undefined 的那块）先上 —— 有预览时是 chat；
+      //   ② 面板区那块先上（区内唯一一块 = layout.primary）；
       //   ③ 其余辅助侧栏块按锚链顺序（board → talk → save）逐块「坐上一块下面」。
       const rightKinds = (['chat', 'board', 'talk', 'save'] as Kind[])
         .filter((k) => layout.region[k] === 'right')
       const rightFirst = rightKinds.filter((k) => layout.stack[k] === undefined)
       const rightRest = rightKinds.filter((k) => layout.stack[k] !== undefined)
-      const centerKind = (['preview', 'chat'] as Kind[])
-        .find((k) => layout.region[k] === 'center')
-      // ② 面板区那块先上（辅助侧栏第一块要分屏到它旁边，得先存在）
-      if (centerKind) add(centerKind)
-      // ① 辅助侧栏的锚链起点（有预览时 = chat），显式分屏到面板区右侧
-      rightFirst.forEach((k) => add(k, true))
+      // 面板区那块 = layout.primary（显式字段，不从 region 表里推：无预览时
+      // preview 的默认区也是 center，推出来会拿尚未创建的 chat 当参照 → dockview 抛错 → 白屏）。
+      const centerKind: Kind = layout.primary
+      // ② 面板区那块先上（区内唯一一块，无 position → 自动建组）
+      add(centerKind)
+      // ① 辅助侧栏的锚链起点（有预览时 = chat）：右侧实例此时为空，无 position → 自动建组
+      rightFirst.forEach((k) => add(k))
       // ③ 辅助侧栏其余块，按锚链顺序逐块「坐上一块下面」
       rightRest.forEach((k) => add(k))
     }
@@ -1856,7 +1864,8 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
     // 只迁移**内置默认布局**：用户自己保存 / 自动快照里的布局是他的意图，不动。
     try {
       const mk = `tokensave:desk-preview-in-editor.v1:${project.id}`
-      if (!restoredFromSnapshotRef.current && window.localStorage.getItem(mk) !== 'v3' && data.devUrl) {
+      // 标记 v4：v3 是「主对话搬进侧栏时直接被当标签页叠起来」的旧写法，升版重跑一次。
+      if (!restoredFromSnapshotRef.current && window.localStorage.getItem(mk) !== 'v4' && data.devUrl) {
         const pid = paneId(project.id, 'preview')
         const chatId = paneId(project.id, 'chat')
         // ① 预览归位到面板区
@@ -1881,12 +1890,17 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
             }
           }
         }
-        // ② 主对话若还在面板区，搬到辅助侧栏最上面（与 buildDefault 的有预览分支一致）
+        // ② 主对话若还在面板区/主侧栏，搬到辅助侧栏**最上面**（与 buildDefault 的有预览分支一致）。
+        //    必须用 {direction:'above'} 分屏：不给 position 会落进当前活动分组当标签页，
+        //    四块挤成一排标签（用户看到的「看不完」）。
         const chatHome = REGIONS.find((r) => apis[r].getPanel(chatId))
         if (chatHome && chatHome !== 'right') {
-          moveWindowTo(chatId, 'right')
+          const topRow = apis.right.panels[0]
+          moveWindowTo(chatId, 'right', topRow
+            ? { direction: 'above', referencePanel: String(topRow.id) }
+            : undefined)
         }
-        window.localStorage.setItem(mk, 'v3')
+        window.localStorage.setItem(mk, 'v4')
       }
     } catch (e) {
       console.warn('[desk-dock] 预览归位失败', e)

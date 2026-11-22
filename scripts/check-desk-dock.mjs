@@ -144,10 +144,13 @@ check('探索者按 workspace 8s 轮询（与预览探测同一拍）',
   /fetchExplorers\(project\.path\)/.test(dock) && /8_000/.test(dock) && !/10_000/.test(dock))
 check('项目预览探测 + devUrl 可用才建面板（**独占面板区**）',
   /fetchProjectInfo\(project\.path\)/.test(dock) && /devUrl/.test(dock) &&
-  // 有预览时那块面板由布局表决定（centerKind = layout.region 里 center 的那块）
-  /const centerKind = \(\['preview', 'chat'\] as Kind\[\]\)/.test(dock) &&
-  /\.find\(\(k\) => layout\.region\[k\] === 'center'\)/.test(dock) &&
-  /if \(centerKind\) add\(centerKind\)/.test(dock) &&
+  // 有预览时那块面板 = 布局表的 primary（不能从 region 表里「找第一个 center」推：
+  // 无预览时 preview 的默认区也是 center，推出来会拿尚未创建的 chat 当参照 → 白屏）
+  /const centerKind: Kind = layout\.primary/.test(dock) &&
+  /add\(centerKind\)/.test(dock) &&
+  // 辅助侧栏首块不再参照其它实例的面板（跨实例 referencePanel 必抛错）
+  /apis\[region\]\.getPanel\(paneId\(project\.id, anchorKind\)\)/.test(dock) &&
+  !/const centerAnchor = paneId\(project\.id, hasPreview \? 'preview' : 'chat'\)/.test(dock) &&
   // 没有 devUrl 时不建预览面板（探测拿不到地址 → 面板不出现）
   /if \(!data\.devUrl\) \{/.test(dock) &&
   // 旧默认（主侧栏）已作废
@@ -166,9 +169,10 @@ check('恢复布局时不因「devUrl 还没拿到」拆掉预览（同组预览
   // 首帧 devUrl 未知：不删也不补，尊重快照里已恢复的预览
   /if \(!data\.devKnown\) return/.test(dock) &&
   // 一次性「预览归位」迁移只跑内置默认布局，不碰用户保存/自动快照。
-  // 版本号升到 v3：布局口径从「预览与主对话分屏」改成「预览独占面板区」，
-  // 旧 v2 标记要重跑一次，否则老用户停在旧摆位。
-  /!restoredFromSnapshotRef\.current && window\.localStorage\.getItem\(mk\) !== 'v3' && data\.devUrl/.test(dock))
+  // 版本号升到 v4：v3 的「主对话搬进侧栏」是直接 moveWindowTo（不给 position → 被当成
+  // 标签页叠进当前组），四块挤成一排标签。v4 改成 direction:'above' 分屏，旧标记要重跑一次。
+  /!restoredFromSnapshotRef\.current && window\.localStorage\.getItem\(mk\) !== 'v4' && data\.devUrl/.test(dock) &&
+  /\{ direction: 'above', referencePanel: String\(topRow\.id\) \}/.test(dock))
 
 const previewPanelSrc = readFileSync(join(root, 'client/src/panel/PreviewPanel.tsx'), 'utf8')
 check('预览未就绪不渲染空 src 的 iframe（src="" 会把 DSH 自己嵌进来）',

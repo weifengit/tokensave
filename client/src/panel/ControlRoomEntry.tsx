@@ -599,10 +599,12 @@ function HoverPanel({ pos, panelRef, items, onPick, onHover, onMarkRead, onMarkA
       {/* 区域三：对话清单（标题行 + 右侧「全部已读」，条目也用 card 包住） */}
       <div className="ts-sec ts-sec-list">
         <SectionHead title="对话清单" note={String(items.length)}>
-          {/* 标题行的「全部」按钮：与下面逐行三个槽位**垂直对齐** ——
-              右侧留出同宽的 3 个槽位：前两枚是「全部已读 / 全部归档」，
-              第三枚是占位（「继续」是单个对话才有的动作）。 */}
+          {/* 标题行的「全部」按钮：与下面逐行三个槽位**垂直对齐**，且**同类图标同列**。
+              行内槽位固定为【继续 / 已读 / 归档】，所以标题行也得是：
+              第 1 列空着（「继续」是单条对话才有的动作）、第 2 列全部已读、第 3 列全部归档。
+              以前把两枚挤在前两列 → 标题的「已读」对在行的「继续」上，列扫一眼就是错位的。 */}
           <span className="ts-warn-headops">
+            <span className="ts-warn-slot" aria-hidden="true" />
             <button
               type="button"
               className="ts-warn-icon-btn"
@@ -623,7 +625,6 @@ function HoverPanel({ pos, panelRef, items, onPick, onHover, onMarkRead, onMarkA
             >
               <span className="ts-warn-ico" aria-hidden="true" dangerouslySetInnerHTML={{ __html: iconSvg('archive', 12) }} />
             </button>
-            <span className="ts-warn-slot" aria-hidden="true" />
           </span>
         </SectionHead>
         {/* 清单区与提示音 / 自动继续同构：外层给 0 12px 10px 的外距，外框才是 .ts-box */}

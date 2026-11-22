@@ -172,6 +172,13 @@ check('所有归档：标题行「归档」图标按钮，且与行内同列',
   /\.ts-warn-icon-btn \{[^}]*width:22px; height:22px/.test(styles) &&
   /\.ts-warn-headops \{[^}]*gap:4px/.test(styles))
 
+check('同类图标同列：标题行占位槽在最左（对上行的「继续」列），已读/归档跟在其后',
+  // 行内槽位顺序固定为【继续 / 已读 / 归档】；标题行若把两枚按钮挤在前两列，
+  // 列就对成了「已读↔继续」，扫一眼就是错位。
+  /className="ts-warn-headops">\s*<span className="ts-warn-slot" aria-hidden="true" \/>\s*<button/.test(entrySrc) &&
+  // 行内三槽位依次是：可选的继续 → 已读 → 归档
+  /className="ts-warn-actions">[\s\S]{0,2400}?标为已读[\s\S]{0,900}?归档这条对话/.test(entrySrc))
+
 check('归档走宿主 uiWorkspace.archiveSession（复用 sessions.ts 的封装）',
   /archiveSession/.test(entrySrc) &&
   /import \{[\s\S]{0,400}?archiveSession[\s\S]{0,200}?\} from '\.\/sessions'/.test(entrySrc) &&

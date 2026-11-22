@@ -30,6 +30,13 @@ export interface DeskLayout {
   /** kind → 默认归属区 */
   region: Record<Kind, Region>
   /**
+   * 面板区（center）里**先上**的那块：同区的另一块分屏到它旁边时以它为参照。
+   * 必须显式写，不能「从 region 表里找第一个 center」推——无预览时 preview 的
+   * 默认区也是 center（它只是当下不该被创建），推出来就是 preview，于是拿尚未
+   * 创建的 chat 当参照，dockview 抛 referencePanel does not exist，整个工作台白屏。
+   */
+  primary: Kind
+  /**
    * 辅助侧栏内的竖向次序：kind → 它应该排在谁的下面。
    * `undefined` = 该区第一个（没有上方参照）。
    */
@@ -39,12 +46,14 @@ export interface DeskLayout {
 /** 无预览：主对话占面板区，其余三个在辅助侧栏。 */
 const LAYOUT_NO_PREVIEW: DeskLayout = {
   region: { preview: 'center', chat: 'center', board: 'right', talk: 'right', save: 'right' },
+  primary: 'chat',
   stack: { board: undefined, talk: 'board', save: 'talk' },
 }
 
 /** 有预览：预览独占面板区，四个窗口全在辅助侧栏（主对话在最上）。 */
 const LAYOUT_WITH_PREVIEW: DeskLayout = {
   region: { preview: 'center', chat: 'right', board: 'right', talk: 'right', save: 'right' },
+  primary: 'preview',
   stack: { chat: undefined, board: 'chat', talk: 'board', save: 'talk' },
 }
 

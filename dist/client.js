@@ -8042,10 +8042,12 @@ function paneIcon(id) {
 // client/src/panel/desk-first-layout.ts
 var LAYOUT_NO_PREVIEW = {
   region: { preview: "center", chat: "center", board: "right", talk: "right", save: "right" },
+  primary: "chat",
   stack: { board: void 0, talk: "board", save: "talk" }
 };
 var LAYOUT_WITH_PREVIEW = {
   region: { preview: "center", chat: "right", board: "right", talk: "right", save: "right" },
+  primary: "preview",
   stack: { chat: void 0, board: "chat", talk: "board", save: "talk" }
 };
 function layoutFor(hasPreview) {
@@ -9240,24 +9242,28 @@ function DeskDock({ project, sessionId, onBack }) {
     const buildDefault = () => {
       const hasPreview = !!data.devUrl;
       const layout = layoutFor(hasPreview);
-      const add = (kind, firstOfRegion = false) => {
+      const add = (kind) => {
         const region = layout.region[kind];
         const anchorKind = region === "right" ? layout.stack[kind] : void 0;
-        let position;
-        if (anchorKind) {
-          position = { direction: "below", referencePanel: paneId(project.id, anchorKind) };
-        } else if (firstOfRegion) {
-          const centerAnchor = paneId(project.id, hasPreview ? "preview" : "chat");
-          position = { direction: region === "right" ? "right" : "left", referencePanel: centerAnchor };
+        const anchor = anchorKind ? apis[region].getPanel(paneId(project.id, anchorKind)) : void 0;
+        const position = anchor ? { direction: "below", referencePanel: String(anchor.id) } : void 0;
+        try {
+          apis[region].addPanel(paneOptsRef.current(paneId(project.id, kind), position));
+        } catch (e) {
+          console.warn("[desk-dock] \u9ED8\u8BA4\u6446\u4F4D\u5931\u8D25\uFF0C\u56DE\u9000\u5230\u5F53\u524D\u5206\u7EC4", kind, e);
+          try {
+            apis[region].addPanel(paneOptsRef.current(paneId(project.id, kind)));
+          } catch (e2) {
+            console.warn("[desk-dock] \u9762\u677F\u521B\u5EFA\u5931\u8D25", kind, e2);
+          }
         }
-        apis[region].addPanel(paneOptsRef.current(paneId(project.id, kind), position));
       };
       const rightKinds = ["chat", "board", "talk", "save"].filter((k) => layout.region[k] === "right");
       const rightFirst = rightKinds.filter((k) => layout.stack[k] === void 0);
       const rightRest = rightKinds.filter((k) => layout.stack[k] !== void 0);
-      const centerKind = ["preview", "chat"].find((k) => layout.region[k] === "center");
-      if (centerKind) add(centerKind);
-      rightFirst.forEach((k) => add(k, true));
+      const centerKind = layout.primary;
+      add(centerKind);
+      rightFirst.forEach((k) => add(k));
       rightRest.forEach((k) => add(k));
     };
     resetToBuiltinRef.current = () => {
@@ -9476,7 +9482,7 @@ function DeskDock({ project, sessionId, onBack }) {
     });
     try {
       const mk = `tokensave:desk-preview-in-editor.v1:${project.id}`;
-      if (!restoredFromSnapshotRef.current && window.localStorage.getItem(mk) !== "v3" && data.devUrl) {
+      if (!restoredFromSnapshotRef.current && window.localStorage.getItem(mk) !== "v4" && data.devUrl) {
         const pid = paneId(project.id, "preview");
         const chatId = paneId(project.id, "chat");
         let hit = null;
@@ -9501,9 +9507,10 @@ function DeskDock({ project, sessionId, onBack }) {
         }
         const chatHome = REGIONS.find((r) => apis[r].getPanel(chatId));
         if (chatHome && chatHome !== "right") {
-          moveWindowTo(chatId, "right");
+          const topRow = apis.right.panels[0];
+          moveWindowTo(chatId, "right", topRow ? { direction: "above", referencePanel: String(topRow.id) } : void 0);
         }
-        window.localStorage.setItem(mk, "v3");
+        window.localStorage.setItem(mk, "v4");
       }
     } catch (e) {
       console.warn("[desk-dock] \u9884\u89C8\u5F52\u4F4D\u5931\u8D25", e);
@@ -13663,6 +13670,7 @@ function HoverPanel({ pos, panelRef, items, onPick, onHover, onMarkRead, onMarkA
           /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { className: "ts-sec", children: /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(ContinueSettingsBlock, {}) }),
           /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-sec ts-sec-list", children: [
             /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(SectionHead, { title: "\u5BF9\u8BDD\u6E05\u5355", note: String(items.length), children: /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("span", { className: "ts-warn-headops", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-warn-slot", "aria-hidden": "true" }),
               /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
                 "button",
                 {
@@ -13686,8 +13694,7 @@ function HoverPanel({ pos, panelRef, items, onPick, onHover, onMarkRead, onMarkA
                   onClick: onArchiveAll,
                   children: /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-warn-ico", "aria-hidden": "true", dangerouslySetInnerHTML: { __html: iconSvg("archive", 12) } })
                 }
-              ),
-              /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-warn-slot", "aria-hidden": "true" })
+              )
             ] }) }),
             /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { className: "ts-list-body", children: /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { className: "ts-box ts-box-list", children: /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-warn-pop-list", children: [
               items.map((it) => {
