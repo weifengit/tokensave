@@ -41,9 +41,17 @@ const next =
   : bump === 'minor' ? `${maj}.${min + 1}.0`
   : `${maj}.${min}.${pat + 1}`
 
-// 上一个版本 tag（没有 tag 就是第一次发版，收全部 commit）
-const tags = git('tag', '-l', 'v*').split('\n').filter(Boolean)
-const range = tags.length ? `${tags[tags.length - 1]}..HEAD` : 'HEAD'
+// 上一个版本 tag（没有 tag 就是第一次发版，收全部 commit）。
+// 用 git describe 而不是 `git tag -l` 取最后一行：tag 名按字典序排时
+// v0.10.0 会排在 v0.9.0 前面，range 就会回退到 v0.9.1，把 v0.10.0 的
+// 提交重复收进下一版变更日志（v0.10.1 已踩过）。
+let range = 'HEAD'
+try {
+  const lastTag = git('describe', '--tags', '--abbrev=0')
+  if (lastTag) range = `${lastTag}..HEAD`
+} catch {
+  /* 没有 tag：第一次发版，收全部 commit */
+}
 const subjects = git('log', '--pretty=%s', range).split('\n').filter(Boolean)
 
 /** 按关键词把 commit 归进变更日志分组（顺序即展示顺序） */
