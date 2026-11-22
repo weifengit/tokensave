@@ -25,6 +25,7 @@ import {
   createSoundSync, sanitizeSettingsPayload, SOUND_SETTINGS_ROUTE_PATH,
 } from './sound-sync.ts'
 import { currentRun } from './blackboard/runs.ts'
+import { resolveGh } from './gh-cli.ts'
 
 export const BOARD_ROUTE_PATH = '/plugins/dsh-tokensave/board'
 export const FS_ROUTE_PATH = '/plugins/dsh-tokensave/fs'
@@ -699,14 +700,18 @@ function deriveRepoName(url: string): string {
  * 取一份 GitHub token 用于私有仓（不进 argv）。
  * 优先环境变量（用户可在 shell 里导出），否则读 `gh auth token`。
  * 拿不到就当公开仓处理（克隆失败时用户会看到 git 的鉴权报错）。
+ *
+ * gh 的位置由 gh-cli.ts 解析（PATH 里没有时按安装位置找 —— Windows 的常见坑）。
  */
 function githubToken(): string {
   for (const key of ['GITHUB_TOKEN', 'GH_TOKEN', 'TOKENS_SAVE_GITHUB_TOKEN']) {
     const v = String(process.env[key] || '').trim()
     if (v) return v
   }
+  const gh = resolveGh()
+  if (!gh) return ''
   try {
-    const out = execFileSync('gh', ['auth', 'token'], { encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'] })
+    const out = execFileSync(gh, ['auth', 'token'], { encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'] })
     return String(out || '').trim()
   } catch {
     return ''
@@ -976,6 +981,9 @@ const REPOS_LIMIT = 200
  *
  * `gh repo list --json` 的字段名要与下面的映射对得上；gh 未安装/未登录时
  * execFileSync 会抛，统一转成可读错误（界面据此提示，而不是当成空清单）。
+ *
+ * gh 的位置由 gh-cli.ts 解析：PATH 里找不到时按安装位置找（Windows 上装了 gh 却
+ * 报「未安装」的老坑就消了）；实在找不到才提示「未安装」。
  */
 function loadRepos(): { items: RepoItem[]; error: string } {
   const now = Date.now()
@@ -984,8 +992,14 @@ function loadRepos(): { items: RepoItem[]; error: string } {
   }
   let items: RepoItem[] = []
   let error = ''
+  const gh = resolveGh()
+  if (!gh) {
+    error = '未找到 gh 可执行文件，无法列出仓库（仍可手动填地址）'
+    reposCache = { at: now, items, error }
+    return { items, error }
+  }
   try {
-    const out = execFileSync('gh', [
+    const out = execFileSync(gh, [
       'repo', 'list', '--limit', String(REPOS_LIMIT),
       '--json', 'nameWithOwner,description,isPrivate,isFork,pushedAt,primaryLanguage,url',
     ], { encoding: 'utf8', timeout: 15_000, stdio: ['ignore', 'pipe', 'pipe'] })
@@ -1006,7 +1020,7 @@ function loadRepos(): { items: RepoItem[]; error: string } {
     // 区分「没装 gh」「没登录」「网络失败」——都归给可读文案，界面照常可用。
     const raw = String(e?.stderr || e?.message || '')
     if (/not logged|authentication|gh auth login/i.test(raw)) error = '本机 gh 未登录，无法列出仓库（仍可手动填地址）'
-    else if (e?.code === 'ENOENT') error = '本机未安装 gh，无法列出仓库（仍可手动填地址）'
+    else if (e?.code === 'ENOENT') error = '未找到 gh 可执行文件，无法列出仓库（仍可手动填地址）'
     else if (e?.killed || /timed? ?out/i.test(raw)) error = '列举仓库超时，请稍后重试（仍可手动填地址）'
     else error = '列举仓库失败，请检查网络或 gh 登录态（仍可手动填地址）'
     console.warn('[dsh-tokensave] gh repo list failed:', raw.slice(0, 300))

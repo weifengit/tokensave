@@ -150,16 +150,21 @@ if (!browser) {
   console.log('      （要跑它：DSH_CHROMIUM=/path/to/chrome node scripts/check-card-layout.mjs）')
 } else {
   let out = ''
-  try {
-    out = execFileSync(browser, [
-      '--headless=new', '--disable-gpu', '--no-first-run', '--dump-dom',
-      '--user-data-dir=' + join(dir, 'profile'),
-      '--virtual-time-budget=3000',
-      'file://' + page,
-    ], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 60_000 })
-  } catch (e) {
-    console.log(`FAIL  无头浏览器跑失败：${e.message}`)
-    fail++
+  // 浏览器启动偶发超时（连着起多个无头实例时容易撞上）：重试两次。
+  for (let attempt = 0; attempt < 3 && !out; attempt++) {
+    try {
+      out = execFileSync(browser, [
+        '--headless=new', '--disable-gpu', '--no-first-run', '--dump-dom',
+        '--user-data-dir=' + join(dir, 'profile'),
+        '--virtual-time-budget=3000',
+        'file://' + page,
+      ], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 60_000 })
+    } catch (e) {
+      if (attempt === 2) {
+        console.log(`FAIL  无头浏览器跑失败：${e.message}`)
+        fail++
+      }
+    }
   }
   const m = out.match(/<pre id="out">([\s\S]*?)<\/pre>/)
   let data = null

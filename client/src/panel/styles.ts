@@ -614,7 +614,8 @@ body.ts-desk-nochat [data-conversation-region="composer"] {
 .ts-skin-pop-head { display:flex; align-items:center; justify-content:space-between; gap:8px; }
 .ts-skin-pop-hint { font-size:calc(var(--ts-fs, 12.5px) * 0.84); color:#6b7280; }
 .ts-skin-pop-grid { display:flex; flex-wrap:wrap; gap:6px; }
-.ts-skin-pop .ts-skin-cell { flex:1 1 46%; min-width:88px; height:38px; border:1px solid rgba(127,127,127,.32); border-radius:7px; background:rgba(127,127,127,.08); color:var(--ts-fg, #e6e8eb); font:inherit; font-size:calc(var(--ts-fs, 12.5px) * 0.9); cursor:pointer; }
+/* min-width:0（不是 88px）：低分辨率时两个格子仍排一行（硬下限会把它们拆成一行一个）。 */
+.ts-skin-pop .ts-skin-cell { flex:1 1 46%; min-width:0; height:38px; border:1px solid rgba(127,127,127,.32); border-radius:7px; background:rgba(127,127,127,.08); color:var(--ts-fg, #e6e8eb); font:inherit; font-size:calc(var(--ts-fs, 12.5px) * 0.9); cursor:pointer; }
 .ts-skin-pop .ts-skin-cell[data-on] { border-color:#4f8ef7; box-shadow:inset 0 0 0 1px rgba(79,142,247,.5); }
 .ts-skin-pop .ts-skin-none { flex:1 1 100%; }
 .ts-skin-pop .ts-skin-group { display:flex; flex-direction:column; gap:5px; }
@@ -824,8 +825,38 @@ body.ts-vsplit-dragging .ts-card { transition:none !important; animation:none !i
 .ts-field-label { font-size:calc(var(--ts-fs, 12.5px) * 1.04); font-weight:600; margin-bottom:6px; display:block; }
 /* 「添加项目」弹窗：固定尺寸（切换目录 / 点「上级」时面板不缩放、位置不动），
    内容超出走内部滚动，内容少也撑住这么大。 */
-.ts-modal-addproj { width:min(680px,92%); height:min(680px,90vh); max-height:90vh; }
-.ts-modal-addproj .ts-modal-body { flex:1 1 auto; min-height:0; overflow:auto; }
+/* 「添加项目」弹窗：**不纵向滚动**（用户要求）。
+   口径：弹窗高度锁定在视口内，body 本身不滚；内容超出时**各自的格子**内部滚。
+   左列 = 目录浏览器（它的列表本来就是固定高、内部滚），
+   右列 = 仓库清单 / 表单（仓库清单自己限高滚动）。 */
+.ts-modal-addproj { width:min(920px,94vw); height:min(620px,90vh); max-height:90vh; }
+.ts-modal-addproj .ts-modal-body { flex:1 1 auto; min-height:0; overflow:hidden; }
+/* 两列：左浏览器、右表单。列宽用比例 + minmax(0, …) —— 不写死 px。 */
+.ts-addproj-body { display:grid; grid-template-columns:minmax(0,1.05fr) minmax(0,1fr); grid-template-rows:auto minmax(0,1fr); gap:12px 16px; }
+/* 来源切换横跨两列（它是整个面板的总开关）。 */
+.ts-addproj-body > .ts-srcpick { grid-column:1 / -1; }
+/* 每列自己滚：内容多时在列内滚动，弹窗本身永远不出竖向滚动条。 */
+.ts-addproj-col { min-width:0; min-height:0; display:flex; flex-direction:column; gap:10px; overflow:auto; }
+/* 左列：目录浏览器占满剩余高度；**只让列表内部滚**，其余控件（新建/重命名/选中）
+   始终可见 —— 不能整列一起滚（那样底部按钮会被推到看不见的地方）。 */
+.ts-addproj-col-left { overflow:hidden; }
+.ts-addproj-picker { flex:1 1 auto; min-height:0; display:flex; flex-direction:column; }
+/* 右列：表单块之间留白，不滚（内容超出时这一列自己滚）。 */
+.ts-addproj-col-right { gap:12px; }
+.ts-addproj-col-left .ts-fs { display:flex; flex-direction:column; flex:1 1 auto; min-height:0; }
+.ts-addproj-col-left .ts-fs-list { flex:1 1 auto; height:auto; min-height:120px; overflow:auto; }
+/* 目录项：图标 + 名称（名称过长时省略，不撑破列表）。 */
+.ts-fs-item-name { display:inline-flex; align-items:center; gap:6px; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+/* 「选中当前文件夹」一行：按钮不换行，路径占剩余宽度并省略（长路径不撑破面板）。 */
+.ts-addproj-picked { display:flex; align-items:center; gap:8px; min-width:0; margin-top:8px; }
+.ts-addproj-pickbtn { flex:none; white-space:nowrap; }
+.ts-addproj-picked-path { flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+/* 窄屏（单列）：两列上下排，弹窗仍不滚动 —— 每一块内部自己滚。 */
+@media (max-width: 780px) {
+  .ts-addproj-body { grid-template-columns:minmax(0,1fr); grid-template-rows:auto minmax(0,1fr) minmax(0,1fr); }
+  .ts-addproj-body > .ts-srcpick { grid-column:1; }
+  .ts-addproj-col-left .ts-fs-list { min-height:96px; }
+}
 
 /* —— 目录浏览器 —— */
 .ts-fs { border:1px solid rgba(127,127,127,.3); border-radius:8px; overflow:hidden; }

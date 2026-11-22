@@ -50,6 +50,8 @@ import {
   sendToSession,
 } from './sessions'
 import { markPulseRead, useActivityPulse, type InterruptKind } from './pulse'
+import { iconSvg } from './icons'
+import { injectProjectCenterStyles } from './styles'
 import {
   DURATION_OPTIONS, SOUND_OPTIONS, getSoundSettings, initSoundBridge, playRole,
   setSoundSettings, stopSoundEverywhere, subscribePlaying,
@@ -687,6 +689,11 @@ function HoverPanel({ pos, panelRef, items, onPick, onHover, onMarkRead, onMarkA
 }
 
 export function ControlRoomEntry({ wide }: { wide?: boolean }) {
+  // 样式必须**在这里**注入：侧边栏入口是根作用域槽，DSH 刚启动时
+  // ControlRoom / ProjectCenter / MsgList 都没挂载 → 那张样式表还不存在。
+  // 结果就是入口按钮**没有样式**：外框只包住内容（半截宽），图标也不对
+  // （用户反馈「项目中心几个字所在的外框只有左侧边栏的一半」）。
+  useEffect(() => { injectProjectCenterStyles() }, [])
   // 标题随当前屏变化：在工作台时提示“回项目列表”，在列表时提示“回工作台”，
   // 让“再点一次能回去”这件事在 UI 上自解释。
   const [screen, setScreen] = useState<'list' | 'desk'>(() => getLiveScreen())
@@ -1140,7 +1147,13 @@ export function ControlRoomEntry({ wide }: { wide?: boolean }) {
         }}
       >
         {/* 收起态有存活对话时：圆点**顶替**图标；否则照旧显示图标（用户要求） */}
-        {(!alive || wide) && <span className="ts-side-icon" aria-hidden="true">{toDesk ? '🧭' : '🗂️'}</span>}
+        {(!alive || wide) && (
+          <span
+            className="ts-side-icon"
+            aria-hidden="true"
+            dangerouslySetInnerHTML={{ __html: iconSvg(toDesk ? 'compass' : 'folder', 15) }}
+          />
+        )}
         {wide && <span className="ts-side-label">{toDesk ? '回到工作台' : '项目中心'}</span>}
         {alive && (
           <span

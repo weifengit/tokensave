@@ -31,6 +31,8 @@
     "test:continue": "node scripts/check-continue-policy.mjs && node scripts/check-auto-continue-flow.mjs",
     "test:auto-commit": "node scripts/check-auto-commit.mjs",
     "test:ui": "node scripts/check-panel-ui.mjs",
+    "test:first-entry": "node scripts/check-first-entry-ui.mjs",
+    "test:gh-cli": "node scripts/check-gh-cli.mjs",
     "test:theme": "node scripts/check-theme-mode.mjs",
     "test:width": "node scripts/check-panel-width.mjs",
     "test:hover": "node scripts/check-hover-corridor.mjs",
@@ -60,7 +62,7 @@
     "test:chrome": "node scripts/check-chrome-position.mjs",
     "test:chrome-geo": "node scripts/check-chrome-geometry.mjs",
     "test:expset": "node scripts/check-expset-panel.mjs",
-    "test": "pnpm check && pnpm test:auto-commit && pnpm test:continue && pnpm test:width && pnpm test:hover && pnpm test:sound && pnpm test:sound-sync && pnpm test:pending-alert && pnpm test:todo && pnpm test:chrome && pnpm test:theme && pnpm test:expset && pnpm test:sidebar && pnpm test:composer-focus && pnpm test:nav && pnpm test:composer-resize && pnpm test:turn-edits && pnpm test:composer-status && pnpm test:changes-card && pnpm test:agent-preset && pnpm test:dockview && pnpm test:desk && pnpm test:desk-dock && pnpm test:chat-scroll && pnpm test:msg-queue && pnpm test:copy-btn && pnpm test:clone && pnpm test:project-remove && pnpm test:card-flip && pnpm test:card-layout && pnpm test:mobile && pnpm test:install && pnpm test:ui"
+    "test": "pnpm check && pnpm test:auto-commit && pnpm test:continue && pnpm test:width && pnpm test:hover && pnpm test:sound && pnpm test:sound-sync && pnpm test:pending-alert && pnpm test:todo && pnpm test:chrome && pnpm test:theme && pnpm test:expset && pnpm test:sidebar && pnpm test:composer-focus && pnpm test:nav && pnpm test:composer-resize && pnpm test:turn-edits && pnpm test:composer-status && pnpm test:changes-card && pnpm test:agent-preset && pnpm test:dockview && pnpm test:desk && pnpm test:desk-dock && pnpm test:chat-scroll && pnpm test:msg-queue && pnpm test:copy-btn && pnpm test:clone && pnpm test:project-remove && pnpm test:card-flip && pnpm test:card-layout && pnpm test:mobile && pnpm test:install && pnpm test:ui && pnpm test:first-entry && pnpm test:gh-cli"
   },
   "devDependencies": {
     "@deepseek-ai/dsh-brand": "0.2.0-rc.2",

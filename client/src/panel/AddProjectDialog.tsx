@@ -10,7 +10,7 @@
  *
  * 除了「浏览已有目录 → 选择当前文件夹」，还支持直接在浏览器里
  *   - 「＋ 新建文件夹」：在当前目录下建一个新目录（名字即新项目名），建完自动选中；
- *   - 「✏️ 重命名」：把**已选中**的文件夹改名（同目录内），改名后自动选中新路径，
+ *   - 「重命名」：把**已选中**的文件夹改名（同目录内），改名后自动选中新路径，
  *     项目名称若仍是旧文件夹名也会跟着更新。
  * 这些都走后端写路由 POST /plugins/dsh-tokensave/mkdir（只允许单层目录名、不覆盖）。
  */
@@ -24,24 +24,10 @@ import type { ProjectRecord } from './store'
 //
 // 为什么不用 emoji：本工作台的图标一律是线条，emoji 在深浅主题下颜色不可控、
 // 大小与基线与文字对不齐，且各系统渲染差异大（用户已明确过这条风格）。
-const ICON_BODIES: Record<string, string> = {
-  // 文件夹：本地已有目录
-  folder: '<path d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2.5h7a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/>',
-  // 分支/仓：GitHub 克隆（用 git 的“分支”语义，比商标图形中性且同风格）
-  branch: '<circle cx="7" cy="6" r="2.2"/><circle cx="7" cy="18" r="2.2"/><circle cx="17" cy="10" r="2.2"/><path d="M7 8.2v7.6"/><path d="M17 12.2c0 2.2-2 3.1-4 3.4-1.6.2-3 .3-4 .3"/>',
-  // 放大镜：清单搜索
-  search: '<circle cx="11" cy="11" r="6"/><path d="M15.5 15.5 20 20"/>',
-  // 锁：私有仓
-  lock: '<rect x="5" y="10.5" width="14" height="9" rx="2.2"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/>',
-  // 叉：清空搜索
-  close: '<path d="M7 7l10 10"/><path d="M17 7 7 17"/>',
-}
+// 图标本体在 icons.ts（全站一份）；这里只包一层 React 渲染。
+import { ICON_BODIES, iconSvg } from './icons'
 
 /** 与工作台其他图标同构的 SVG 字符串（尺寸可调，颜色继承 currentColor）。 */
-function iconSvg(name: keyof typeof ICON_BODIES | string, size = 14): string {
-  const body = (ICON_BODIES as Record<string, string>)[name] || ICON_BODIES.folder
-  return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${body}</svg>`
-}
 
 /** 内联渲染图标（React 用；dangerouslySetInnerHTML 是因为图标就是一段固定 SVG）。 */
 function Icon({ name, size = 14 }: { name: string; size?: number }) {
@@ -356,7 +342,7 @@ export function AddProjectDialog({ onClose, onCreated }: Props) {
           <span className="ts-modal-title"><Icon name="folder" size={15} /> 添加项目</span>
           <button className="ts-icon-btn" onClick={onClose} title="关闭">✕</button>
         </div>
-        <div className="ts-modal-body">
+        <div className="ts-modal-body ts-addproj-body">
           {/* 来源切换：本地已有目录 / 从 GitHub 克隆 */}
           <div className="ts-srcpick">
             <button
@@ -372,15 +358,19 @@ export function AddProjectDialog({ onClose, onCreated }: Props) {
               title="从 GitHub 克隆一个仓库，克隆完直接作为项目"
             ><Icon name="branch" /> 从 GitHub 克隆</button>
           </div>
-          {/* 选择项目文件夹 */}
-          <div>
+          {/* 两列布局：左 = 目录浏览器，右 = 来源相关表单 + 项目信息。
+                弹窗**不再纵向滚动**：内容超出时各自在自己的格子里滚动。 */}
+          <div className="ts-addproj-col ts-addproj-col-left">
+          <div className="ts-addproj-picker">
             <label className="ts-field-label">
               {source === 'clone' ? '克隆到哪个目录（浏览选择父目录）' : '选择项目文件夹'}
             </label>
             <div className="ts-fs">
               <div className="ts-fs-crumb">
                 <div className="ts-fs-crumbs">
-                  <span className="ts-fs-rooticon" onClick={() => load(roots[0])} title="根目录">🖥</span>
+                  <span className="ts-fs-rooticon" onClick={() => load(roots[0])} title="根目录">
+                    <Icon name="folder" size={13} />
+                  </span>
                   {crumbs.map((c, i) => (
                     <React.Fragment key={i}>
                       <span onClick={() => gotoCrumb(i)}>{c}</span>
@@ -411,7 +401,7 @@ export function AddProjectDialog({ onClose, onCreated }: Props) {
                 )}
                 {entries.map((entry) => (
                   <button key={entry.path} className="ts-fs-item" onClick={() => enterDir(entry)}>
-                    <span>📁 {entry.name}</span>
+                    <span className="ts-fs-item-name"><Icon name="folder" size={13} /> {entry.name}</span>
                     {entry.isProject && <span className="ts-tag">检测到项目</span>}
                   </button>
                 ))}
@@ -456,7 +446,7 @@ export function AddProjectDialog({ onClose, onCreated }: Props) {
                     onClick={() => { setRenameOpen(true); setRenameName(baseName(selectedPath)); setActionError(null) }}
                     disabled={folderBusy}
                     title="重命名已选中的文件夹（同目录内改名）"
-                  >✏️ 重命名</button>
+                  ><Icon name="pencil" size={12} /> 重命名</button>
                 ) : (
                   <>
                     <input
@@ -485,21 +475,24 @@ export function AddProjectDialog({ onClose, onCreated }: Props) {
             )}
 
             {source === 'local' && (
-            <div style={{ marginTop: 8, display: 'flex', gap: 8, alignItems: 'center' }}>
+            <div className="ts-addproj-picked">
               <button
-                className={`ts-btn ${selectedPath === cwd ? 'ts-btn-picked' : 'ts-btn-primary'}`}
+                className={`ts-btn ${selectedPath === cwd ? 'ts-btn-picked' : 'ts-btn-primary'} ts-addproj-pickbtn`}
                 onClick={pickCurrent}
                 disabled={!cwd}
                 title={selectedPath === cwd ? '再次点击取消选择' : '选中当前文件夹作为项目路径'}
               >
-                {selectedPath === cwd ? '✓ 已选中（点击取消）' : '选择当前文件夹'}
+                {selectedPath === cwd ? '已选中（点击取消）' : '选择当前文件夹'}
               </button>
-              <span className="ts-sub" style={{ wordBreak: 'break-all' }}>
-                {selectedPath ? `已选：${selectedPath}` : '浏览到目标文件夹后点击「选择当前文件夹」，或直接「＋ 新建文件夹」'}
+              <span className="ts-sub ts-addproj-picked-path">
+                {selectedPath ? `已选：${selectedPath}` : '浏览到目标文件夹后点「选择当前文件夹」，或直接「＋ 新建文件夹」'}
               </span>
             </div>
             )}
           </div>
+          </div>
+          {/* —— 右列：来源相关表单 + 项目信息 —— */}
+          <div className="ts-addproj-col ts-addproj-col-right">
 
           {/* 从 GitHub 克隆：仓库地址 + 目标文件夹名 + 进度 */}
           {source === 'clone' && (
@@ -636,6 +629,7 @@ export function AddProjectDialog({ onClose, onCreated }: Props) {
               rows={3}
               onChange={(e) => setDescription(e.target.value)}
             />
+          </div>
           </div>
         </div>
         <div className="ts-modal-foot">

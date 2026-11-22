@@ -224,6 +224,7 @@ check('保存/恢复布局是**全局快照**（面板排布 + 收起区 + 侧�
   /if \(snap\?\.sideW\) applySideW\(snap\.sideW\)/.test(dock) &&
   !/setHiddenRegions\(\[\]\)/.test(dock))
 const skinsSrc = readFileSync(join(root, 'client/src/panel/skins.ts'), 'utf8')
+const iconsSrc = readFileSync(join(root, 'client/src/panel/icons.ts'), 'utf8')
 check('皮肤：目录在 skins.ts（分组 + 分类，参考 info_report）+ 写到 :root 变量',
   // 分类：纯色 / 渐变 / 科技 / 艺术（info_report 同款分法），数量至少 15 套
   ['纯色 · 深色', '渐变 · 深色', '科技 · 深色', '艺术 · 深色', '纯色 · 浅色', '渐变 · 浅色'].every((g) => skinsSrc.includes(`group: '${g}'`)) &&
@@ -253,7 +254,19 @@ check('CSS Grid 分区 + 区域收起 = 列宽塌陷到 0（不用 removePanel�
   /\.ts-dock\[data-hide-left\] \{ --ts-side-l: 0px; \}/.test(dock))
 check('标题行 + 状态栏 + 面板区与编辑区同实例',
   /data-desk-titlebar=""/.test(dock) && /data-desk-statusbar=""/.test(dock) &&
-  /addTo\('center', 'board', \{ direction: 'below'/.test(dock))
+  // 首次进入的界面（用户要求）：面板区 = 项目预览 + DSH 主对话（相邻），
+  // 辅助侧栏 = 共享黑板 / 协作对话 / 协作收益（竖排），主侧栏默认收起。
+  /addTo\('right', 'board'\)/.test(dock) &&
+  /addTo\('right', 'talk', \{ direction: 'below', referencePanel: board \}\)/.test(dock) &&
+  /addTo\('right', 'save', \{ direction: 'below', referencePanel: talk \}\)/.test(dock) &&
+  // 预览与主对话**相邻**（分屏到主对话左边）
+  /addTo\('center', 'preview', \{ direction: 'left', referencePanel: chat \}\)/.test(dock) &&
+  // 面板 kind 的默认归属区：board/talk/save 在辅助侧栏
+  /board: 'right'/.test(dock) && /talk: 'right'/.test(dock) && /save: 'right'/.test(dock) &&
+  // 首次进入：主侧栏默认收起（只在没进过这个项目时）
+  /const DEFAULT_HIDDEN_REGIONS: Region\[\] = \['left'\]/.test(dock) &&
+  /readInitialHiddenRegions/.test(dock) &&
+  /FIRST_ENTRY_KEY/.test(dock))
 check('watermark 组件契约完整（element + init + dispose；缺 init 会 TypeError）',
   /createWatermarkComponent: \(\) => \{[\s\S]{0,400}?init\(\) \{/.test(dock) &&
   /createWatermarkComponent: \(\) => \{[\s\S]{0,600}?dispose\(\) \{/.test(dock))
@@ -638,7 +651,9 @@ check('关掉的窗口不再自己回来（按项目持久化 + reconcile 跳过
   /const unregister = \(id: string, el: HTMLElement\) => \{\n\s+if \(containersRef\.current\[id\] === el\) \{\n\s+delete containersRef\.current\[id\]/.test(dock))
 check('探索者窗口：独立图标 + 去圆角边框 + 标题行无底色',
   /if \(kind\.startsWith\('exp:'\)\) return 'explorers'/.test(panes) &&
-  /explorers: '<rect x="4\.5" y="7\.5"/.test(dock) &&
+  // 图标本体搬到了共享的 icons.ts（全站一份），DeskDock 从那里引入
+  /explorers: '<rect x="4\.5" y="7\.5"/.test(iconsSrc) &&
+  /import \{ ICON_BODIES \} from '\.\/icons'/.test(dock) &&
   /\.ts-win \{ border:0; border-radius:0; background:transparent;/.test(styles) &&
   /\.ts-win-head \{ display:flex; align-items:center; gap:6px; padding:6px 8px; border-bottom:1px solid/.test(styles))
 check('探索者状态角标（跑 / 异常 / 新汇报）画在标签图标上',

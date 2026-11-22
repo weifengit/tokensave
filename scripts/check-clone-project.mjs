@@ -24,9 +24,11 @@ const check = (label, ok, detail = '') => {
 }
 
 const route = readFileSync(join(root, 'src/board-web-route.ts'), 'utf8')
+const ghCli = readFileSync(join(root, 'src/gh-cli.ts'), 'utf8')
 const api = readFileSync(join(root, 'client/src/panel/api.ts'), 'utf8')
 const dialog = readFileSync(join(root, 'client/src/panel/AddProjectDialog.tsx'), 'utf8')
 const styles = readFileSync(join(root, 'client/src/panel/styles.ts'), 'utf8')
+const iconsSrc = readFileSync(join(root, 'client/src/panel/icons.ts'), 'utf8')
 
 console.log('— 服务端：路由与约定 —')
 
@@ -62,7 +64,11 @@ check('凭据经环境变量注入（不进 argv）',
   /env\.GIT_CONFIG_VALUE_0 = `Authorization: Basic \$\{Buffer\.from\(`x-access-token:\$\{token\}`\)/.test(route) &&
   // token 只取自环境变量或 gh，不能是硬编码
   /for \(const key of \['GITHUB_TOKEN', 'GH_TOKEN', 'TOKENS_SAVE_GITHUB_TOKEN'\]\)/.test(route) &&
-  /execFileSync\('gh', \['auth', 'token'\]/.test(route))
+  // token 只取自环境变量或 gh，不能是硬编码
+  /for \(const key of \['GITHUB_TOKEN', 'GH_TOKEN', 'TOKENS_SAVE_GITHUB_TOKEN'\]\)/.test(route) &&
+  // gh 的位置由 gh-cli.ts 解析（Windows 上 PATH 里常没有 gh）
+  /execFileSync\(gh, \['auth', 'token'\]/.test(route) &&
+  /resolveGh\(\)/.test(route))
 
 check('token 只给 GitHub 的 https 地址（不在别处泄露）', (() => {
   const line = route.split('\n').find((l) => l.includes('const token ='))
@@ -162,7 +168,7 @@ console.log('— 仓库清单（从自己的 GitHub 仓里选）—')
 
 check('后端新增 GET /repos（gh repo list，带缓存）',
   route.includes("export const REPOS_ROUTE_PATH = '/plugins/dsh-tokensave/repos'") &&
-  /execFileSync\('gh', \[/.test(route) &&
+  /execFileSync\(gh, \[/.test(route) &&
   route.includes("'repo', 'list', '--limit'") &&
   /REPOS_CACHE_TTL_MS = 60_000/.test(route))
 
@@ -172,9 +178,21 @@ check('/repos 是只读接口（进 readRoutes，不套写通道）',
 
 check('gh 失败给可读原因而非当空清单（界面仍可手输）',
   route.includes('本机 gh 未登录') &&
-  route.includes('本机未安装 gh') &&
+  route.includes('未找到 gh 可执行文件') &&
   // 清单接口本身绝不能把「拿不到」变成抛错/500
   /writeJson\(res, 200, \{ items, error, count: items\.length \}\)/.test(route))
+
+// —— Windows：装了 gh 却报「未安装」的坑（gh-cli.ts 负责按安装位置找）——
+check('gh 的位置由 gh-cli.ts 解析（PATH 里没有时按安装位置找）',
+  /export function resolveGh\(\): string \| null/.test(ghCli) &&
+  // Windows 的标准安装位置（C:\Program Files\GitHub CLI\gh.exe）
+  ghCli.includes("'GitHub CLI', 'gh.exe'") &&
+  ghCli.includes('ProgramFiles') &&
+  // 探测顺序：PATH → 常见安装位置；不走 shell
+  /execFileSync\(process\.platform === 'win32' \? 'gh\.exe' : 'gh'/.test(ghCli) &&
+  !/shell: true/.test(ghCli) &&
+  // 找不到时给可读错误而不是抛错
+  /未找到 gh 可执行文件/.test(route))
 
 check('清单按最近推送排序（刚动过的仓排前面）',
   /items\.sort\(\(a, b\) => \(b\.pushedAt \|\| ''\)\.localeCompare\(a\.pushedAt \|\| ''\)\)/.test(route))
@@ -202,11 +220,13 @@ check('清单拉不到时保留手输入口（不隐藏地址框）',
 
 console.log('— 图标风格（线条，不用 emoji）—')
 
-check('新增线条图标集（24×24 / stroke 1.6 / currentColor）',
-  /const ICON_BODIES: Record<string, string> = \{/.test(dialog) &&
-  /stroke-width="1\.6"/.test(dialog) &&
-  /stroke="currentColor"/.test(dialog) &&
-  /stroke-linecap="round"/.test(dialog))
+check('线条图标集（24×24 / stroke 1.6 / currentColor）—— 全站一份 icons.ts',
+  /export const ICON_BODIES: Record<string, string> = \{/.test(iconsSrc) &&
+  /stroke-width="1\.6"/.test(iconsSrc) &&
+  /stroke="currentColor"/.test(iconsSrc) &&
+  /stroke-linecap="round"/.test(iconsSrc) &&
+  // 弹窗从共享模块取（不再各画一套）
+  /import \{ ICON_BODIES, iconSvg \} from '\.\/icons'/.test(dialog))
 
 check('来源按钮与标题用线条图标，已无 emoji',
   dialog.includes('<Icon name="folder" /> 本地已有目录') &&

@@ -70,12 +70,18 @@ import {
   type ChromePosition,
 } from './chrome-position'
 import type { ProjectRecord } from './store'
+import { ICON_BODIES } from './icons'
 
 const SNAPSHOT_KEY = (projectId: string) => `tokensave:desk-dock.v2:${projectId}`
 const SAVED_KEY = (projectId: string) => `tokensave:desk-saved.v2:${projectId}`
 /** 区域收起状态：**按项目分键**（以前是全局一个键，在 A 项目收起编辑区会把 B 项目
     也一起收起——用户反馈「其他项目里 DSH 主对话没有输入框」就是一例）。 */
 const REGIONS_KEY = (projectId: string) => `tokensave:desk-regions.v1:${projectId}`
+/** 首次进入标记：某个项目**第一次**进工作台时用它决定「主侧栏默认收起」。
+ *  写入后就不再改（用户之后的展开/收起由 REGIONS_KEY 管）。 */
+const FIRST_ENTRY_KEY = (projectId: string) => `tokensave:desk-first-entry.v1:${projectId}`
+/** 内置默认布局下的收起区：首次进入时主侧栏收起（面板区 + 辅助侧栏占满）。 */
+const DEFAULT_HIDDEN_REGIONS: Region[] = ['left']
 /* SKIN_KEY 已搬到 skins.ts（改名为 SKIN_KEY，值不变，兼容旧的 background 字符串） */
 /* 布局锁已按用户要求整个删除（功能 + 状态栏显示）；遗留键在 STALE 里清掉。 */
 /** 界面字体与字族（外观设置，全局一份，同皮肤）。 */
@@ -133,35 +139,40 @@ const REGION_ICON: Record<Region, string> = { left: 'regionLeft', center: 'regio
 
 /** 面板 kind 的默认归属区（只决定首次落点，不锁定位置）。 */
 const KIND_REGION: Record<string, Region> = {
-  // 用户要求：项目预览默认就在**编辑区**（不再放主侧栏）
+  // 用户要求（首次进入的界面）：
+  //   面板区 = 项目预览 + DSH 主对话（两个图标紧紧相邻，左右并排）；
+  //   辅助侧栏 = 共享黑板 / 协作对话 / 协作收益。
+  // 主侧栏默认整体收起（首次进入不留空栏），用户可随时拉出来。
   preview: 'center',
   chat: 'center',
-  board: 'center',
-  talk: 'center',
-  save: 'center',
+  board: 'right',
+  talk: 'right',
+  save: 'right',
+}
+/** 辅助侧栏三块的竖向次序（每一块紧跟在谁下面）。 */
+const RIGHT_STACK_ORDER: Record<string, string | undefined> = {
+  board: undefined,
+  talk: 'board',
+  save: 'talk',
 }
 
 /** 线条图标（24 视窗 / currentColor / 1.6 描边，与 info_report 的 icons.js 同规）。 */
 const ICONS: Record<string, string> = {
-  /** 探索者窗口：与 DSH 主对话**必须区分开**（用户反馈两者图标一模一样）。
-     画一个机器人头：与右上角「探索者设置」的图标同一套语言。 */
-  explorers: '<rect x="4.5" y="7.5" width="15" height="11" rx="3"/><path d="M12 4.5v3"/><circle cx="12" cy="3.4" r="1.1" fill="currentColor" stroke="none"/><circle cx="9.2" cy="12.2" r="1.2" fill="currentColor" stroke="none"/><circle cx="14.8" cy="12.2" r="1.2" fill="currentColor" stroke="none"/><path d="M9.5 15.2h5"/>',
+  // 共享图标（folder/compass/book/report/chat/comment/database/explorers/branch/search/lock/close/list）
+  // 来自 icons.ts —— 全站一份，改形状只改一处。
+  ...ICON_BODIES,
+  // explorers（机器人头）与主对话**必须区分开**：来自 icons.ts（共享一份）。
   zone: '<rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M3.5 9.5h17"/><path d="M3.5 14.5h17"/><path d="M9 4.5v15"/><path d="M15 4.5v15"/>',
   /** 停止（画出「停」）：协作对话标题行的「全部停止」。 */
   stop: '<rect x="5.5" y="5.5" width="13" height="13" rx="2.5"/><path d="M9.5 12h5"/>',
-  book: '<path d="M3 5h6a3 3 0 0 1 3 3v11a3 3 0 0 0-3-3H3z"/><path d="M21 5h-6a3 3 0 0 0-3 3v11a3 3 0 0 1 3-3h6z"/>',
-  report: '<rect x="4.5" y="3.5" width="15" height="17" rx="2.5"/><path d="M8 8h8"/><path d="M8 12h8"/><path d="M8 16h5"/>',
-  chat: '<path d="M4 5.5h16v11H9.5L4 20.5z"/><path d="M8 10h8"/><path d="M8 13.5h5"/>',
-  comment: '<path d="M20 5.5H4v10h7l5 4v-4h4z"/><path d="M8 10h8"/>',
-  database: '<ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v12c0 1.7 3.1 3 7 3s7-1.3 7-3V6"/><path d="M5 12c0 1.7 3.1 3 7 3s7-1.3 7-3"/>',
-  list: '<rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M7 9.5h10"/><path d="M7 13.5h6"/>',
+  // book / report / chat / comment / database / list 均来自 icons.ts（共享一份）。
   palette: '<circle cx="12" cy="12" r="8.5"/><circle cx="9" cy="9.5" r="1.2" fill="currentColor" stroke="none"/><circle cx="15" cy="9.5" r="1.2" fill="currentColor" stroke="none"/><circle cx="9" cy="15" r="1.2" fill="currentColor" stroke="none"/>',
   regionLeft: '<rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M9.8 4.5v15"/>',
   regionCenter: '<rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M3.5 12h17"/>',
   regionRight: '<rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M14.2 4.5v15"/>',
   save: '<path d="M5 4.5h11l3.5 3.5v11a1.5 1.5 0 0 1-1.5 1.5H5a1.5 1.5 0 0 1-1.5-1.5v-13A1.5 1.5 0 0 1 5 4.5z"/><path d="M8 4.5v5h7v-5"/><rect x="8" y="13" width="8" height="6" rx="1"/>',
   reset: '<path d="M4.5 12a7.5 7.5 0 1 0 2.3-5.4"/><path d="M4.5 4.5v5h5"/>',
-  lock: '<rect x="5" y="10.5" width="14" height="9" rx="2"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/>',
+  // lock 来自 icons.ts；unlock 是它的一对（开锁状态），留在本地。
   unlock: '<rect x="5" y="10.5" width="14" height="9" rx="2"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 6.6-1.5"/>',
   more: '<circle cx="6" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="18" cy="12" r="1.4" fill="currentColor" stroke="none"/>',
   /** 标题行项目切换按钮的小箭头。 */
@@ -227,7 +238,14 @@ const DOCK_CSS = `
 .ts-skin-glabel { font-size: calc(var(--ts-fs, 12.5px) * 0.8); color: var(--ts-fg-mute); letter-spacing: .04em; }
 /* 皮肤列表：限高 + 内部滚动。22 套皮全展开有 695px 高，而设置面板一屏只有 ~415px，
    不限高的话下面「字体」块要被顶出面板，得滚很久才找得到。 */
-.ts-skin-scroll { display: flex; flex-direction: column; gap: 6px; max-height: 196px; overflow-y: auto; padding: 2px 4px 2px 2px; scrollbar-width: thin; scrollbar-color: rgba(127,127,127,.4) transparent; }
+/* 皮肤列表：限高 + 内部滚动。22 套皮全展开有 695px 高，而设置面板一屏只有 ~415px，
+   不限高的话下面「字体」块要被顶出面板，得滚很久才找得到。
+   container-type:inline-size —— 让里面的皮肤格子能按**容器宽度**决定几列。 */
+.ts-skin-scroll { container-type: inline-size; display: flex; flex-direction: column; gap: 6px; max-height: 196px; overflow-y: auto; padding: 2px 4px 2px 2px; scrollbar-width: thin; scrollbar-color: rgba(127,127,127,.4) transparent; }
+/* 低分辨率时**保持两列**：格子靠百分比基准（46%）分配宽度，min-width 必须为 0。
+   旧的 min-width:96px 是硬下限 —— 容器窄于 198px 时两个格子装不下，
+   flex-wrap 把它们拆成一行一个（用户反馈「低分辨率电脑里一行显示 2 个」）。
+   min-width:0 之后百分比基准生效，窄容器也是两列（格子变小但不换行）。 */
 .ts-skin-scroll::-webkit-scrollbar { width: 8px; }
 .ts-skin-scroll::-webkit-scrollbar-thumb { background: rgba(127,127,127,.35); border-radius: 4px; }
 .ts-dock[data-hide-left] { --ts-side-l: 0px; }
@@ -469,7 +487,16 @@ body.ts-dock-dragging iframe { pointer-events: none !important; }
 .ts-pop-btn { display: flex; width: 100%; align-items: center; gap: 6px; border: 0; border-radius: 7px; background: 0 0; color: inherit; font: inherit; font-size:calc(var(--ts-fs, 12.5px) * 0.96); padding: 6px; cursor: pointer; text-align: left; }
 .ts-pop-btn:hover { background: rgba(127,127,127,.14); }
 /* 皮肤格子（现在是设置面板里的一个区块） */
-.ts-skin-cell { flex: 1 1 46%; min-width: 96px; height: 40px; border: 1px solid rgba(127,127,127,.32); border-radius: 7px; background: rgba(127,127,127,.08); color: var(--ts-fg); font: inherit; font-size:calc(var(--ts-fs, 12.5px) * 0.92); cursor: pointer; }
+/* 皮肤格子（设置面板里的一个区块）。
+   两列 → 一列的切换由**容器查询**（container-type:inline-size）驱动：
+   面板被压窄（低分辨率 / 侧置标题栏 / 窄视口）时自动改成一列，
+   而不是一律两列（用户反馈「低分辨率电脑里一行显示 2 个」）。
+   flex-basis 用百分比而不是写死 px：格子能塞几列由**容器宽度**决定。 */
+/* 皮肤格子（设置面板里的一个区块）。
+   两列 → 一列的切换由**容器查询**（container-type:inline-size）驱动：
+   面板被压窄（低分辨率 / 侧置标题栏 / 窄视口）时自动改成一列，
+   而不是一律两列（用户反馈「低分辨率电脑里一行显示 2 个」）。 */
+.ts-skin-cell { flex: 1 1 46%; min-width: 0; height: 40px; border: 1px solid rgba(127,127,127,.32); border-radius: 7px; background: rgba(127,127,127,.08); color: var(--ts-fg); font: inherit; font-size:calc(var(--ts-fs, 12.5px) * 0.92); cursor: pointer; }
 .ts-skin-cell[data-on] { border-color: #4f8ef7; box-shadow: inset 0 0 0 1px rgba(79,142,247,.5); }
 .dv-intel { background: transparent; }
 .dv-intel .dv-dockview, .dv-intel .dv-groupview { background: transparent; border-radius: 0; }
@@ -599,6 +626,23 @@ function readHiddenRegions(projectId: string): Region[] {
   } catch {
     return []
   }
+}
+/**
+ * 首次进入时的收起区。
+ *
+ * 口径：用户自己存过偏好 → 一律按偏好（哪怕是「全展开」）。
+ * 从没进过这个项目 → 主侧栏收起（首次进入不留一条空栏）。
+ * FIRST_ENTRY_KEY 就是「进过没有」的判据：没有它 = 首次。
+ */
+function readInitialHiddenRegions(projectId: string): Region[] {
+  const stored = readHiddenRegions(projectId)
+  if (stored.length) return stored
+  try {
+    if (window.localStorage.getItem(FIRST_ENTRY_KEY(projectId))) return []
+  } catch {
+    /* 隐私模式：按首次处理 */
+  }
+  return DEFAULT_HIDDEN_REGIONS
 }
 
 
@@ -845,7 +889,7 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
   /** 「全部停止探索者」的运行/结果提示。 */
   const [stopNote, setStopNote] = useState('')
   const [reloadKey, setReloadKey] = useState(0)
-  const [hiddenRegions, setHiddenRegions] = useState<Region[]>(() => readHiddenRegions(project.id))
+  const [hiddenRegions, setHiddenRegions] = useState<Region[]>(() => readInitialHiddenRegions(project.id))
   /** 隐藏区集合的即时镜像：挂载 effect 里的回调（布局变化 / 激活面板变化）要读**最新**值。 */
   const hiddenRef = useRef<Region[]>(hiddenRegions)
   hiddenRef.current = hiddenRegions
@@ -1475,16 +1519,21 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
     const addTo = (region: Region, kind: string, position?: any) => {
       apis[region].addPanel(paneOptsRef.current(paneId(project.id, kind), position))
     }
-    // 默认摆位（同 info_report 的 VIEWS.region）：预览→主侧栏；主对话→编辑区；
-    // 黑板/协作对话/收益→面板区（与编辑区同实例，落成下方的分组）
+    // 默认摆位（用户要求：首次进入的界面）：
+    //   面板区（center）：项目预览 + DSH 主对话 —— 两个图标**紧紧相邻**（左右并排）。
+    //   辅助侧栏（right）：共享黑板 / 协作对话 / 协作收益（竖向排列）。
+    //   主侧栏（left）：默认**收起**（首次进入不留一条空栏）。
     const buildDefault = () => {
       const chat = paneId(project.id, 'chat')
+      // 主对话先落面板区，预览再分屏到它**左边**（相邻 ⇒ 两个标签图标紧挨着）。
       addTo('center', 'chat')
-      // 预览默认摆在编辑区、主对话**左边**（进项目就能同时看到两窗）
       if (data.devUrl) addTo('center', 'preview', { direction: 'left', referencePanel: chat })
-      addTo('center', 'board', { direction: 'below', referencePanel: chat })
-      addTo('center', 'talk', { direction: 'right', referencePanel: chat })
-      addTo('center', 'save', { direction: 'below', referencePanel: paneId(project.id, 'talk') })
+      // 辅助侧栏：黑板 / 协作对话 / 协作收益（依次竖排）。
+      const board = paneId(project.id, 'board')
+      addTo('right', 'board')
+      const talk = paneId(project.id, 'talk')
+      addTo('right', 'talk', { direction: 'below', referencePanel: board })
+      addTo('right', 'save', { direction: 'below', referencePanel: talk })
     }
     resetToBuiltinRef.current = () => {
       REGIONS.forEach((r) => apis[r].panels.slice().forEach((p: any) => apis[r].removePanel(p)))
@@ -1513,6 +1562,15 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
     suppressDirtyRef.current = true
     restored = tryRestore(SAVED_KEY(project.id)) || tryRestore(SNAPSHOT_KEY(project.id))
     if (!restored) buildDefault()
+    // 首次进入标记：这个项目进过一次就不再改「主侧栏默认收起」的判定。
+    // （只在没恢复出旧布局时写：恢复出来的布局是用户自己的意图，不该被改。）
+    if (!restored) {
+      try {
+        window.localStorage.setItem(FIRST_ENTRY_KEY(project.id), '1')
+      } catch {
+        /* 隐私模式：仅本次会话有效 */
+      }
+    }
     restoredFromSnapshotRef.current = restored
     // 用户关过的窗口：快照/默认布局里都有它 → 这里当场摘掉，不带回来
     // （用户反馈：关掉后一刷新又冒出来，而且落在默认区、不是原来那块）。
@@ -1710,18 +1768,26 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
       if (closedRef.current.has(id)) return
       const region = defaultRegionOf(id)
       // ⚠️ position 的 referencePanel 必须**属于同一个 dockview 实例**：
-      // 主对话在 center 实例，而 preview 要加进 left 实例 —— 跨实例引用会让
-      // addPanel 抛错（面板加不进去 → 「项目预览看不到了」实测根因）。
+      // 跨实例引用会让 addPanel 抛错（面板加不进去 → 「项目预览看不到了」实测根因）。
       const hasOwnAnchor = !!apis[region].panels.length
       // 预览面板的落点特殊：**分屏到主对话左边**（不许当标签页塞进主对话那一组，
       // 否则主对话被盖住 → 宿主输入条悬在预览上）。referencePanel 必须同实例 → 用主对话。
       const chatAnchor = apis.center.getPanel(paneId(project.id, 'chat'))
-      const isPreview = parsePaneId(id)?.kind === 'preview'
+      const kind = parsePaneId(id)?.kind ?? ''
+      const isPreview = kind === 'preview'
+      // 辅助侧栏的三块（黑板 / 协作对话 / 协作收益）**竖向相邻**（各自一行），
+      // 而不是叠成同一组的标签页 —— 与内置默认摆位一致。
+      const sibling = KIND_REGION[kind] === 'right' && !kind.startsWith('exp:')
+        ? RIGHT_STACK_ORDER[kind]
+        : undefined
+      const siblingAnchor = sibling && apis.right.getPanel(paneId(project.id, sibling))
       const position = isPreview && region === 'center' && chatAnchor
         ? { direction: 'left', referencePanel: String(chatAnchor.id) }
-        : hasOwnAnchor
-          ? { direction: 'within', referencePanel: String(apis[region].panels[0].id) }
-          : undefined
+        : siblingAnchor
+          ? { direction: 'below', referencePanel: String(siblingAnchor.id) }
+          : hasOwnAnchor
+            ? { direction: 'within', referencePanel: String(apis[region].panels[0].id) }
+            : undefined
       try {
         apis[region].addPanel(paneOptsRef.current(id, position))
       } catch (e) {
@@ -2145,9 +2211,9 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
       console.warn('[desk-dock] 默认布局恢复失败', e)
     }
     if (!done) {
-      // 没有存过默认布局 → 回到内置摆位 + 全展开 + 默认宽度
+      // 没有存过默认布局 → 回到内置摆位 + 内置收起区 + 默认宽度
       resetToBuiltinRef.current?.()
-      applyRegions([])
+      applyRegions(DEFAULT_HIDDEN_REGIONS)
       applySideW({ left: 220, right: 260 })
       setLayoutDirty(false)
       window.setTimeout(() => {
@@ -2438,9 +2504,16 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
         return next
       })
       // 同上：参考面板必须在同一实例内（跨实例引用会抛错）
-      const position = apis[region].panels.length
-        ? { direction: 'within', referencePanel: String(apis[region].panels[0].id) }
+      // 辅助侧栏的三块同样竖向相邻（与内置默认摆位一致）。
+      const sibling = KIND_REGION[kind] === 'right' && !kind.startsWith('exp:')
+        ? RIGHT_STACK_ORDER[kind]
         : undefined
+      const siblingAnchor = sibling && apis.right.getPanel(paneId(project.id, sibling))
+      const position = siblingAnchor
+        ? { direction: 'below', referencePanel: String(siblingAnchor.id) }
+        : apis[region].panels.length
+          ? { direction: 'within', referencePanel: String(apis[region].panels[0].id) }
+          : undefined
       try {
         apis[region].addPanel(paneOptsRef.current(id, position))
       } catch {

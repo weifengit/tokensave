@@ -196,19 +196,24 @@ if (!browser) {
     const file = join(dir, 'outer.html')
     writeFileSync(file, outerPage(width))
     let out = ''
-    try {
-      out = execFileSync(browser, [
-        '--headless=new', '--disable-gpu', '--no-first-run', '--dump-dom',
-        '--allow-file-access-from-files',
-        '--user-data-dir=' + join(dir, 'profile' + width),
-        '--virtual-time-budget=3000',
-        'file://' + file,
-      ], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 60_000 })
-    } catch (e) {
-      console.log(`FAIL  无头浏览器跑失败：${e.message}`)
-      fail++
-      continue
+    // 浏览器启动偶发超时（连着起多个无头实例时容易撞上）：重试两次。
+    for (let attempt = 0; attempt < 3 && !out; attempt++) {
+      try {
+        out = execFileSync(browser, [
+          '--headless=new', '--disable-gpu', '--no-first-run', '--dump-dom',
+          '--allow-file-access-from-files',
+          '--user-data-dir=' + join(dir, 'profile' + width),
+          '--virtual-time-budget=3000',
+          'file://' + file,
+        ], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 60_000 })
+      } catch (e) {
+        if (attempt === 2) {
+          console.log(`FAIL  无头浏览器跑失败：${e.message}`)
+          fail++
+        }
+      }
     }
+    if (!out) continue
     const m = out.match(/<pre id="out">([\s\S]*?)<\/pre>/)
     let d = null
     try { d = JSON.parse((m ? m[1] : '').replace(/&quot;/g, '"').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')) } catch { /* 下面判 FAIL */ }

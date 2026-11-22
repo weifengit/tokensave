@@ -2704,7 +2704,8 @@ body.ts-desk-nochat [data-conversation-region="composer"] {
 .ts-skin-pop-head { display:flex; align-items:center; justify-content:space-between; gap:8px; }
 .ts-skin-pop-hint { font-size:calc(var(--ts-fs, 12.5px) * 0.84); color:#6b7280; }
 .ts-skin-pop-grid { display:flex; flex-wrap:wrap; gap:6px; }
-.ts-skin-pop .ts-skin-cell { flex:1 1 46%; min-width:88px; height:38px; border:1px solid rgba(127,127,127,.32); border-radius:7px; background:rgba(127,127,127,.08); color:var(--ts-fg, #e6e8eb); font:inherit; font-size:calc(var(--ts-fs, 12.5px) * 0.9); cursor:pointer; }
+/* min-width:0\uFF08\u4E0D\u662F 88px\uFF09\uFF1A\u4F4E\u5206\u8FA8\u7387\u65F6\u4E24\u4E2A\u683C\u5B50\u4ECD\u6392\u4E00\u884C\uFF08\u786C\u4E0B\u9650\u4F1A\u628A\u5B83\u4EEC\u62C6\u6210\u4E00\u884C\u4E00\u4E2A\uFF09\u3002 */
+.ts-skin-pop .ts-skin-cell { flex:1 1 46%; min-width:0; height:38px; border:1px solid rgba(127,127,127,.32); border-radius:7px; background:rgba(127,127,127,.08); color:var(--ts-fg, #e6e8eb); font:inherit; font-size:calc(var(--ts-fs, 12.5px) * 0.9); cursor:pointer; }
 .ts-skin-pop .ts-skin-cell[data-on] { border-color:#4f8ef7; box-shadow:inset 0 0 0 1px rgba(79,142,247,.5); }
 .ts-skin-pop .ts-skin-none { flex:1 1 100%; }
 .ts-skin-pop .ts-skin-group { display:flex; flex-direction:column; gap:5px; }
@@ -2914,8 +2915,38 @@ body.ts-vsplit-dragging .ts-card { transition:none !important; animation:none !i
 .ts-field-label { font-size:calc(var(--ts-fs, 12.5px) * 1.04); font-weight:600; margin-bottom:6px; display:block; }
 /* \u300C\u6DFB\u52A0\u9879\u76EE\u300D\u5F39\u7A97\uFF1A\u56FA\u5B9A\u5C3A\u5BF8\uFF08\u5207\u6362\u76EE\u5F55 / \u70B9\u300C\u4E0A\u7EA7\u300D\u65F6\u9762\u677F\u4E0D\u7F29\u653E\u3001\u4F4D\u7F6E\u4E0D\u52A8\uFF09\uFF0C
    \u5185\u5BB9\u8D85\u51FA\u8D70\u5185\u90E8\u6EDA\u52A8\uFF0C\u5185\u5BB9\u5C11\u4E5F\u6491\u4F4F\u8FD9\u4E48\u5927\u3002 */
-.ts-modal-addproj { width:min(680px,92%); height:min(680px,90vh); max-height:90vh; }
-.ts-modal-addproj .ts-modal-body { flex:1 1 auto; min-height:0; overflow:auto; }
+/* \u300C\u6DFB\u52A0\u9879\u76EE\u300D\u5F39\u7A97\uFF1A**\u4E0D\u7EB5\u5411\u6EDA\u52A8**\uFF08\u7528\u6237\u8981\u6C42\uFF09\u3002
+   \u53E3\u5F84\uFF1A\u5F39\u7A97\u9AD8\u5EA6\u9501\u5B9A\u5728\u89C6\u53E3\u5185\uFF0Cbody \u672C\u8EAB\u4E0D\u6EDA\uFF1B\u5185\u5BB9\u8D85\u51FA\u65F6**\u5404\u81EA\u7684\u683C\u5B50**\u5185\u90E8\u6EDA\u3002
+   \u5DE6\u5217 = \u76EE\u5F55\u6D4F\u89C8\u5668\uFF08\u5B83\u7684\u5217\u8868\u672C\u6765\u5C31\u662F\u56FA\u5B9A\u9AD8\u3001\u5185\u90E8\u6EDA\uFF09\uFF0C
+   \u53F3\u5217 = \u4ED3\u5E93\u6E05\u5355 / \u8868\u5355\uFF08\u4ED3\u5E93\u6E05\u5355\u81EA\u5DF1\u9650\u9AD8\u6EDA\u52A8\uFF09\u3002 */
+.ts-modal-addproj { width:min(920px,94vw); height:min(620px,90vh); max-height:90vh; }
+.ts-modal-addproj .ts-modal-body { flex:1 1 auto; min-height:0; overflow:hidden; }
+/* \u4E24\u5217\uFF1A\u5DE6\u6D4F\u89C8\u5668\u3001\u53F3\u8868\u5355\u3002\u5217\u5BBD\u7528\u6BD4\u4F8B + minmax(0, \u2026) \u2014\u2014 \u4E0D\u5199\u6B7B px\u3002 */
+.ts-addproj-body { display:grid; grid-template-columns:minmax(0,1.05fr) minmax(0,1fr); grid-template-rows:auto minmax(0,1fr); gap:12px 16px; }
+/* \u6765\u6E90\u5207\u6362\u6A2A\u8DE8\u4E24\u5217\uFF08\u5B83\u662F\u6574\u4E2A\u9762\u677F\u7684\u603B\u5F00\u5173\uFF09\u3002 */
+.ts-addproj-body > .ts-srcpick { grid-column:1 / -1; }
+/* \u6BCF\u5217\u81EA\u5DF1\u6EDA\uFF1A\u5185\u5BB9\u591A\u65F6\u5728\u5217\u5185\u6EDA\u52A8\uFF0C\u5F39\u7A97\u672C\u8EAB\u6C38\u8FDC\u4E0D\u51FA\u7AD6\u5411\u6EDA\u52A8\u6761\u3002 */
+.ts-addproj-col { min-width:0; min-height:0; display:flex; flex-direction:column; gap:10px; overflow:auto; }
+/* \u5DE6\u5217\uFF1A\u76EE\u5F55\u6D4F\u89C8\u5668\u5360\u6EE1\u5269\u4F59\u9AD8\u5EA6\uFF1B**\u53EA\u8BA9\u5217\u8868\u5185\u90E8\u6EDA**\uFF0C\u5176\u4F59\u63A7\u4EF6\uFF08\u65B0\u5EFA/\u91CD\u547D\u540D/\u9009\u4E2D\uFF09
+   \u59CB\u7EC8\u53EF\u89C1 \u2014\u2014 \u4E0D\u80FD\u6574\u5217\u4E00\u8D77\u6EDA\uFF08\u90A3\u6837\u5E95\u90E8\u6309\u94AE\u4F1A\u88AB\u63A8\u5230\u770B\u4E0D\u89C1\u7684\u5730\u65B9\uFF09\u3002 */
+.ts-addproj-col-left { overflow:hidden; }
+.ts-addproj-picker { flex:1 1 auto; min-height:0; display:flex; flex-direction:column; }
+/* \u53F3\u5217\uFF1A\u8868\u5355\u5757\u4E4B\u95F4\u7559\u767D\uFF0C\u4E0D\u6EDA\uFF08\u5185\u5BB9\u8D85\u51FA\u65F6\u8FD9\u4E00\u5217\u81EA\u5DF1\u6EDA\uFF09\u3002 */
+.ts-addproj-col-right { gap:12px; }
+.ts-addproj-col-left .ts-fs { display:flex; flex-direction:column; flex:1 1 auto; min-height:0; }
+.ts-addproj-col-left .ts-fs-list { flex:1 1 auto; height:auto; min-height:120px; overflow:auto; }
+/* \u76EE\u5F55\u9879\uFF1A\u56FE\u6807 + \u540D\u79F0\uFF08\u540D\u79F0\u8FC7\u957F\u65F6\u7701\u7565\uFF0C\u4E0D\u6491\u7834\u5217\u8868\uFF09\u3002 */
+.ts-fs-item-name { display:inline-flex; align-items:center; gap:6px; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+/* \u300C\u9009\u4E2D\u5F53\u524D\u6587\u4EF6\u5939\u300D\u4E00\u884C\uFF1A\u6309\u94AE\u4E0D\u6362\u884C\uFF0C\u8DEF\u5F84\u5360\u5269\u4F59\u5BBD\u5EA6\u5E76\u7701\u7565\uFF08\u957F\u8DEF\u5F84\u4E0D\u6491\u7834\u9762\u677F\uFF09\u3002 */
+.ts-addproj-picked { display:flex; align-items:center; gap:8px; min-width:0; margin-top:8px; }
+.ts-addproj-pickbtn { flex:none; white-space:nowrap; }
+.ts-addproj-picked-path { flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+/* \u7A84\u5C4F\uFF08\u5355\u5217\uFF09\uFF1A\u4E24\u5217\u4E0A\u4E0B\u6392\uFF0C\u5F39\u7A97\u4ECD\u4E0D\u6EDA\u52A8 \u2014\u2014 \u6BCF\u4E00\u5757\u5185\u90E8\u81EA\u5DF1\u6EDA\u3002 */
+@media (max-width: 780px) {
+  .ts-addproj-body { grid-template-columns:minmax(0,1fr); grid-template-rows:auto minmax(0,1fr) minmax(0,1fr); }
+  .ts-addproj-body > .ts-srcpick { grid-column:1; }
+  .ts-addproj-col-left .ts-fs-list { min-height:96px; }
+}
 
 /* \u2014\u2014 \u76EE\u5F55\u6D4F\u89C8\u5668 \u2014\u2014 */
 .ts-fs { border:1px solid rgba(127,127,127,.3); border-radius:8px; overflow:hidden; }
@@ -8024,11 +8055,49 @@ function popPlacement(input) {
   return { left, bottom: Math.max(POP_GAP, viewport.height - anchor.bottom) };
 }
 
+// client/src/panel/icons.ts
+var ICON_BODIES = {
+  /** 文件夹：本地已有目录 / 项目列表 */
+  folder: '<path d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2.5h7a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/>',
+  /** 指南针：工作台（原来的 🧭） */
+  compass: '<circle cx="12" cy="12" r="8.5"/><path d="M15.4 8.6l-2 4.8-4.8 2 2-4.8z"/>',
+  /** 分支：GitHub 克隆 / 仓库（用 git 的“分支”语义，比商标图形中性且同风格） */
+  branch: '<circle cx="7" cy="6" r="2.2"/><circle cx="7" cy="18" r="2.2"/><circle cx="17" cy="10" r="2.2"/><path d="M7 8.2v7.6"/><path d="M17 12.2c0 2.2-2 3.1-4 3.4-1.6.2-3 .3-4 .3"/>',
+  /** 放大镜：清单搜索 */
+  search: '<circle cx="11" cy="11" r="6"/><path d="M15.5 15.5 20 20"/>',
+  /** 锁：私有仓 */
+  lock: '<rect x="5" y="10.5" width="14" height="9" rx="2.2"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/>',
+  /** 叉：清空搜索 / 关闭 */
+  close: '<path d="M7 7l10 10"/><path d="M17 7 7 17"/>',
+  /** 铅笔：重命名 */
+  pencil: '<path d="M4.5 19.5h4L19 9a2.1 2.1 0 0 0-3-3L4.5 17.5z"/><path d="M14.5 6.5l3 3"/>',
+  /** 列表：项目中心（原来的 🗂️） */
+  list: '<rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M7 9.5h10"/><path d="M7 13.5h6"/>',
+  /** 书：项目预览 */
+  book: '<path d="M3 5h6a3 3 0 0 1 3 3v11a3 3 0 0 0-3-3H3z"/><path d="M21 5h-6a3 3 0 0 0-3 3v11a3 3 0 0 1 3-3h6z"/>',
+  /** 报表：共享黑板 */
+  report: '<rect x="4.5" y="3.5" width="15" height="17" rx="2.5"/><path d="M8 8h8"/><path d="M8 12h8"/><path d="M8 16h5"/>',
+  /** 对话气泡：DSH 主对话 */
+  chat: '<path d="M4 5.5h16v11H9.5L4 20.5z"/><path d="M8 10h8"/><path d="M8 13.5h5"/>',
+  /** 对话气泡（另一种轮廓）：协作对话 */
+  comment: '<path d="M20 5.5H4v10h7l5 4v-4h4z"/><path d="M8 10h8"/>',
+  /** 数据库：协作收益 */
+  database: '<ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v12c0 1.7 3.1 3 7 3s7-1.3 7-3V6"/><path d="M5 12c0 1.7 3.1 3 7 3s7-1.3 7-3"/>',
+  /** 机器人：探索者窗口（与主对话必须区分开） */
+  explorers: '<rect x="4.5" y="7.5" width="15" height="11" rx="3"/><path d="M12 4.5v3"/><circle cx="12" cy="3.4" r="1.1" fill="currentColor" stroke="none"/><circle cx="9.2" cy="12.2" r="1.2" fill="currentColor" stroke="none"/><circle cx="14.8" cy="12.2" r="1.2" fill="currentColor" stroke="none"/><path d="M9.5 15.2h5"/>'
+};
+function iconSvg(name, size = 14) {
+  const body = ICON_BODIES[name] || ICON_BODIES.folder;
+  return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${body}</svg>`;
+}
+
 // client/src/panel/DeskDock.tsx
 var import_jsx_runtime15 = require("react/jsx-runtime");
 var SNAPSHOT_KEY = (projectId) => `tokensave:desk-dock.v2:${projectId}`;
 var SAVED_KEY = (projectId) => `tokensave:desk-saved.v2:${projectId}`;
 var REGIONS_KEY = (projectId) => `tokensave:desk-regions.v1:${projectId}`;
+var FIRST_ENTRY_KEY = (projectId) => `tokensave:desk-first-entry.v1:${projectId}`;
+var DEFAULT_HIDDEN_REGIONS = ["left"];
 var FONT_KEY = "tokensave:desk-font.v1";
 var FONT_FAMILY_KEY = "tokensave:desk-font-family.v1";
 var SIDE_MIN = 180;
@@ -8054,33 +8123,37 @@ var REGIONS = ["left", "center", "right"];
 var REGION_LABEL = { left: "\u4E3B\u4FA7\u680F", center: "\u7F16\u8F91\u533A/\u9762\u677F\u533A", right: "\u8F85\u52A9\u4FA7\u680F" };
 var REGION_ICON = { left: "regionLeft", center: "regionCenter", right: "regionRight" };
 var KIND_REGION = {
-  // 用户要求：项目预览默认就在**编辑区**（不再放主侧栏）
+  // 用户要求（首次进入的界面）：
+  //   面板区 = 项目预览 + DSH 主对话（两个图标紧紧相邻，左右并排）；
+  //   辅助侧栏 = 共享黑板 / 协作对话 / 协作收益。
+  // 主侧栏默认整体收起（首次进入不留空栏），用户可随时拉出来。
   preview: "center",
   chat: "center",
-  board: "center",
-  talk: "center",
-  save: "center"
+  board: "right",
+  talk: "right",
+  save: "right"
+};
+var RIGHT_STACK_ORDER = {
+  board: void 0,
+  talk: "board",
+  save: "talk"
 };
 var ICONS = {
-  /** 探索者窗口：与 DSH 主对话**必须区分开**（用户反馈两者图标一模一样）。
-     画一个机器人头：与右上角「探索者设置」的图标同一套语言。 */
-  explorers: '<rect x="4.5" y="7.5" width="15" height="11" rx="3"/><path d="M12 4.5v3"/><circle cx="12" cy="3.4" r="1.1" fill="currentColor" stroke="none"/><circle cx="9.2" cy="12.2" r="1.2" fill="currentColor" stroke="none"/><circle cx="14.8" cy="12.2" r="1.2" fill="currentColor" stroke="none"/><path d="M9.5 15.2h5"/>',
+  // 共享图标（folder/compass/book/report/chat/comment/database/explorers/branch/search/lock/close/list）
+  // 来自 icons.ts —— 全站一份，改形状只改一处。
+  ...ICON_BODIES,
+  // explorers（机器人头）与主对话**必须区分开**：来自 icons.ts（共享一份）。
   zone: '<rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M3.5 9.5h17"/><path d="M3.5 14.5h17"/><path d="M9 4.5v15"/><path d="M15 4.5v15"/>',
   /** 停止（画出「停」）：协作对话标题行的「全部停止」。 */
   stop: '<rect x="5.5" y="5.5" width="13" height="13" rx="2.5"/><path d="M9.5 12h5"/>',
-  book: '<path d="M3 5h6a3 3 0 0 1 3 3v11a3 3 0 0 0-3-3H3z"/><path d="M21 5h-6a3 3 0 0 0-3 3v11a3 3 0 0 1 3-3h6z"/>',
-  report: '<rect x="4.5" y="3.5" width="15" height="17" rx="2.5"/><path d="M8 8h8"/><path d="M8 12h8"/><path d="M8 16h5"/>',
-  chat: '<path d="M4 5.5h16v11H9.5L4 20.5z"/><path d="M8 10h8"/><path d="M8 13.5h5"/>',
-  comment: '<path d="M20 5.5H4v10h7l5 4v-4h4z"/><path d="M8 10h8"/>',
-  database: '<ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v12c0 1.7 3.1 3 7 3s7-1.3 7-3V6"/><path d="M5 12c0 1.7 3.1 3 7 3s7-1.3 7-3"/>',
-  list: '<rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M7 9.5h10"/><path d="M7 13.5h6"/>',
+  // book / report / chat / comment / database / list 均来自 icons.ts（共享一份）。
   palette: '<circle cx="12" cy="12" r="8.5"/><circle cx="9" cy="9.5" r="1.2" fill="currentColor" stroke="none"/><circle cx="15" cy="9.5" r="1.2" fill="currentColor" stroke="none"/><circle cx="9" cy="15" r="1.2" fill="currentColor" stroke="none"/>',
   regionLeft: '<rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M9.8 4.5v15"/>',
   regionCenter: '<rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M3.5 12h17"/>',
   regionRight: '<rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M14.2 4.5v15"/>',
   save: '<path d="M5 4.5h11l3.5 3.5v11a1.5 1.5 0 0 1-1.5 1.5H5a1.5 1.5 0 0 1-1.5-1.5v-13A1.5 1.5 0 0 1 5 4.5z"/><path d="M8 4.5v5h7v-5"/><rect x="8" y="13" width="8" height="6" rx="1"/>',
   reset: '<path d="M4.5 12a7.5 7.5 0 1 0 2.3-5.4"/><path d="M4.5 4.5v5h5"/>',
-  lock: '<rect x="5" y="10.5" width="14" height="9" rx="2"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/>',
+  // lock 来自 icons.ts；unlock 是它的一对（开锁状态），留在本地。
   unlock: '<rect x="5" y="10.5" width="14" height="9" rx="2"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 6.6-1.5"/>',
   more: '<circle cx="6" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="18" cy="12" r="1.4" fill="currentColor" stroke="none"/>',
   /** 标题行项目切换按钮的小箭头。 */
@@ -8090,7 +8163,7 @@ var ICONS = {
   /** 字号（字体区块用）。 */
   type: '<path d="M5 6.5V5h14v1.5"/><path d="M12 5v14"/><path d="M9 19h6"/>'
 };
-function iconSvg(name, size = 15) {
+function iconSvg2(name, size = 15) {
   const body = ICONS[name] || ICONS.report;
   return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${body}</svg>`;
 }
@@ -8124,7 +8197,14 @@ var DOCK_CSS = `
 .ts-skin-glabel { font-size: calc(var(--ts-fs, 12.5px) * 0.8); color: var(--ts-fg-mute); letter-spacing: .04em; }
 /* \u76AE\u80A4\u5217\u8868\uFF1A\u9650\u9AD8 + \u5185\u90E8\u6EDA\u52A8\u300222 \u5957\u76AE\u5168\u5C55\u5F00\u6709 695px \u9AD8\uFF0C\u800C\u8BBE\u7F6E\u9762\u677F\u4E00\u5C4F\u53EA\u6709 ~415px\uFF0C
    \u4E0D\u9650\u9AD8\u7684\u8BDD\u4E0B\u9762\u300C\u5B57\u4F53\u300D\u5757\u8981\u88AB\u9876\u51FA\u9762\u677F\uFF0C\u5F97\u6EDA\u5F88\u4E45\u624D\u627E\u5F97\u5230\u3002 */
-.ts-skin-scroll { display: flex; flex-direction: column; gap: 6px; max-height: 196px; overflow-y: auto; padding: 2px 4px 2px 2px; scrollbar-width: thin; scrollbar-color: rgba(127,127,127,.4) transparent; }
+/* \u76AE\u80A4\u5217\u8868\uFF1A\u9650\u9AD8 + \u5185\u90E8\u6EDA\u52A8\u300222 \u5957\u76AE\u5168\u5C55\u5F00\u6709 695px \u9AD8\uFF0C\u800C\u8BBE\u7F6E\u9762\u677F\u4E00\u5C4F\u53EA\u6709 ~415px\uFF0C
+   \u4E0D\u9650\u9AD8\u7684\u8BDD\u4E0B\u9762\u300C\u5B57\u4F53\u300D\u5757\u8981\u88AB\u9876\u51FA\u9762\u677F\uFF0C\u5F97\u6EDA\u5F88\u4E45\u624D\u627E\u5F97\u5230\u3002
+   container-type:inline-size \u2014\u2014 \u8BA9\u91CC\u9762\u7684\u76AE\u80A4\u683C\u5B50\u80FD\u6309**\u5BB9\u5668\u5BBD\u5EA6**\u51B3\u5B9A\u51E0\u5217\u3002 */
+.ts-skin-scroll { container-type: inline-size; display: flex; flex-direction: column; gap: 6px; max-height: 196px; overflow-y: auto; padding: 2px 4px 2px 2px; scrollbar-width: thin; scrollbar-color: rgba(127,127,127,.4) transparent; }
+/* \u4F4E\u5206\u8FA8\u7387\u65F6**\u4FDD\u6301\u4E24\u5217**\uFF1A\u683C\u5B50\u9760\u767E\u5206\u6BD4\u57FA\u51C6\uFF0846%\uFF09\u5206\u914D\u5BBD\u5EA6\uFF0Cmin-width \u5FC5\u987B\u4E3A 0\u3002
+   \u65E7\u7684 min-width:96px \u662F\u786C\u4E0B\u9650 \u2014\u2014 \u5BB9\u5668\u7A84\u4E8E 198px \u65F6\u4E24\u4E2A\u683C\u5B50\u88C5\u4E0D\u4E0B\uFF0C
+   flex-wrap \u628A\u5B83\u4EEC\u62C6\u6210\u4E00\u884C\u4E00\u4E2A\uFF08\u7528\u6237\u53CD\u9988\u300C\u4F4E\u5206\u8FA8\u7387\u7535\u8111\u91CC\u4E00\u884C\u663E\u793A 2 \u4E2A\u300D\uFF09\u3002
+   min-width:0 \u4E4B\u540E\u767E\u5206\u6BD4\u57FA\u51C6\u751F\u6548\uFF0C\u7A84\u5BB9\u5668\u4E5F\u662F\u4E24\u5217\uFF08\u683C\u5B50\u53D8\u5C0F\u4F46\u4E0D\u6362\u884C\uFF09\u3002 */
 .ts-skin-scroll::-webkit-scrollbar { width: 8px; }
 .ts-skin-scroll::-webkit-scrollbar-thumb { background: rgba(127,127,127,.35); border-radius: 4px; }
 .ts-dock[data-hide-left] { --ts-side-l: 0px; }
@@ -8366,7 +8446,16 @@ body.ts-dock-dragging iframe { pointer-events: none !important; }
 .ts-pop-btn { display: flex; width: 100%; align-items: center; gap: 6px; border: 0; border-radius: 7px; background: 0 0; color: inherit; font: inherit; font-size:calc(var(--ts-fs, 12.5px) * 0.96); padding: 6px; cursor: pointer; text-align: left; }
 .ts-pop-btn:hover { background: rgba(127,127,127,.14); }
 /* \u76AE\u80A4\u683C\u5B50\uFF08\u73B0\u5728\u662F\u8BBE\u7F6E\u9762\u677F\u91CC\u7684\u4E00\u4E2A\u533A\u5757\uFF09 */
-.ts-skin-cell { flex: 1 1 46%; min-width: 96px; height: 40px; border: 1px solid rgba(127,127,127,.32); border-radius: 7px; background: rgba(127,127,127,.08); color: var(--ts-fg); font: inherit; font-size:calc(var(--ts-fs, 12.5px) * 0.92); cursor: pointer; }
+/* \u76AE\u80A4\u683C\u5B50\uFF08\u8BBE\u7F6E\u9762\u677F\u91CC\u7684\u4E00\u4E2A\u533A\u5757\uFF09\u3002
+   \u4E24\u5217 \u2192 \u4E00\u5217\u7684\u5207\u6362\u7531**\u5BB9\u5668\u67E5\u8BE2**\uFF08container-type:inline-size\uFF09\u9A71\u52A8\uFF1A
+   \u9762\u677F\u88AB\u538B\u7A84\uFF08\u4F4E\u5206\u8FA8\u7387 / \u4FA7\u7F6E\u6807\u9898\u680F / \u7A84\u89C6\u53E3\uFF09\u65F6\u81EA\u52A8\u6539\u6210\u4E00\u5217\uFF0C
+   \u800C\u4E0D\u662F\u4E00\u5F8B\u4E24\u5217\uFF08\u7528\u6237\u53CD\u9988\u300C\u4F4E\u5206\u8FA8\u7387\u7535\u8111\u91CC\u4E00\u884C\u663E\u793A 2 \u4E2A\u300D\uFF09\u3002
+   flex-basis \u7528\u767E\u5206\u6BD4\u800C\u4E0D\u662F\u5199\u6B7B px\uFF1A\u683C\u5B50\u80FD\u585E\u51E0\u5217\u7531**\u5BB9\u5668\u5BBD\u5EA6**\u51B3\u5B9A\u3002 */
+/* \u76AE\u80A4\u683C\u5B50\uFF08\u8BBE\u7F6E\u9762\u677F\u91CC\u7684\u4E00\u4E2A\u533A\u5757\uFF09\u3002
+   \u4E24\u5217 \u2192 \u4E00\u5217\u7684\u5207\u6362\u7531**\u5BB9\u5668\u67E5\u8BE2**\uFF08container-type:inline-size\uFF09\u9A71\u52A8\uFF1A
+   \u9762\u677F\u88AB\u538B\u7A84\uFF08\u4F4E\u5206\u8FA8\u7387 / \u4FA7\u7F6E\u6807\u9898\u680F / \u7A84\u89C6\u53E3\uFF09\u65F6\u81EA\u52A8\u6539\u6210\u4E00\u5217\uFF0C
+   \u800C\u4E0D\u662F\u4E00\u5F8B\u4E24\u5217\uFF08\u7528\u6237\u53CD\u9988\u300C\u4F4E\u5206\u8FA8\u7387\u7535\u8111\u91CC\u4E00\u884C\u663E\u793A 2 \u4E2A\u300D\uFF09\u3002 */
+.ts-skin-cell { flex: 1 1 46%; min-width: 0; height: 40px; border: 1px solid rgba(127,127,127,.32); border-radius: 7px; background: rgba(127,127,127,.08); color: var(--ts-fg); font: inherit; font-size:calc(var(--ts-fs, 12.5px) * 0.92); cursor: pointer; }
 .ts-skin-cell[data-on] { border-color: #4f8ef7; box-shadow: inset 0 0 0 1px rgba(79,142,247,.5); }
 .dv-intel { background: transparent; }
 .dv-intel .dv-dockview, .dv-intel .dv-groupview { background: transparent; border-radius: 0; }
@@ -8493,6 +8582,15 @@ function readHiddenRegions(projectId) {
   } catch {
     return [];
   }
+}
+function readInitialHiddenRegions(projectId) {
+  const stored = readHiddenRegions(projectId);
+  if (stored.length) return stored;
+  try {
+    if (window.localStorage.getItem(FIRST_ENTRY_KEY(projectId))) return [];
+  } catch {
+  }
+  return DEFAULT_HIDDEN_REGIONS;
 }
 var FONT_LEVELS = [
   { id: "s", label: "\u5C0F", size: 11.5 },
@@ -8631,7 +8729,7 @@ function DeskDock({ project, sessionId, onBack }) {
   const paintBadgesRef = (0, import_react19.useRef)(null);
   const [stopNote, setStopNote] = (0, import_react19.useState)("");
   const [reloadKey, setReloadKey] = (0, import_react19.useState)(0);
-  const [hiddenRegions, setHiddenRegions] = (0, import_react19.useState)(() => readHiddenRegions(project.id));
+  const [hiddenRegions, setHiddenRegions] = (0, import_react19.useState)(() => readInitialHiddenRegions(project.id));
   const hiddenRef = (0, import_react19.useRef)(hiddenRegions);
   hiddenRef.current = hiddenRegions;
   const syncChatSeatRef = (0, import_react19.useRef)(() => {
@@ -8936,7 +9034,7 @@ function DeskDock({ project, sessionId, onBack }) {
           element: el,
           init(params) {
             const id = String(params?.params?.win || "");
-            el.innerHTML = iconSvg(paneIcon(id));
+            el.innerHTML = iconSvg2(paneIcon(id));
             el.title = paneOptsRef.current(id) && titleFor(id);
             const host = el.closest(".dv-tab") ?? el;
             host.setAttribute("data-ts-pane", id);
@@ -9084,9 +9182,11 @@ function DeskDock({ project, sessionId, onBack }) {
       const chat = paneId(project.id, "chat");
       addTo("center", "chat");
       if (data.devUrl) addTo("center", "preview", { direction: "left", referencePanel: chat });
-      addTo("center", "board", { direction: "below", referencePanel: chat });
-      addTo("center", "talk", { direction: "right", referencePanel: chat });
-      addTo("center", "save", { direction: "below", referencePanel: paneId(project.id, "talk") });
+      const board = paneId(project.id, "board");
+      addTo("right", "board");
+      const talk = paneId(project.id, "talk");
+      addTo("right", "talk", { direction: "below", referencePanel: board });
+      addTo("right", "save", { direction: "below", referencePanel: talk });
     };
     resetToBuiltinRef.current = () => {
       REGIONS.forEach((r) => apis[r].panels.slice().forEach((p) => apis[r].removePanel(p)));
@@ -9111,6 +9211,12 @@ function DeskDock({ project, sessionId, onBack }) {
     suppressDirtyRef.current = true;
     restored = tryRestore(SAVED_KEY(project.id)) || tryRestore(SNAPSHOT_KEY(project.id));
     if (!restored) buildDefault();
+    if (!restored) {
+      try {
+        window.localStorage.setItem(FIRST_ENTRY_KEY(project.id), "1");
+      } catch {
+      }
+    }
     restoredFromSnapshotRef.current = restored;
     closedRef.current.forEach((id) => {
       const r = regionOf(id);
@@ -9265,8 +9371,11 @@ function DeskDock({ project, sessionId, onBack }) {
       const region = defaultRegionOf(id);
       const hasOwnAnchor = !!apis[region].panels.length;
       const chatAnchor = apis.center.getPanel(paneId(project.id, "chat"));
-      const isPreview = parsePaneId(id)?.kind === "preview";
-      const position = isPreview && region === "center" && chatAnchor ? { direction: "left", referencePanel: String(chatAnchor.id) } : hasOwnAnchor ? { direction: "within", referencePanel: String(apis[region].panels[0].id) } : void 0;
+      const kind = parsePaneId(id)?.kind ?? "";
+      const isPreview = kind === "preview";
+      const sibling = KIND_REGION[kind] === "right" && !kind.startsWith("exp:") ? RIGHT_STACK_ORDER[kind] : void 0;
+      const siblingAnchor = sibling && apis.right.getPanel(paneId(project.id, sibling));
+      const position = isPreview && region === "center" && chatAnchor ? { direction: "left", referencePanel: String(chatAnchor.id) } : siblingAnchor ? { direction: "below", referencePanel: String(siblingAnchor.id) } : hasOwnAnchor ? { direction: "within", referencePanel: String(apis[region].panels[0].id) } : void 0;
       try {
         apis[region].addPanel(paneOptsRef.current(id, position));
       } catch (e) {
@@ -9590,7 +9699,7 @@ function DeskDock({ project, sessionId, onBack }) {
     }
     if (!done) {
       resetToBuiltinRef.current?.();
-      applyRegions([]);
+      applyRegions(DEFAULT_HIDDEN_REGIONS);
       applySideW({ left: 220, right: 260 });
       setLayoutDirty(false);
       window.setTimeout(() => {
@@ -9782,7 +9891,9 @@ function DeskDock({ project, sessionId, onBack }) {
         }
         return next;
       });
-      const position = apis[region].panels.length ? { direction: "within", referencePanel: String(apis[region].panels[0].id) } : void 0;
+      const sibling = KIND_REGION[kind] === "right" && !kind.startsWith("exp:") ? RIGHT_STACK_ORDER[kind] : void 0;
+      const siblingAnchor = sibling && apis.right.getPanel(paneId(project.id, sibling));
+      const position = siblingAnchor ? { direction: "below", referencePanel: String(siblingAnchor.id) } : apis[region].panels.length ? { direction: "within", referencePanel: String(apis[region].panels[0].id) } : void 0;
       try {
         apis[region].addPanel(paneOptsRef.current(id, position));
       } catch {
@@ -9818,7 +9929,7 @@ function DeskDock({ project, sessionId, onBack }) {
                   title: "\u505C\u6B62\u6240\u6709\u8FD8\u5728\u8FD0\u884C\u7684\u63A2\u7D22\u8005\uFF08\u4E3B\u5BF9\u8BDD\u5DF2\u7ED3\u675F\u65F6\u7279\u522B\u6709\u7528\uFF09",
                   onClick: () => void stopAllExplorers(),
                   children: [
-                    /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("span", { dangerouslySetInnerHTML: { __html: iconSvg("stop", 13) } }),
+                    /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("span", { dangerouslySetInnerHTML: { __html: iconSvg2("stop", 13) } }),
                     "\u5168\u90E8\u505C\u6B62"
                   ]
                 }
@@ -9921,8 +10032,8 @@ function DeskDock({ project, sessionId, onBack }) {
                 onMouseEnter: () => hoverProj(true),
                 onMouseLeave: () => hoverProj(false),
                 children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("span", { "aria-hidden": "true", dangerouslySetInnerHTML: { __html: iconSvg("zone", 19) } }),
-                  /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("span", { className: "ts-title-caret", "aria-hidden": "true", dangerouslySetInnerHTML: { __html: iconSvg("chevron", 13) } })
+                  /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("span", { "aria-hidden": "true", dangerouslySetInnerHTML: { __html: iconSvg2("zone", 19) } }),
+                  /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("span", { className: "ts-title-caret", "aria-hidden": "true", dangerouslySetInnerHTML: { __html: iconSvg2("chevron", 13) } })
                 ]
               }
             ),
@@ -9990,7 +10101,7 @@ function DeskDock({ project, sessionId, onBack }) {
                   }
                   setSettingsOpen(next);
                 },
-                dangerouslySetInnerHTML: { __html: iconSvg("gear", 16) }
+                dangerouslySetInnerHTML: { __html: iconSvg2("gear", 16) }
               }
             )
           ] })
@@ -10077,7 +10188,7 @@ function DeskDock({ project, sessionId, onBack }) {
                 onClick: () => saveLayout(),
                 title: layoutDirty ? "\u5E03\u5C40\u5DF2\u6539\u52A8\u4F46\u8FD8\u6CA1\u4FDD\u5B58 \u2014\u2014 \u70B9\u4E00\u4E0B\u5B58\u4E3A\u9ED8\u8BA4\uFF1B\u53F3\u952E/\u957F\u6309\u53EF\u6062\u590D\u9ED8\u8BA4" : "\u628A\u5F53\u524D\u5E03\u5C40\u5B58\u4E3A\u9ED8\u8BA4",
                 children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("span", { dangerouslySetInnerHTML: { __html: iconSvg("save", 13) } }),
+                  /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("span", { dangerouslySetInnerHTML: { __html: iconSvg2("save", 13) } }),
                   layoutDirty ? "\u4FDD\u5B58\u5E03\u5C40 \u25CF" : "\u5E03\u5C40"
                 ]
               }
@@ -10090,7 +10201,7 @@ function DeskDock({ project, sessionId, onBack }) {
                 onClick: restoreDefaultLayout,
                 title: "\u653E\u5F03\u6539\u52A8\uFF0C\u6062\u590D\u9ED8\u8BA4\u5E03\u5C40",
                 children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("span", { dangerouslySetInnerHTML: { __html: iconSvg("reset", 13) } }),
+                  /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("span", { dangerouslySetInnerHTML: { __html: iconSvg2("reset", 13) } }),
                   "\u6062\u590D"
                 ]
               }
@@ -10112,7 +10223,7 @@ function DeskDock({ project, sessionId, onBack }) {
                 allPaneIds.map((id) => {
                   const cur = regionOf(id);
                   return /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("div", { className: "ts-pop-item", "data-desk-pop-row": id, children: [
-                    /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("span", { dangerouslySetInnerHTML: { __html: iconSvg(paneIcon(id), 14) } }),
+                    /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("span", { dangerouslySetInnerHTML: { __html: iconSvg2(paneIcon(id), 14) } }),
                     /* @__PURE__ */ (0, import_jsx_runtime15.jsx)(
                       "button",
                       {
@@ -10135,7 +10246,7 @@ function DeskDock({ project, sessionId, onBack }) {
                           if (cur === r) closePanel(id);
                           else moveWindowTo(id, r);
                         },
-                        dangerouslySetInnerHTML: { __html: iconSvg(REGION_ICON[r], 14) }
+                        dangerouslySetInnerHTML: { __html: iconSvg2(REGION_ICON[r], 14) }
                       },
                       r
                     )) })
@@ -10423,24 +10534,8 @@ var import_react22 = require("react");
 // client/src/panel/AddProjectDialog.tsx
 var import_react21 = __toESM(require("react"), 1);
 var import_jsx_runtime17 = require("react/jsx-runtime");
-var ICON_BODIES = {
-  // 文件夹：本地已有目录
-  folder: '<path d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2.5h7a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/>',
-  // 分支/仓：GitHub 克隆（用 git 的“分支”语义，比商标图形中性且同风格）
-  branch: '<circle cx="7" cy="6" r="2.2"/><circle cx="7" cy="18" r="2.2"/><circle cx="17" cy="10" r="2.2"/><path d="M7 8.2v7.6"/><path d="M17 12.2c0 2.2-2 3.1-4 3.4-1.6.2-3 .3-4 .3"/>',
-  // 放大镜：清单搜索
-  search: '<circle cx="11" cy="11" r="6"/><path d="M15.5 15.5 20 20"/>',
-  // 锁：私有仓
-  lock: '<rect x="5" y="10.5" width="14" height="9" rx="2.2"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/>',
-  // 叉：清空搜索
-  close: '<path d="M7 7l10 10"/><path d="M17 7 7 17"/>'
-};
-function iconSvg2(name, size = 14) {
-  const body = ICON_BODIES[name] || ICON_BODIES.folder;
-  return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${body}</svg>`;
-}
 function Icon({ name, size = 14 }) {
-  return /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("span", { className: "ts-ico", dangerouslySetInnerHTML: { __html: iconSvg2(name, size) } });
+  return /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("span", { className: "ts-ico", dangerouslySetInnerHTML: { __html: iconSvg(name, size) } });
 }
 function baseName(p) {
   const parts = String(p || "").split("/").filter(Boolean);
@@ -10686,7 +10781,7 @@ function AddProjectDialog({ onClose, onCreated }) {
       ] }),
       /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("button", { className: "ts-icon-btn", onClick: onClose, title: "\u5173\u95ED", children: "\u2715" })
     ] }),
-    /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "ts-modal-body", children: [
+    /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "ts-modal-body ts-addproj-body", children: [
       /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "ts-srcpick", children: [
         /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)(
           "button",
@@ -10715,12 +10810,12 @@ function AddProjectDialog({ onClose, onCreated }) {
           }
         )
       ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { children: [
+      /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("div", { className: "ts-addproj-col ts-addproj-col-left", children: /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "ts-addproj-picker", children: [
         /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("label", { className: "ts-field-label", children: source === "clone" ? "\u514B\u9686\u5230\u54EA\u4E2A\u76EE\u5F55\uFF08\u6D4F\u89C8\u9009\u62E9\u7236\u76EE\u5F55\uFF09" : "\u9009\u62E9\u9879\u76EE\u6587\u4EF6\u5939" }),
         /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "ts-fs", children: [
           /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "ts-fs-crumb", children: [
             /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "ts-fs-crumbs", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("span", { className: "ts-fs-rooticon", onClick: () => load2(roots[0]), title: "\u6839\u76EE\u5F55", children: "\u{1F5A5}" }),
+              /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("span", { className: "ts-fs-rooticon", onClick: () => load2(roots[0]), title: "\u6839\u76EE\u5F55", children: /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(Icon, { name: "folder", size: 13 }) }),
               crumbs.map((c, i) => /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)(import_react21.default.Fragment, { children: [
                 /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("span", { onClick: () => gotoCrumb(i), children: c }),
                 i < crumbs.length - 1 && /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("span", { className: "ts-fs-sep", children: "/" })
@@ -10760,8 +10855,9 @@ function AddProjectDialog({ onClose, onCreated }) {
             ] }),
             !loading && !fsError && entries.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("div", { className: "ts-hint", children: "\u8BE5\u76EE\u5F55\u4E0B\u6CA1\u6709\u5B50\u6587\u4EF6\u5939" }),
             entries.map((entry) => /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("button", { className: "ts-fs-item", onClick: () => enterDir(entry), children: [
-              /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("span", { children: [
-                "\u{1F4C1} ",
+              /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("span", { className: "ts-fs-item-name", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(Icon, { name: "folder", size: 13 }),
+                " ",
                 entry.name
               ] }),
               entry.isProject && /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("span", { className: "ts-tag", children: "\u68C0\u6D4B\u5230\u9879\u76EE" })
@@ -10815,7 +10911,7 @@ function AddProjectDialog({ onClose, onCreated }) {
               cwd || "/"
             ] })
           ] }),
-          selectedPath && (!renameOpen ? /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(
+          selectedPath && (!renameOpen ? /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)(
             "button",
             {
               className: "ts-btn ts-btn-sm",
@@ -10826,7 +10922,10 @@ function AddProjectDialog({ onClose, onCreated }) {
               },
               disabled: folderBusy,
               title: "\u91CD\u547D\u540D\u5DF2\u9009\u4E2D\u7684\u6587\u4EF6\u5939\uFF08\u540C\u76EE\u5F55\u5185\u6539\u540D\uFF09",
-              children: "\u270F\uFE0F \u91CD\u547D\u540D"
+              children: [
+                /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(Icon, { name: "pencil", size: 12 }),
+                " \u91CD\u547D\u540D"
+              ]
             }
           ) : /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)(import_jsx_runtime17.Fragment, { children: [
             /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(
@@ -10866,167 +10965,169 @@ function AddProjectDialog({ onClose, onCreated }) {
             actionError
           ] })
         ] }),
-        source === "local" && /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { style: { marginTop: 8, display: "flex", gap: 8, alignItems: "center" }, children: [
+        source === "local" && /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "ts-addproj-picked", children: [
           /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(
             "button",
             {
-              className: `ts-btn ${selectedPath === cwd ? "ts-btn-picked" : "ts-btn-primary"}`,
+              className: `ts-btn ${selectedPath === cwd ? "ts-btn-picked" : "ts-btn-primary"} ts-addproj-pickbtn`,
               onClick: pickCurrent,
               disabled: !cwd,
               title: selectedPath === cwd ? "\u518D\u6B21\u70B9\u51FB\u53D6\u6D88\u9009\u62E9" : "\u9009\u4E2D\u5F53\u524D\u6587\u4EF6\u5939\u4F5C\u4E3A\u9879\u76EE\u8DEF\u5F84",
-              children: selectedPath === cwd ? "\u2713 \u5DF2\u9009\u4E2D\uFF08\u70B9\u51FB\u53D6\u6D88\uFF09" : "\u9009\u62E9\u5F53\u524D\u6587\u4EF6\u5939"
+              children: selectedPath === cwd ? "\u5DF2\u9009\u4E2D\uFF08\u70B9\u51FB\u53D6\u6D88\uFF09" : "\u9009\u62E9\u5F53\u524D\u6587\u4EF6\u5939"
             }
           ),
-          /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("span", { className: "ts-sub", style: { wordBreak: "break-all" }, children: selectedPath ? `\u5DF2\u9009\uFF1A${selectedPath}` : "\u6D4F\u89C8\u5230\u76EE\u6807\u6587\u4EF6\u5939\u540E\u70B9\u51FB\u300C\u9009\u62E9\u5F53\u524D\u6587\u4EF6\u5939\u300D\uFF0C\u6216\u76F4\u63A5\u300C\uFF0B \u65B0\u5EFA\u6587\u4EF6\u5939\u300D" })
+          /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("span", { className: "ts-sub ts-addproj-picked-path", children: selectedPath ? `\u5DF2\u9009\uFF1A${selectedPath}` : "\u6D4F\u89C8\u5230\u76EE\u6807\u6587\u4EF6\u5939\u540E\u70B9\u300C\u9009\u62E9\u5F53\u524D\u6587\u4EF6\u5939\u300D\uFF0C\u6216\u76F4\u63A5\u300C\uFF0B \u65B0\u5EFA\u6587\u4EF6\u5939\u300D" })
         ] })
-      ] }),
-      source === "clone" && /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "ts-clone", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "ts-clone-head", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("label", { className: "ts-field-label", children: "\u4ED3\u5E93\u5730\u5740" }),
-          /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)(
-            "button",
-            {
-              className: "ts-btn ts-btn-sm",
-              onClick: () => void openRepoPicker(),
-              disabled: clonePending,
-              title: "\u4ECE\u4F60 GitHub \u8D26\u53F7\u4E0B\u5DF2\u6709\u7684\u4ED3\u5E93\u4E2D\u9009\u4E00\u4E2A",
-              children: [
-                /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(Icon, { name: "branch" }),
-                " ",
-                repoPickerOpen ? "\u6536\u8D77\u4ED3\u5E93\u6E05\u5355" : "\u9009\u62E9\u6211\u7684\u4ED3\u5E93"
-              ]
-            }
-          )
-        ] }),
-        repoPickerOpen && /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "ts-repolist", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "ts-repo-search", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(Icon, { name: "search" }),
-            /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(
-              "input",
-              {
-                className: "ts-repo-search-input",
-                value: repoQuery,
-                autoFocus: true,
-                placeholder: "\u7B5B\u9009\u4ED3\u5E93\uFF08\u540D\u79F0 / \u63CF\u8FF0 / \u8BED\u8A00\uFF09",
-                onChange: (e) => setRepoQuery(e.target.value)
-              }
-            ),
-            repoQuery && /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("button", { className: "ts-repo-clear", onClick: () => setRepoQuery(""), title: "\u6E05\u7A7A", children: /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(Icon, { name: "close", size: 12 }) })
-          ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "ts-repo-items", children: [
-            repoListLoading && /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("div", { className: "ts-hint", children: "\u6B63\u5728\u8BFB\u53D6\u4F60\u7684\u4ED3\u5E93\u2026" }),
-            !repoListLoading && repoListError && /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "ts-hint", children: [
-              "\u26A0\uFE0F ",
-              repoListError
-            ] }),
-            !repoListLoading && !repoListError && repoList.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("div", { className: "ts-hint", children: "\u6CA1\u6709\u8BFB\u5230\u4ED3\u5E93" }),
-            !repoListLoading && repoList.length > 0 && filteredRepos.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "ts-hint", children: [
-              "\u6CA1\u6709\u5339\u914D\u300C",
-              repoQuery,
-              "\u300D\u7684\u4ED3\u5E93"
-            ] }),
-            filteredRepos.map((r) => /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)(
+      ] }) }),
+      /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "ts-addproj-col ts-addproj-col-right", children: [
+        source === "clone" && /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "ts-clone", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "ts-clone-head", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("label", { className: "ts-field-label", children: "\u4ED3\u5E93\u5730\u5740" }),
+            /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)(
               "button",
               {
-                className: "ts-repo-item",
-                onClick: () => pickRepo(r),
-                title: r.url,
+                className: "ts-btn ts-btn-sm",
+                onClick: () => void openRepoPicker(),
+                disabled: clonePending,
+                title: "\u4ECE\u4F60 GitHub \u8D26\u53F7\u4E0B\u5DF2\u6709\u7684\u4ED3\u5E93\u4E2D\u9009\u4E00\u4E2A",
                 children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("span", { className: "ts-repo-name", children: r.fullName }),
-                  r.isPrivate && /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("span", { className: "ts-repo-badge", title: "\u79C1\u6709\u4ED3\u5E93", children: /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(Icon, { name: "lock", size: 11 }) }),
-                  r.language && /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("span", { className: "ts-repo-lang", children: r.language }),
-                  r.description && /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("span", { className: "ts-repo-desc", children: r.description })
+                  /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(Icon, { name: "branch" }),
+                  " ",
+                  repoPickerOpen ? "\u6536\u8D77\u4ED3\u5E93\u6E05\u5355" : "\u9009\u62E9\u6211\u7684\u4ED3\u5E93"
                 ]
-              },
-              r.fullName
-            ))
-          ] })
-        ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(
-          "input",
-          {
-            className: "ts-input",
-            value: repoUrl,
-            placeholder: "https://github.com/user/repo.git \u6216 git@github.com:user/repo.git",
-            disabled: clonePending,
-            onChange: (e) => setRepoUrl(e.target.value),
-            onKeyDown: (e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                void doClone();
               }
-            }
-          }
-        ),
-        /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "ts-clone-row", children: [
+            )
+          ] }),
+          repoPickerOpen && /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "ts-repolist", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "ts-repo-search", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(Icon, { name: "search" }),
+              /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(
+                "input",
+                {
+                  className: "ts-repo-search-input",
+                  value: repoQuery,
+                  autoFocus: true,
+                  placeholder: "\u7B5B\u9009\u4ED3\u5E93\uFF08\u540D\u79F0 / \u63CF\u8FF0 / \u8BED\u8A00\uFF09",
+                  onChange: (e) => setRepoQuery(e.target.value)
+                }
+              ),
+              repoQuery && /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("button", { className: "ts-repo-clear", onClick: () => setRepoQuery(""), title: "\u6E05\u7A7A", children: /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(Icon, { name: "close", size: 12 }) })
+            ] }),
+            /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "ts-repo-items", children: [
+              repoListLoading && /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("div", { className: "ts-hint", children: "\u6B63\u5728\u8BFB\u53D6\u4F60\u7684\u4ED3\u5E93\u2026" }),
+              !repoListLoading && repoListError && /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "ts-hint", children: [
+                "\u26A0\uFE0F ",
+                repoListError
+              ] }),
+              !repoListLoading && !repoListError && repoList.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("div", { className: "ts-hint", children: "\u6CA1\u6709\u8BFB\u5230\u4ED3\u5E93" }),
+              !repoListLoading && repoList.length > 0 && filteredRepos.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "ts-hint", children: [
+                "\u6CA1\u6709\u5339\u914D\u300C",
+                repoQuery,
+                "\u300D\u7684\u4ED3\u5E93"
+              ] }),
+              filteredRepos.map((r) => /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)(
+                "button",
+                {
+                  className: "ts-repo-item",
+                  onClick: () => pickRepo(r),
+                  title: r.url,
+                  children: [
+                    /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("span", { className: "ts-repo-name", children: r.fullName }),
+                    r.isPrivate && /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("span", { className: "ts-repo-badge", title: "\u79C1\u6709\u4ED3\u5E93", children: /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(Icon, { name: "lock", size: 11 }) }),
+                    r.language && /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("span", { className: "ts-repo-lang", children: r.language }),
+                    r.description && /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("span", { className: "ts-repo-desc", children: r.description })
+                  ]
+                },
+                r.fullName
+              ))
+            ] })
+          ] }),
           /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(
             "input",
             {
-              className: "ts-input ts-newfolder-input",
-              value: cloneName,
+              className: "ts-input",
+              value: repoUrl,
+              placeholder: "https://github.com/user/repo.git \u6216 git@github.com:user/repo.git",
               disabled: clonePending,
-              placeholder: `\u76EE\u6807\u6587\u4EF6\u5939\u540D\uFF08\u9ED8\u8BA4 ${repoNameFrom(repoUrl) || "\u4ED3\u5E93\u540D"}\uFF09`,
-              onChange: (e) => setCloneName(e.target.value)
+              onChange: (e) => setRepoUrl(e.target.value),
+              onKeyDown: (e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  void doClone();
+                }
+              }
             }
           ),
+          /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "ts-clone-row", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(
+              "input",
+              {
+                className: "ts-input ts-newfolder-input",
+                value: cloneName,
+                disabled: clonePending,
+                placeholder: `\u76EE\u6807\u6587\u4EF6\u5939\u540D\uFF08\u9ED8\u8BA4 ${repoNameFrom(repoUrl) || "\u4ED3\u5E93\u540D"}\uFF09`,
+                onChange: (e) => setCloneName(e.target.value)
+              }
+            ),
+            /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(
+              "button",
+              {
+                className: "ts-btn ts-btn-primary ts-btn-sm",
+                disabled: !repoUrl.trim() || !cloneParent || cloneStarting || clonePending,
+                onClick: () => void doClone(),
+                children: cloneStarting ? "\u542F\u52A8\u4E2D\u2026" : "\u5F00\u59CB\u514B\u9686"
+              }
+            )
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("span", { className: "ts-newfolder-hint", children: [
+            cloneParent ? `\u5C06\u514B\u9686\u5230\uFF1A${cloneParent}` : "\u8BF7\u5148\u5728\u4E0A\u9762\u6D4F\u89C8\u9009\u62E9\u4E00\u4E2A\u76EE\u5F55",
+            "\uFF08\u79C1\u6709\u4ED3\u5E93\u81EA\u52A8\u7528\u672C\u673A gh \u767B\u5F55\u6001\uFF09"
+          ] }),
+          cloneStatus && /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "ts-clone-progress", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("div", { className: "ts-clone-bar", children: /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(
+              "div",
+              {
+                className: `ts-clone-fill${cloneStatus.state === "error" ? " ts-clone-fill-err" : ""}`,
+                style: { width: `${Math.max(2, Math.min(100, cloneStatus.percent))}%` }
+              }
+            ) }),
+            /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "ts-clone-meta", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("span", { children: [
+                cloneStatus.state === "running" && `${cloneStatus.phase || "\u8FDB\u884C\u4E2D"} ${cloneStatus.percent}%`,
+                cloneStatus.state === "done" && `\u2713 \u514B\u9686\u5B8C\u6210\uFF1A${cloneStatus.path}`,
+                cloneStatus.state === "error" && `\u2716 ${cloneStatus.message || "\u514B\u9686\u5931\u8D25"}`,
+                cloneStatus.state === "cancelled" && "\u5DF2\u53D6\u6D88"
+              ] }),
+              cloneStatus.state === "done" && /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("button", { className: "ts-btn ts-btn-sm", onClick: finishClone, children: "\u52A0\u5165\u9879\u76EE" })
+            ] }),
+            cloneLog.length > 0 && cloneStatus.state === "running" && /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("div", { className: "ts-clone-log", children: cloneLog.slice(-3).join("\n") })
+          ] })
+        ] }),
+        /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { children: [
+          /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("label", { className: "ts-field-label", children: "\u9879\u76EE\u540D\u79F0\uFF08\u53EF\u9009\uFF0C\u9ED8\u8BA4\u53D6\u6587\u4EF6\u5939\u540D\uFF09" }),
           /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(
-            "button",
+            "input",
             {
-              className: "ts-btn ts-btn-primary ts-btn-sm",
-              disabled: !repoUrl.trim() || !cloneParent || cloneStarting || clonePending,
-              onClick: () => void doClone(),
-              children: cloneStarting ? "\u542F\u52A8\u4E2D\u2026" : "\u5F00\u59CB\u514B\u9686"
+              className: "ts-input",
+              value: name,
+              placeholder: "\u4F8B\u5982\uFF1A\u6211\u7684\u7F51\u7AD9",
+              onChange: (e) => setName(e.target.value)
             }
           )
         ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("span", { className: "ts-newfolder-hint", children: [
-          cloneParent ? `\u5C06\u514B\u9686\u5230\uFF1A${cloneParent}` : "\u8BF7\u5148\u5728\u4E0A\u9762\u6D4F\u89C8\u9009\u62E9\u4E00\u4E2A\u76EE\u5F55",
-          "\uFF08\u79C1\u6709\u4ED3\u5E93\u81EA\u52A8\u7528\u672C\u673A gh \u767B\u5F55\u6001\uFF09"
-        ] }),
-        cloneStatus && /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "ts-clone-progress", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("div", { className: "ts-clone-bar", children: /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(
-            "div",
+        /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { children: [
+          /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("label", { className: "ts-field-label", children: "\u9879\u76EE\u4ECB\u7ECD\uFF08\u53EF\u9009\uFF0C\u5C55\u793A\u5728\u9879\u76EE\u5361\u7247\u4E0E\u5217\u8868\u91CC\uFF09" }),
+          /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(
+            "textarea",
             {
-              className: `ts-clone-fill${cloneStatus.state === "error" ? " ts-clone-fill-err" : ""}`,
-              style: { width: `${Math.max(2, Math.min(100, cloneStatus.percent))}%` }
+              className: "ts-input ts-textarea",
+              value: description,
+              placeholder: "\u4F8B\u5982\uFF1A\u4E2A\u4EBA\u535A\u5BA2\uFF0CNext.js + MDX\uFF0C\u90E8\u7F72\u5728 Vercel",
+              rows: 3,
+              onChange: (e) => setDescription(e.target.value)
             }
-          ) }),
-          /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "ts-clone-meta", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("span", { children: [
-              cloneStatus.state === "running" && `${cloneStatus.phase || "\u8FDB\u884C\u4E2D"} ${cloneStatus.percent}%`,
-              cloneStatus.state === "done" && `\u2713 \u514B\u9686\u5B8C\u6210\uFF1A${cloneStatus.path}`,
-              cloneStatus.state === "error" && `\u2716 ${cloneStatus.message || "\u514B\u9686\u5931\u8D25"}`,
-              cloneStatus.state === "cancelled" && "\u5DF2\u53D6\u6D88"
-            ] }),
-            cloneStatus.state === "done" && /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("button", { className: "ts-btn ts-btn-sm", onClick: finishClone, children: "\u52A0\u5165\u9879\u76EE" })
-          ] }),
-          cloneLog.length > 0 && cloneStatus.state === "running" && /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("div", { className: "ts-clone-log", children: cloneLog.slice(-3).join("\n") })
+          )
         ] })
-      ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { children: [
-        /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("label", { className: "ts-field-label", children: "\u9879\u76EE\u540D\u79F0\uFF08\u53EF\u9009\uFF0C\u9ED8\u8BA4\u53D6\u6587\u4EF6\u5939\u540D\uFF09" }),
-        /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(
-          "input",
-          {
-            className: "ts-input",
-            value: name,
-            placeholder: "\u4F8B\u5982\uFF1A\u6211\u7684\u7F51\u7AD9",
-            onChange: (e) => setName(e.target.value)
-          }
-        )
-      ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { children: [
-        /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("label", { className: "ts-field-label", children: "\u9879\u76EE\u4ECB\u7ECD\uFF08\u53EF\u9009\uFF0C\u5C55\u793A\u5728\u9879\u76EE\u5361\u7247\u4E0E\u5217\u8868\u91CC\uFF09" }),
-        /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(
-          "textarea",
-          {
-            className: "ts-input ts-textarea",
-            value: description,
-            placeholder: "\u4F8B\u5982\uFF1A\u4E2A\u4EBA\u535A\u5BA2\uFF0CNext.js + MDX\uFF0C\u90E8\u7F72\u5728 Vercel",
-            rows: 3,
-            onChange: (e) => setDescription(e.target.value)
-          }
-        )
       ] })
     ] }),
     /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "ts-modal-foot", children: [
@@ -13580,6 +13681,9 @@ function HoverPanel({ pos, panelRef, items, onPick, onHover, onMarkRead, onMarkA
   );
 }
 function ControlRoomEntry({ wide }) {
+  (0, import_react24.useEffect)(() => {
+    injectProjectCenterStyles();
+  }, []);
   const [screen, setScreen] = (0, import_react24.useState)(() => getLiveScreen());
   (0, import_react24.useEffect)(() => {
     const sync2 = () => setScreen(getLiveScreen());
@@ -13898,7 +14002,14 @@ function ControlRoomEntry({ wide }) {
           window.setTimeout(() => setScreen(getLiveScreen()), NAV_LOCK_MS);
         },
         children: [
-          (!alive || wide) && /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-side-icon", "aria-hidden": "true", children: toDesk ? "\u{1F9ED}" : "\u{1F5C2}\uFE0F" }),
+          (!alive || wide) && /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
+            "span",
+            {
+              className: "ts-side-icon",
+              "aria-hidden": "true",
+              dangerouslySetInnerHTML: { __html: iconSvg(toDesk ? "compass" : "folder", 15) }
+            }
+          ),
           wide && /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-side-label", children: toDesk ? "\u56DE\u5230\u5DE5\u4F5C\u53F0" : "\u9879\u76EE\u4E2D\u5FC3" }),
           alive && /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)(
             "span",
