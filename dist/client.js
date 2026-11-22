@@ -3320,19 +3320,20 @@ body.ts-vsplit-dragging .ts-card { transition:none !important; animation:none !i
    \u56E0\u6B64\u56DE\u590D\u5757\u6539\u4E3A\u62C9\u4F38\u6EE1\u5BBD\uFF0C\u4E0D\u518D\u7559\u53F3\u4FA7\u90A3\u4E00\u5C0F\u5757\u7A7A\u767D\uFF09 */
 .ts-msg-assistant { align-self:stretch; background:rgba(127,127,127,.14); border-radius:8px 8px 8px 2px; padding:5px 9px; max-width:none; white-space:pre-wrap; word-break:break-word; }
 /* \u2014\u2014 \u4F1A\u8BDD\u56FE\u7247\uFF08\u7528\u6237\u9644\u4EF6 / \u5DE5\u5177\u7ED3\u679C / \u6A21\u578B\u56DE\u590D\uFF09\u2014\u2014
-   \u5355\u56FE\u6309\u957F\u8FB9 240px \u5C55\u793A\uFF0C\u591A\u56FE\u6536\u6210 64px \u65B9\u5757\uFF1B\u706F\u7BB1 portal \u5230 body\u3002
-   64px \u4E0E\u5BBF\u4E3B\u300C\u5BF9\u8BDD\u300D\u7684\u6D88\u606F\u9644\u4EF6\u540C\u5C3A\u5BF8\uFF0C\u5207\u4E24\u4E2A tab \u4E0D\u4F1A\u7A81\u7136\u53D8\u5927\u53D8\u5C0F\u3002 */
-.ts-msg-images { display:flex; flex-wrap:wrap; gap:6px; max-width:100%; min-width:0; }
+   \u5355\u56FE\uFF1A\u663E\u793A\u6846\u7531\u56FE\u7247\u81EA\u8EAB\u5C3A\u5BF8\u51B3\u5B9A\uFF08\u957F\u8FB9 240 / \u6BD4\u4F8B\u94B3\u5728 [0.25,4] / \u4E0D\u653E\u5927\uFF09\uFF0C
+   \u5916\u6846\u5C31\u662F\u663E\u793A\u6846\uFF0C\u4E0D\u989D\u5916\u6491\u6EE1\u5BB9\u5668\uFF1B\u591A\u56FE\uFF1A64px \u65B9\u5757\u3002 */
+.ts-msg-images { display:flex; flex-wrap:wrap; align-items:flex-start; gap:10px; max-width:100%; min-width:0; }
 .ts-msg-images.is-end { justify-content:flex-end; }
-.ts-msg-image { display:inline-flex; align-items:center; justify-content:center; box-sizing:border-box; padding:0; border:1px solid rgba(127,127,127,.35); border-radius:8px; background:rgba(127,127,127,.1); color:inherit; overflow:hidden; cursor:zoom-in; max-width:100%; font:inherit; }
-.ts-msg-image img { display:block; max-width:min(240px,100%); max-height:240px; width:auto; height:auto; object-fit:contain; }
+.ts-msg-image { position:relative; display:block; box-sizing:border-box; padding:0; min-width:44px; min-height:44px; border:1px solid rgba(127,127,127,.35); border-radius:8px; background:rgba(127,127,127,.1); color:inherit; overflow:hidden; cursor:zoom-in; max-width:100%; font:inherit; }
+.ts-msg-image.is-single { flex:0 1 auto; height:auto; }
 .ts-msg-image.is-tile { flex:none; width:64px; height:64px; }
-.ts-msg-image.is-tile img { width:100%; height:100%; max-width:none; max-height:none; object-fit:cover; }
-.ts-msg-image.is-loading { flex:none; width:64px; height:64px; cursor:default; animation:ts-pulse-breathe 1.2s ease-in-out infinite; }
-.ts-msg-image.is-failed { flex:none; width:64px; height:64px; cursor:pointer; font-size:calc(var(--ts-fs, 12.5px) * 1.2); opacity:.7; }
-.ts-msg-image.is-failed:hover { opacity:1; }
+.ts-msg-image img { position:absolute; inset:0; display:block; width:100%; height:100%; object-fit:cover; }
+.ts-msg-image-wait { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-size:calc(var(--ts-fs, 12.5px) * 0.8); opacity:.55; pointer-events:none; background:rgba(127,127,127,.08); }
+.ts-msg-image-retry { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-size:calc(var(--ts-fs, 12.5px) * 0.8); color:#fca5a5; }
+.ts-msg-image.is-failed { cursor:pointer; border-color:rgba(248,113,113,.5); background:rgba(248,113,113,.08); }
+.ts-msg-image.is-failed:hover { border-color:rgba(248,113,113,.8); }
 /* \u300C\u8FC7\u7A0B\u300D\u91CC\u7684\u56FE\u7247\uFF1A\u4E0E\u8FC7\u7A0B\u5934\u5DE6\u7F18\u5BF9\u9F50\uFF0C\u6298\u53E0\u65F6\u4E5F\u5E38\u663E */
-.ts-proc-images { display:flex; flex-direction:column; gap:6px; margin-top:6px; padding-left:10px; }
+.ts-proc-images { display:flex; flex-direction:column; gap:8px; margin-top:8px; padding-left:10px; }
 /* \u706F\u7BB1\uFF1AEsc / \u906E\u7F69 / \u5173\u95ED\u6309\u94AE\u90FD\u80FD\u5173\uFF1B\u5173\u95ED\u6309\u94AE 44\xD744 \u547D\u4E2D\u533A */
 .ts-img-lightbox { position:fixed; inset:0; z-index:1100; display:flex; align-items:center; justify-content:center; padding:24px; background:rgba(0,0,0,.84); cursor:zoom-out; }
 .ts-img-lightbox img { display:block; max-width:min(92vw,1600px); max-height:86vh; width:auto; height:auto; object-fit:contain; border-radius:10px; box-shadow:0 24px 70px rgba(0,0,0,.6); cursor:default; }
@@ -3342,7 +3343,7 @@ body.ts-vsplit-dragging .ts-card { transition:none !important; animation:none !i
 .ts-msg-tool, .ts-msg-system { align-self:stretch; opacity:.62; font-size:calc(var(--ts-fs, 12.5px) * 0.88); border-left:2px solid rgba(127,127,127,.5); padding:2px 8px; }
 /* \u2014\u2014 \u6BCF\u6761\u6D88\u606F\u7684\u53D1\u51FA\u65F6\u95F4\uFF08\u7528\u6237\u6C14\u6CE1 / \u52A9\u624B\u56DE\u7B54 / \u8FC7\u7A0B\u9879 / \u6CE8\u5165\u9879\uFF09\u2014\u2014
    \u5757\u5BB9\u5668\uFF1A\u6C14\u6CE1\u4E0E\u65F6\u95F4\u7684 column flex\uFF1Buser \u5757\u6574\u4F53\u53F3\u5BF9\u9F50\u3001assistant \u5757\u62C9\u4F38\u6EE1\u5BBD\u3002 */
-.ts-msg-block { display:flex; flex-direction:column; gap:3px; min-width:0; }
+.ts-msg-block { display:flex; flex-direction:column; gap:3px; min-width:0; max-width:100%; }
 .ts-msg-block-user { align-self:flex-end; align-items:flex-end; }
 .ts-msg-block-assistant { align-self:stretch; }
 .ts-msg-time { font-size:calc(var(--ts-fs, 12.5px) * 0.84); font-variant-numeric:tabular-nums; white-space:nowrap; color:inherit; line-height:1.4; }
@@ -3671,11 +3672,13 @@ body.ts-vsplit-dragging .ts-card { transition:none !important; animation:none !i
 `;
 function injectProjectCenterStyles() {
   if (typeof document === "undefined") return;
-  if (document.getElementById(STYLE_ID)) return;
-  const el = document.createElement("style");
-  el.id = STYLE_ID;
-  el.textContent = CSS;
-  document.head.appendChild(el);
+  let el = document.getElementById(STYLE_ID);
+  if (!el) {
+    el = document.createElement("style");
+    el.id = STYLE_ID;
+    document.head.appendChild(el);
+  }
+  if (el.textContent !== CSS) el.textContent = CSS;
 }
 
 // client/src/panel/DeskDock.tsx
@@ -5001,12 +5004,26 @@ function ChangesCard({
 var import_react7 = require("react");
 var import_react_dom2 = require("react-dom");
 var import_jsx_runtime6 = require("react/jsx-runtime");
+function singleFit(image) {
+  const natural = image.width / image.height;
+  const ratio = Math.min(4, Math.max(0.25, natural));
+  const box = ratio >= 1 ? { width: 240, height: 240 / ratio } : { width: 240 * ratio, height: 240 };
+  const scale = Math.min(1, image.width / box.width, image.height / box.height);
+  return {
+    width: Math.max(1, Math.round(box.width * scale)),
+    height: Math.max(1, Math.round(box.height * scale)),
+    // 极端比例会被 object-fit: cover 裁掉一侧：很高的图保留顶部，很宽的图保留左侧
+    objectPosition: natural < 0.25 ? "center top" : natural > 4 ? "left center" : "center"
+  };
+}
 function ImageTile({ sessionId, image, compact, onOpen }) {
   const [url, setUrl] = (0, import_react7.useState)(null);
   const [failed, setFailed] = (0, import_react7.useState)(false);
   const [loaded, setLoaded] = (0, import_react7.useState)(false);
   const [attempt, setAttempt] = (0, import_react7.useState)(0);
   const label = image.name || "\u56FE\u7247";
+  const fit = compact ? null : singleFit(image);
+  const frameStyle = fit ? { width: `${fit.width}px`, aspectRatio: `${fit.width} / ${fit.height}` } : void 0;
   (0, import_react7.useEffect)(() => {
     let live = true;
     setUrl(null);
@@ -5024,38 +5041,49 @@ function ImageTile({ sessionId, image, compact, onOpen }) {
       live = false;
     };
   }, [sessionId, image.attachmentId, attempt]);
+  const retry = () => setAttempt((n) => n + 1);
+  const frameClass = `ts-msg-image${compact ? " is-tile" : " is-single"}${failed ? " is-failed" : ""}`;
   if (failed) {
     return /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
       "button",
       {
         type: "button",
-        className: `ts-msg-image is-failed${compact ? " is-tile" : ""}`,
+        className: frameClass,
+        style: frameStyle,
         title: `${label} \u52A0\u8F7D\u5931\u8D25\uFF0C\u70B9\u51FB\u91CD\u8BD5`,
         "aria-label": `${label} \u52A0\u8F7D\u5931\u8D25\uFF0C\u70B9\u51FB\u91CD\u8BD5`,
-        onClick: () => setAttempt((n) => n + 1),
-        children: "\u26A0"
+        onClick: retry,
+        children: /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("span", { className: "ts-msg-image-retry", "aria-hidden": "true", children: "\u91CD\u8BD5" })
       }
     );
   }
-  if (!url) {
-    return /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
-      "span",
-      {
-        className: `ts-msg-image is-loading${compact ? " is-tile" : ""}`,
-        "aria-label": `${label} \u8F7D\u5165\u4E2D`,
-        title: `${label} \u8F7D\u5165\u4E2D`
-      }
-    );
-  }
-  return /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
+  return /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)(
     "button",
     {
       type: "button",
-      className: `ts-msg-image${compact ? " is-tile" : ""}${loaded ? "" : " is-loading"}`,
-      title: `${label}\uFF08\u70B9\u51FB\u67E5\u770B\u539F\u56FE\uFF09`,
-      "aria-label": `\u67E5\u770B\u56FE\u7247\uFF1A${label}`,
-      onClick: () => onOpen({ url, name: image.name }),
-      children: /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("img", { src: url, alt: label, loading: "eager", decoding: "async", onLoad: () => setLoaded(true), onError: () => setFailed(true) })
+      className: frameClass,
+      style: frameStyle,
+      title: url ? `${label}\uFF08\u70B9\u51FB\u67E5\u770B\u539F\u56FE\uFF09` : `${label} \u8F7D\u5165\u4E2D`,
+      "aria-label": url ? `\u67E5\u770B\u56FE\u7247\uFF1A${label}` : `${label} \u8F7D\u5165\u4E2D`,
+      "aria-busy": url && !loaded ? true : void 0,
+      onClick: () => {
+        if (url) onOpen({ url, name: image.name });
+      },
+      children: [
+        url && /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
+          "img",
+          {
+            src: url,
+            alt: label,
+            loading: "eager",
+            decoding: "async",
+            style: fit ? { objectPosition: fit.objectPosition } : void 0,
+            onLoad: () => setLoaded(true),
+            onError: () => setFailed(true)
+          }
+        ),
+        !loaded && /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("span", { className: "ts-msg-image-wait", "aria-hidden": "true", children: "\u8F7D\u5165\u4E2D\u2026" })
+      ]
     }
   );
 }

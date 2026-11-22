@@ -81,8 +81,14 @@ check('图片读取走宿主 uiConversation 授权缓存（不是自己拼路径
 check('读取失败的图片可点击重试', /加载失败，点击重试/.test(imagesSrc))
 check('灯箱：Esc 关闭 + 文档级 portal',
   /createPortal\(/.test(imagesSrc) && /e\.key === 'Escape'/.test(imagesSrc))
-check('缩略图尺寸：单图 240 / 多图 64',
-  /\.ts-msg-image img \{ display:block; max-width:min\(240px,100%\); max-height:240px;/.test(styles) &&
+check('单图外框按图片自身尺寸：长边 240 / 比例钳 [0.25,4] / 不放大 / 不铺满容器',
+  /function singleFit\(image: StreamImageAttachment\)/.test(imagesSrc) &&
+  /const ratio = Math\.min\(4, Math\.max\(0\.25, natural\)\)/.test(imagesSrc) &&
+  /const scale = Math\.min\(1, image\.width \/ box\.width, image\.height \/ box\.height\)/.test(imagesSrc) &&
+  /aspectRatio: `\$\{fit\.width\} \/ \$\{fit\.height\}`/.test(imagesSrc) &&
+  /\.ts-msg-image\.is-single \{ flex:0 1 auto; height:auto; \}/.test(styles) &&
+  /\.ts-msg-image img \{ position:absolute; inset:0; display:block; width:100%; height:100%; object-fit:cover; \}/.test(styles))
+check('多图收成 64px 方块',
   /\.ts-msg-image\.is-tile \{ flex:none; width:64px; height:64px; \}/.test(styles))
 
 console.log(fail === 0 ? '\n全部通过' : `\n${fail} 项失败`)

@@ -49,8 +49,9 @@ function block(sel) {
 check('MsgList 引入并调用了 injectProjectCenterStyles',
   /import \{ injectProjectCenterStyles \} from '\.\/styles'/.test(msgs) &&
   /useEffect\(\(\) => \{ injectProjectCenterStyles\(\) \}, \[\]\)/.test(msgs))
-check('注入函数按 style id 幂等（多处调用不重复插样式）',
-  /if \(document\.getElementById\(STYLE_ID\)\) return/.test(styles))
+check('注入函数按 style id 幂等，并更新已存在的样式（热重载后新 CSS 也能生效）',
+  /let el = document\.getElementById\(STYLE_ID\)/.test(styles) &&
+  /el\.textContent !== CSS\) el\.textContent = CSS/.test(styles))
 
 // —— 根因 2：复制与时间解耦 ——
 check('存在独立的 CopyButton 组件',
