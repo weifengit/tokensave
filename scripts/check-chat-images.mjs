@@ -12,8 +12,7 @@
  * 数据层跑的是真实投影函数（esbuild 现编现跑），不是源码正则；
  * 呈现层是静态断言（没有 DOM 测试环境，与仓库其它 check 脚本同口径）。
  */
-import { readFileSync } from 'node:fs'
-import { mkdtempSync } from 'node:fs'
+import { readFileSync, mkdtempSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath, pathToFileURL } from 'node:url'
