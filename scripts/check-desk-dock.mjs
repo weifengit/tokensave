@@ -142,20 +142,20 @@ check('旧网格机已删除（HDesk / desk-layout 不在仓内）',
 // —— 5. 数据口径 ——
 check('探索者按 workspace 8s 轮询（与预览探测同一拍）',
   /fetchExplorers\(project\.path\)/.test(dock) && /8_000/.test(dock) && !/10_000/.test(dock))
-check('项目预览探测 + devUrl 可用才建面板（**默认落编辑区**）',
+check('项目预览探测 + devUrl 可用才建面板（**独占面板区**）',
   /fetchProjectInfo\(project\.path\)/.test(dock) && /devUrl/.test(dock) &&
-  // 用户要求：进项目就能在编辑区看到预览 → 默认与主对话左右并排
-  /if \(data\.devUrl\) addTo\('center', 'preview', \{ direction: 'left', referencePanel: chat \}\)/.test(dock) &&
-  // 旧默认（主侧栏）已作废；旧快照里还在主侧栏的由一次性迁移搬过去
+  // 有预览时那块面板由布局表决定（centerKind = layout.region 里 center 的那块）
+  /const centerKind = \(\['preview', 'chat'\] as Kind\[\]\)/.test(dock) &&
+  /\.find\(\(k\) => layout\.region\[k\] === 'center'\)/.test(dock) &&
+  /if \(centerKind\) add\(centerKind\)/.test(dock) &&
+  // 没有 devUrl 时不建预览面板（探测拿不到地址 → 面板不出现）
+  /if \(!data\.devUrl\) \{/.test(dock) &&
+  // 旧默认（主侧栏）已作废
   !/addTo\('left', 'preview'\)/.test(dock) &&
   /desk-preview-in-editor\.v1/.test(dock) &&
-  // 迁移到位后要**分屏**（否则把主对话盖住 → 输入条悬在预览上）
-  /\{ direction: 'left', referencePanel: anchor \}/.test(dock) &&
-  /const anchor = paneId\(project\.id, 'chat'\)/.test(dock) &&
+  // 迁移：预览从主侧栏 / 同组搬到面板区独占，并把主对话挪到辅助侧栏
   /if \(hit\.region === 'left' \|\| sameGroup\) \{/.test(dock) &&
-  // 同区但挤在同一组的（旧版本踩过的坑）先摘下来再按分屏位摆回
-  /apis\.center\.removePanel\(hit\.panel\)/.test(dock) &&
-  /apis\.center\.addPanel\(paneOptsRef\.current\(pid, pos\)\)/.test(dock))
+  /if \(chatHome && chatHome !== 'right'\) \{/.test(dock))
 check('恢复布局时不因「devUrl 还没拿到」拆掉预览（同组预览+主对话不会被拆成左右分栏）',
   /devKnown\?: boolean/.test(dock) &&
   // 探测成功才置 devKnown（两条写回路径：拿到地址 / 只标记问过）
@@ -165,8 +165,10 @@ check('恢复布局时不因「devUrl 还没拿到」拆掉预览（同组预览
   /: \{ \.\.\.prev, devKnown: true \}/.test(dock) &&
   // 首帧 devUrl 未知：不删也不补，尊重快照里已恢复的预览
   /if \(!data\.devKnown\) return/.test(dock) &&
-  // 一次性「预览归位」迁移只跑内置默认布局，不碰用户保存/自动快照
-  /!restoredFromSnapshotRef\.current && window\.localStorage\.getItem\(mk\) !== 'v2'/.test(dock))
+  // 一次性「预览归位」迁移只跑内置默认布局，不碰用户保存/自动快照。
+  // 版本号升到 v3：布局口径从「预览与主对话分屏」改成「预览独占面板区」，
+  // 旧 v2 标记要重跑一次，否则老用户停在旧摆位。
+  /!restoredFromSnapshotRef\.current && window\.localStorage\.getItem\(mk\) !== 'v3' && data\.devUrl/.test(dock))
 
 const previewPanelSrc = readFileSync(join(root, 'client/src/panel/PreviewPanel.tsx'), 'utf8')
 check('预览未就绪不渲染空 src 的 iframe（src="" 会把 DSH 自己嵌进来）',
@@ -254,15 +256,12 @@ check('CSS Grid 分区 + 区域收起 = 列宽塌陷到 0（不用 removePanel�
   /\.ts-dock\[data-hide-left\] \{ --ts-side-l: 0px; \}/.test(dock))
 check('标题行 + 状态栏 + 面板区与编辑区同实例',
   /data-desk-titlebar=""/.test(dock) && /data-desk-statusbar=""/.test(dock) &&
-  // 首次进入的界面（用户要求）：面板区 = 项目预览 + DSH 主对话（相邻），
-  // 辅助侧栏 = 共享黑板 / 协作对话 / 协作收益（竖排），主侧栏默认收起。
-  /addTo\('right', 'board'\)/.test(dock) &&
-  /addTo\('right', 'talk', \{ direction: 'below', referencePanel: board \}\)/.test(dock) &&
-  /addTo\('right', 'save', \{ direction: 'below', referencePanel: talk \}\)/.test(dock) &&
-  // 预览与主对话**相邻**（分屏到主对话左边）
-  /addTo\('center', 'preview', \{ direction: 'left', referencePanel: chat \}\)/.test(dock) &&
-  // 面板 kind 的默认归属区：board/talk/save 在辅助侧栏
-  /board: 'right'/.test(dock) && /talk: 'right'/.test(dock) && /save: 'right'/.test(dock) &&
+  // 首次进入的两种布局：归属区与栈次序的唯一权威源是 desk-first-layout.ts（纯模块），
+  // DeskDock 只调 layoutFor / regionOfKind / stackAnchorOf，不再自带一份表。
+  /import \{ layoutFor, regionOfKind, stackAnchorOf \} from '\.\/desk-first-layout'/.test(dock) &&
+  /const layout = layoutFor\(hasPreview\)/.test(dock) &&
+  /const region = layout\.region\[kind\]/.test(dock) &&
+  !/const KIND_REGION:/.test(dock) && !/const KIND_REGION_WITH_PREVIEW/.test(dock) &&
   // 首次进入：主侧栏默认收起（只在没进过这个项目时）
   /const DEFAULT_HIDDEN_REGIONS: Region\[\] = \['left'\]/.test(dock) &&
   /readInitialHiddenRegions/.test(dock) &&

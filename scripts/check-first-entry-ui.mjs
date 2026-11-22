@@ -28,21 +28,28 @@ const styles = readFileSync(join(root, 'client/src/panel/styles.ts'), 'utf8')
 const icons = readFileSync(join(root, 'client/src/panel/icons.ts'), 'utf8')
 const ghCli = readFileSync(join(root, 'src/gh-cli.ts'), 'utf8')
 const route = readFileSync(join(root, 'src/board-web-route.ts'), 'utf8')
+const layoutSrc = readFileSync(join(root, 'client/src/panel/desk-first-layout.ts'), 'utf8')
 
 console.log('— 1. 首次进入的界面布局 —')
 
-check('面板区：项目预览 + DSH 主对话（分屏 → 两个图标紧紧相邻）',
-  /addTo\('center', 'chat'\)/.test(dock) &&
-  /addTo\('center', 'preview', \{ direction: 'left', referencePanel: chat \}\)/.test(dock) &&
-  // 预览必须**分屏**而不是当标签页塞进主对话那一组（否则主对话被盖住）
-  !/addTo\('center', 'preview'\)/.test(dock))
+check('两套首次进入布局：唯一权威源是 desk-first-layout.ts（纯模块）',
+  // 两套表都在纯模块里（不再散落在 DeskDock 的 buildDefault / reconcile / ensureById）
+  /const LAYOUT_WITH_PREVIEW: DeskLayout = \{/.test(layoutSrc) &&
+  /const LAYOUT_NO_PREVIEW: DeskLayout = \{/.test(layoutSrc) &&
+  /export function layoutFor\(hasPreview: boolean\): DeskLayout/.test(layoutSrc) &&
+  // DeskDock 只调纯函数，不再自带一份表
+  /import \{ layoutFor, regionOfKind, stackAnchorOf \} from '\.\/desk-first-layout'/.test(dock) &&
+  !/const KIND_REGION_WITH_PREVIEW/.test(dock) && !/const KIND_REGION:/.test(dock))
 
-check('辅助侧栏：共享黑板 / 协作对话 / 协作收益（各自一行，竖排）',
-  /addTo\('right', 'board'\)/.test(dock) &&
-  /addTo\('right', 'talk', \{ direction: 'below', referencePanel: board \}\)/.test(dock) &&
-  /addTo\('right', 'save', \{ direction: 'below', referencePanel: talk \}\)/.test(dock) &&
-  // 面板 kind 的默认归属区也要跟着改（reconcile 补面板时才知道该放哪）
-  /board: 'right'/.test(dock) && /talk: 'right'/.test(dock) && /save: 'right'/.test(dock))
+check('有预览：面板区只放预览，4 个窗口全在辅助侧栏',
+  /layout\.region\.preview === 'center'|preview: 'center'/.test(layoutSrc) &&
+  // 有预览那套表里 chat/board/talk/save 都是 right
+  /WITH_PREVIEW: DeskLayout = \{\s*region: \{ preview: 'center', chat: 'right', board: 'right', talk: 'right', save: 'right' \}/.test(layoutSrc) &&
+  /stack: \{ chat: undefined, board: 'chat', talk: 'board', save: 'talk' \}/.test(layoutSrc))
+
+check('无预览：主对话占面板区，三个面板在辅助侧栏',
+  /NO_PREVIEW: DeskLayout = \{\s*region: \{ preview: 'center', chat: 'center', board: 'right', talk: 'right', save: 'right' \}/.test(layoutSrc) &&
+  /stack: \{ board: undefined, talk: 'board', save: 'talk' \}/.test(layoutSrc))
 
 check('主侧栏首次进入默认收起（只在没进过这个项目时）',
   /const DEFAULT_HIDDEN_REGIONS: Region\[\] = \['left'\]/.test(dock) &&
@@ -55,9 +62,10 @@ check('主侧栏首次进入默认收起（只在没进过这个项目时）',
 check('「恢复默认布局」也回到内置收起区（不是全展开）',
   /applyRegions\(DEFAULT_HIDDEN_REGIONS\)/.test(dock))
 
-check('预览归位迁移仍指向「主对话左边」（相邻关系不被改坏）',
-  /\{ direction: 'left', referencePanel: anchor \}/.test(dock) &&
-  /const anchor = paneId\(project\.id, 'chat'\)/.test(dock))
+check('预览归位迁移改成「预览独占面板区 + 主对话搬去辅助侧栏」',
+  /\/\/ ① 预览归位到面板区/.test(dock) &&
+  /\/\/ ② 主对话若还在面板区/.test(dock) &&
+  /if \(chatHome && chatHome !== 'right'\) \{/.test(dock))
 
 console.log('— 2. 左侧边栏入口（图标 + 外框宽度）—')
 
@@ -147,16 +155,22 @@ console.log('— 6. 呼吸灯面板：对话清单的归档 —')
 
 const entrySrc = readFileSync(join(root, 'client/src/panel/ControlRoomEntry.tsx'), 'utf8')
 
-check('单一归档：每条对话后面有归档按钮',
-  /className="ts-warn-archive-btn"/.test(entrySrc) &&
+check('单一归档：每条对话后面有归档图标按钮（无文字）',
+  // 三个动作共用 .ts-warn-icon-btn（继续 / 已读 / 归档），靠图标区分
+  /className="ts-warn-icon-btn"/.test(entrySrc) &&
   /onArchive\(it\)/.test(entrySrc) &&
-  /归档这条对话/.test(entrySrc))
+  /归档这条对话/.test(entrySrc) &&
+  /iconSvg\('archive', 12\)/.test(entrySrc))
 
-check('所有归档：对话清单标题行有「归档」按钮',
-  /className="ts-warn-archive-all-btn"/.test(entrySrc) &&
+check('所有归档：标题行「归档」图标按钮，且与行内同列',
   /onArchiveAll/.test(entrySrc) &&
-  /ts-warn-headops/.test(entrySrc) &&
-  /className="ts-warn-headops"/.test(entrySrc))
+  /className="ts-warn-headops"/.test(entrySrc) &&
+  // 标题行三个槽位（两枚按钮 + 一枚占位），与逐行的三个槽位同宽同位置
+  /<span className="ts-warn-slot" aria-hidden="true" \/>/.test(entrySrc) &&
+  // 标题行与行内的槽位/按钮同为 22px + 4px 间隔 —— 每列中心严格一致
+  /\.ts-warn-slot \{[^}]*width:22px; height:22px/.test(styles) &&
+  /\.ts-warn-icon-btn \{[^}]*width:22px; height:22px/.test(styles) &&
+  /\.ts-warn-headops \{[^}]*gap:4px/.test(styles))
 
 check('归档走宿主 uiWorkspace.archiveSession（复用 sessions.ts 的封装）',
   /archiveSession/.test(entrySrc) &&
@@ -167,12 +181,14 @@ check('归档走宿主 uiWorkspace.archiveSession（复用 sessions.ts 的封装
   // 归档当前会话后留在本项目工作台（不掉回 Hero）
   /stayInProjectAfterArchive/.test(entrySrc))
 
-check('归档按钮与图标样式齐全（线条归档盒，非 emoji）',
-  /\.ts-warn-archive-btn, \.ts-warn-archive-all-btn \{/.test(styles) &&
-  /\.ts-warn-archive-ico svg \{ display:block; \}/.test(styles) &&
-  /\.ts-warn-headops \{/.test(styles) &&
-  // 图标在共享 icons.ts，且是线条 SVG（无 emoji）
+check('三个动作统一图标按钮 + 固定槽位（不挤压内容、垂直对齐）',
+  /\.ts-warn-icon-btn \{[^}]*width:22px; height:22px/.test(styles) &&
+  /\.ts-warn-slot \{ flex:none; width:22px; height:22px/.test(styles) &&
+  /\.ts-warn-headops \{[^}]*gap:4px/.test(styles) &&
+  // 图标在共享 icons.ts，且都是线条 SVG（无 emoji）
   /archive: '<rect x="3\.5" y="4\.5" width="17" height="4\.5"/.test(icons) &&
+  /check: '<path d="M4\.5 12\.5l5 5 10-11"\/>/.test(icons) &&
+  /play: '<path d="M8 5\.5l11 6\.5-11 6\.5z"\/>/.test(icons) &&
   !/📥/.test(entrySrc))
 
 console.log('— 7. Windows 默认盘符：E → D → C —')

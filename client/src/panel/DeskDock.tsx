@@ -64,6 +64,7 @@ import { THEME_MODES, THEME_MODE_LABEL, THEME_MODE_HINT, readThemeMode, readActi
 import { installSkinLayerCss } from './skin-layer'
 import { getClientContext, subscribeSession, subscribeSessionMetrics } from '../session-subscribe'
 import { KINDS, paneId, parsePaneId, paneTitle, paneIcon, type Kind } from './desk-panes'
+import { layoutFor, regionOfKind, stackAnchorOf } from './desk-first-layout'
 import {
   CHROME_POSITIONS, CHROME_HINT, CHROME_LABEL, RAIL_W,
   effectiveChrome, popPlacement, readChromePosition, writeChromePosition,
@@ -137,24 +138,7 @@ type Region = (typeof REGIONS)[number]
 const REGION_LABEL: Record<Region, string> = { left: '主侧栏', center: '编辑区/面板区', right: '辅助侧栏' }
 const REGION_ICON: Record<Region, string> = { left: 'regionLeft', center: 'regionCenter', right: 'regionRight' }
 
-/** 面板 kind 的默认归属区（只决定首次落点，不锁定位置）。 */
-const KIND_REGION: Record<string, Region> = {
-  // 用户要求（首次进入的界面）：
-  //   面板区 = 项目预览 + DSH 主对话（两个图标紧紧相邻，左右并排）；
-  //   辅助侧栏 = 共享黑板 / 协作对话 / 协作收益。
-  // 主侧栏默认整体收起（首次进入不留空栏），用户可随时拉出来。
-  preview: 'center',
-  chat: 'center',
-  board: 'right',
-  talk: 'right',
-  save: 'right',
-}
-/** 辅助侧栏三块的竖向次序（每一块紧跟在谁下面）。 */
-const RIGHT_STACK_ORDER: Record<string, string | undefined> = {
-  board: undefined,
-  talk: 'board',
-  save: 'talk',
-}
+
 
 /** 线条图标（24 视窗 / currentColor / 1.6 描边，与 info_report 的 icons.js 同规）。 */
 const ICONS: Record<string, string> = {
@@ -838,6 +822,13 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
   const paneOptsRef = useRef<(id: string, position?: any) => any>(() => null)
   const [, bump] = useState(0)
   const [data, setData] = useState<ProjectData>({ explorers: [] })
+  /**
+   * 当前 devUrl 的即时镜像（给**非 effect 回调**读：ensureById / moveWindowTo 等）。
+   * 为什么需要："归属区随有没有预览变"，而那边只能拿到 state 的陈旧闭包值；
+   * 用 ref 镜像就能在任意时刻读最新值，且不把它们列进依赖（否则回调身份每拍都变）。
+   */
+  const peekDevUrlRef = useRef('')
+  peekDevUrlRef.current = data.devUrl || ''
   const [font, setFont] = useState<FontId>(readFont)
   const [fontFamily, setFontFamily] = useState<FontFamilyId>(readFontFamily)
   const [liveIds, setLiveIds] = useState<string[]>([])
@@ -1524,16 +1515,55 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
     //   辅助侧栏（right）：共享黑板 / 协作对话 / 协作收益（竖向排列）。
     //   主侧栏（left）：默认**收起**（首次进入不留一条空栏）。
     const buildDefault = () => {
-      const chat = paneId(project.id, 'chat')
-      // 主对话先落面板区，预览再分屏到它**左边**（相邻 ⇒ 两个标签图标紧挨着）。
-      addTo('center', 'chat')
-      if (data.devUrl) addTo('center', 'preview', { direction: 'left', referencePanel: chat })
-      // 辅助侧栏：黑板 / 协作对话 / 协作收益（依次竖排）。
-      const board = paneId(project.id, 'board')
-      addTo('right', 'board')
-      const talk = paneId(project.id, 'talk')
-      addTo('right', 'talk', { direction: 'below', referencePanel: board })
-      addTo('right', 'save', { direction: 'below', referencePanel: talk })
+      // 布局表在 desk-layout.ts（纯模块，可单测）：有/无预览两套。
+      const hasPreview = !!data.devUrl
+      const layout = layoutFor(hasPreview)
+      /**
+       * 往某个区加一块。
+       *
+       * `position` 三态（dockview 的语义，踩过坑所以写清楚）：
+       *   · `{ below, referencePanel }` —— 分屏到参照块**下方**（辅助侧栏的竖排都用这个）
+       *   · `{ direction, referencePanel }` —— 同上的通用写法
+       *   · `undefined` —— 落进**当前活动分组**当标签页
+       *
+       * 关键：辅助侧栏**每一块都必须显式给 position**，包括第一块。
+       * 第一块若用 undefined，它会落进「此刻活动」的那一格（而活动格可能是
+       * 刚加完的另一块），于是两块叠成标签页（实测 save+chat 同格 → 侧栏只有 3 行）。
+       * 第一块改为「分屏到面板区那一块的右侧」，落点确定且不依赖活动态。
+       */
+      const add = (kind: Kind, firstOfRegion = false) => {
+        const region = layout.region[kind]
+        const anchorKind = region === 'right' ? layout.stack[kind] : undefined
+        let position: any
+        if (anchorKind) {
+          position = { direction: 'below', referencePanel: paneId(project.id, anchorKind) }
+        } else if (firstOfRegion) {
+          // 该区第一块：分屏到面板区那块旁边（region 由方向决定，不必精确）
+          const centerAnchor = paneId(project.id, hasPreview ? 'preview' : 'chat')
+          position = { direction: region === 'right' ? 'right' : 'left', referencePanel: centerAnchor }
+        }
+        apis[region].addPanel(paneOptsRef.current(paneId(project.id, kind), position))
+      }
+      // 插入顺序必须**确定**，否则 dockview 会把「没有 position」的 addPanel 落进
+      // 当前活动分组、和上一块叠成标签页（实测 save+chat 同格 → 只看到 3 行）。
+      //
+      // 规则：
+      //   ① 锚链起点（stack 为 undefined 的那块）先上 —— 有预览时是辅助侧栏的 chat，
+      //      无预览时是面板区的 chat；
+      //   ② 面板区另一个窗口（有预览时的 preview）紧随其后；
+      //   ③ 其余辅助侧栏块按锚链顺序（board → talk → save）逐块「坐上一块下面」。
+      const rightKinds = (['chat', 'board', 'talk', 'save'] as Kind[])
+        .filter((k) => layout.region[k] === 'right')
+      const rightFirst = rightKinds.filter((k) => layout.stack[k] === undefined)
+      const rightRest = rightKinds.filter((k) => layout.stack[k] !== undefined)
+      const centerKind = (['preview', 'chat'] as Kind[])
+        .find((k) => layout.region[k] === 'center')
+      // ② 面板区那块先上（辅助侧栏第一块要分屏到它旁边，得先存在）
+      if (centerKind) add(centerKind)
+      // ① 辅助侧栏的锚链起点（有预览时 = chat），显式分屏到面板区右侧
+      rightFirst.forEach((k) => add(k, true))
+      // ③ 辅助侧栏其余块，按锚链顺序逐块「坐上一块下面」
+      rightRest.forEach((k) => add(k))
     }
     resetToBuiltinRef.current = () => {
       REGIONS.forEach((r) => apis[r].panels.slice().forEach((p: any) => apis[r].removePanel(p)))
@@ -1756,9 +1786,11 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
   useEffect(() => {
     const apis = apiRef.current
     if (!apis) return
+    // 归属区随「有没有项目预览」变（两套表的唯一权威源是 desk-layout.ts）。
+    const hasPreview = !!data.devUrl
     const defaultRegionOf = (id: string): Region => {
       const kind = parsePaneId(id)?.kind ?? ''
-      return kind.startsWith('exp:') ? 'center' : (KIND_REGION[kind] ?? 'center')
+      return kind.startsWith('exp:') ? 'center' : regionOfKind(kind, hasPreview)
     }
     const inHidden = (id: string) => hiddenRegions.includes(defaultRegionOf(id))
     const ensure = (id: string) => {
@@ -1775,10 +1807,9 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
       const chatAnchor = apis.center.getPanel(paneId(project.id, 'chat'))
       const kind = parsePaneId(id)?.kind ?? ''
       const isPreview = kind === 'preview'
-      // 辅助侧栏的三块（黑板 / 协作对话 / 协作收益）**竖向相邻**（各自一行），
-      // 而不是叠成同一组的标签页 —— 与内置默认摆位一致。
-      const sibling = KIND_REGION[kind] === 'right' && !kind.startsWith('exp:')
-        ? RIGHT_STACK_ORDER[kind]
+      // 辅助侧栏的几块**竖向相邻**（各自一行，不叠成标签页）。
+      const sibling = defaultRegionOf(id) === 'right' && !kind.startsWith('exp:')
+        ? stackAnchorOf(kind, hasPreview)
         : undefined
       const siblingAnchor = sibling && apis.right.getPanel(paneId(project.id, sibling))
       const position = isPreview && region === 'center' && chatAnchor
@@ -1817,15 +1848,18 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
       ensure(paneId(project.id, k))
     })
     // —— 预览归位（一次性，带版本号）——
-    //   旧默认把预览放主侧栏；旧实现还会把它当标签页塞进主对话那一组（把主对话盖住）。
-    //   两种都搬到「主对话左边的分屏位」。放 reconcile 里做：此刻预览面板才真存在。
+    //
+    // 新口径（用户截图要求）：**有预览时预览独占面板区**，主对话与黑板等一起去辅助侧栏。
+    // 所以迁移做两件事：
+    //   ① 预览还在主侧栏 / 与主对话挤在同一组 → 搬到面板区独占；
+    //   ② 主对话还在面板区 → 搬到辅助侧栏最上面（预览已经把面板区占走了）。
+    // 只迁移**内置默认布局**：用户自己保存 / 自动快照里的布局是他的意图，不动。
     try {
       const mk = `tokensave:desk-preview-in-editor.v1:${project.id}`
-      // 只迁移**内置默认布局**：用户保存 / 自动快照里的布局是他自己的意图。
-      // 旧行为无条件迁移，把用户刚保存的「预览+主对话同组」拆成左右分栏（本次修复）。
-      if (!restoredFromSnapshotRef.current && window.localStorage.getItem(mk) !== 'v2') {
+      if (!restoredFromSnapshotRef.current && window.localStorage.getItem(mk) !== 'v3' && data.devUrl) {
         const pid = paneId(project.id, 'preview')
-        const anchor = paneId(project.id, 'chat')
+        const chatId = paneId(project.id, 'chat')
+        // ① 预览归位到面板区
         let hit: { region: Region; panel: any } | null = null
         for (const r of REGIONS) {
           const p = apis[r].getPanel(pid)
@@ -1835,20 +1869,24 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
           }
         }
         if (hit) {
-          const chat = apis.center.getPanel(anchor)
+          const chat = apis.center.getPanel(chatId)
           const sameGroup = !!(hit.panel.group && chat && hit.panel.group === chat.group)
           if (hit.region === 'left' || sameGroup) {
-            const pos = chat ? { direction: 'left', referencePanel: anchor } : undefined
             if (hit.region === 'center') {
-              // 同区：moveWindowTo 会因为「已在目标区」直接返回 → 先摘下来再按分屏位摆回
+              // 同区且同组：moveWindowTo 会因「已在目标区」直接返回 → 先摘再重建
               apis.center.removePanel(hit.panel)
-              apis.center.addPanel(paneOptsRef.current(pid, pos))
+              apis.center.addPanel(paneOptsRef.current(pid))
             } else {
-              moveWindowTo(pid, 'center', pos)
+              moveWindowTo(pid, 'center')
             }
           }
-          window.localStorage.setItem(mk, 'v2')
         }
+        // ② 主对话若还在面板区，搬到辅助侧栏最上面（与 buildDefault 的有预览分支一致）
+        const chatHome = REGIONS.find((r) => apis[r].getPanel(chatId))
+        if (chatHome && chatHome !== 'right') {
+          moveWindowTo(chatId, 'right')
+        }
+        window.localStorage.setItem(mk, 'v3')
       }
     } catch (e) {
       console.warn('[desk-dock] 预览归位失败', e)
@@ -2493,7 +2531,9 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
         return
       }
       const kind = parsePaneId(id)?.kind ?? ''
-      const region: Region = kind.startsWith('exp:') ? 'center' : (KIND_REGION[kind] ?? 'center')
+      // 归属区与栈次序都按「此刻有没有预览」算（与 buildDefault / reconcile 同一口径）。
+      const hasPreviewNow = !!peekDevUrlRef.current
+      const region: Region = kind.startsWith('exp:') ? 'center' : regionOfKind(kind, hasPreviewNow)
       setHiddenRegions((h) => {
         const next = h.filter((r) => r !== region)
         try {
@@ -2504,9 +2544,9 @@ export function DeskDock({ project, sessionId, onBack }: DeskDockProps): React.R
         return next
       })
       // 同上：参考面板必须在同一实例内（跨实例引用会抛错）
-      // 辅助侧栏的三块同样竖向相邻（与内置默认摆位一致）。
-      const sibling = KIND_REGION[kind] === 'right' && !kind.startsWith('exp:')
-        ? RIGHT_STACK_ORDER[kind]
+      // 辅助侧栏的几块同样竖向相邻（与 buildDefault 同一套次序）。
+      const sibling = region === 'right' && !kind.startsWith('exp:')
+        ? stackAnchorOf(kind, hasPreviewNow)
         : undefined
       const siblingAnchor = sibling && apis.right.getPanel(paneId(project.id, sibling))
       const position = siblingAnchor

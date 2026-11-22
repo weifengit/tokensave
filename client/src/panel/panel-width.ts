@@ -56,16 +56,25 @@ export const POP_W_MAX = 360
 
 // —— 行内固定装饰（只在这里加一次）——
 
-/** 行自身的内边距：.ts-warn-item 左右各 8 + .ts-warn-row 右内边距 1 */
-const ROW_PAD_W = 17
+/** 行自身的内边距：.ts-warn-item 左右各 8（.ts-warn-row 的右内边距本轮改成 0） */
+const ROW_PAD_W = 16
 /** 图标 11 + 图标与文本的间隔 8 */
 const ICON_W = 19
 /** 条目区与操作区之间的间距（.ts-warn-row 的 gap） */
 const ROW_GAP_W = 6
-/** 操作区：只放「已读」 */
-const ACTIONS_READ_W = 53
-/** 操作区：「继续」+ 间隔 + 「已读」 */
-const ACTIONS_CONTINUE_W = 41 + 5 + 53
+/**
+ * 操作区宽度：现在是**三个固定 22px 图标槽位**（继续 / 已读 / 归档）+ 两个 4px 间隔。
+ *
+ * 为什么改成固定槽位（上一版是按按钮文案估的 53 / 99px）：
+ *   1. 三个按钮都只放图标、不放文字，宽度与文案无关，不必再估文本宽度；
+ *   2. 固定槽位保证「有没有继续按钮」时整行宽度一致 —— 否则有/无继续的两种行
+ *      操作区宽度不同，标题行的「全部」图标就对不齐下面逐行的图标（用户明确要求对齐）。
+ * 数值与 styles.ts 的 `.ts-warn-slot` / `.ts-warn-headops` 一一对应。
+ */
+const ACTION_SLOT_W = 22
+const ACTION_SLOT_GAP = 4
+const ACTION_SLOTS = 3
+const ACTIONS_W = ACTION_SLOTS * ACTION_SLOT_W + (ACTION_SLOTS - 1) * ACTION_SLOT_GAP
 
 /**
  * 面板自身的内边距（一行宽度里“非内容”的那部分）。
@@ -111,8 +120,8 @@ export function rowContentWidth(r: WidthRow): number {
 
 /** 一行的整体外宽（内容 + 行内装饰 + 面板内边距） */
 export function rowOuterWidth(r: WidthRow): number {
-  const actions = r.canContinue ? ACTIONS_CONTINUE_W : ACTIONS_READ_W
-  return rowContentWidth(r) + ROW_PAD_W + ICON_W + ROW_GAP_W + actions + PANEL_PAD_W
+  // 操作区宽度与 canContinue 无关：三个槽位恒定占位（见 ACTIONS_W 的注释）
+  return rowContentWidth(r) + ROW_PAD_W + ICON_W + ROW_GAP_W + ACTIONS_W + PANEL_PAD_W
 }
 
 /** 清单里最长那一行需要多宽（空清单 → 0） */

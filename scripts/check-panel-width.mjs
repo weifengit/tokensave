@@ -65,9 +65,12 @@ check('下限不是写死的 236（会随设置区宽度自调）', m.POP_W_MIN 
   check('长项目名 + 原因标签会撑宽', withTags > W([row('短')]), `${W([row('短')])} → ${withTags}`)
 // 注意：这里要比**未夹紧**的 rowOuterWidth。下限涨到 272 之后，
 // 上面那种短行无论有没有「继续」都会夹到下限，比 clamp 后的值永远相等。
-check('有「继续」按钮的行更宽',
-  m.rowOuterWidth(row('同样的标题', { canContinue: true })) > m.rowOuterWidth(row('同样的标题')),
-  `${Math.round(m.rowOuterWidth(row('同样的标题')))} → ${Math.round(m.rowOuterWidth(row('同样的标题', { canContinue: true })))}`)
+// 本轮改口径：操作区是**三个固定 22px 图标槽位**，宽度与「有没有继续」无关。
+// 为什么必须等宽：标题行的「全部」图标要和下面逐行的图标**垂直对齐**（用户要求），
+// 两种行宽度不同的话同列就会错开。
+check('有/无「继续」按钮的行**等宽**（三个固定图标槽位）',
+  m.rowOuterWidth(row('同样的标题', { canContinue: true })) === m.rowOuterWidth(row('同样的标题')),
+  `${Math.round(m.rowOuterWidth(row('同样的标题')))} vs ${Math.round(m.rowOuterWidth(row('同样的标题', { canContinue: true })))}`)
 // 反向：两者都在下限以下时，夹紧后的面板宽度应当相等（宽的是**行**，不是面板）
 check('低于下限时两种行夹出同一个面板宽度（面板宽度是全局的）',
   W([row('同样的标题', { canContinue: true })]) === W([row('同样的标题')]))
@@ -89,7 +92,12 @@ check('低于下限时两种行夹出同一个面板宽度（面板宽度是全�
     const a = m.rowOuterWidth(row('一样的标题'))
     const b = m.rowOuterWidth(row('一样的标题', { canContinue: true }))
     const delta = Math.round(b - a)
-    check('「继续」按钮只加操作区那点宽度（≤ 50px）', delta > 0 && delta <= 50, `Δ=${delta}px`)
+    check('「继续」按钮不额外占宽（固定槽位，Δ=0）', delta === 0, `Δ=${delta}px`)
+    // 操作区本身必须是 3×22 + 2×4 = 74px（与 styles.ts 的 .ts-warn-slot / gap 对应）
+    const actionsW = Math.round(m.rowOuterWidth(row('x')) - m.rowContentWidth(row('x')))
+    check('操作区 = 3 个 22px 槽位 + 2 个 4px 间隔（74px + 行装饰）',
+      actionsW >= 74 && actionsW <= 74 + 17 + 19 + 6 + 42,
+      `总装饰 ${actionsW}px`)
   }
 
   // —— 边界与健壮性 ——

@@ -256,8 +256,11 @@ body.ts-desk-nochat [data-conversation-region="composer"] {
    「手机端回消息之类的，也无法关闭提示音」——开关就在面板里，但手点不到）。 */
 @media (pointer: coarse) {
   .ts-warn-pop.is-sheet .ts-warn-item { min-height:44px; padding:10px 10px; }
-  .ts-warn-pop.is-sheet .ts-warn-read,
-  .ts-warn-pop.is-sheet .ts-warn-continue-btn { min-height:30px; padding:0 10px; }
+  /* 图标按钮在触屏上要给够热区（22px 太小点不准）：槽位与按钮一起放大到 34px */
+  .ts-warn-pop.is-sheet .ts-warn-icon-btn,
+  .ts-warn-pop.is-sheet .ts-warn-done { width:34px; height:34px; }
+  .ts-warn-pop.is-sheet .ts-warn-slot { width:34px; height:34px; }
+  .ts-warn-pop.is-sheet .ts-warn-headops > .ts-warn-slot { width:34px; }
   .ts-warn-pop.is-sheet .ts-cont-sw { width:40px; height:22px; }
   .ts-warn-pop.is-sheet .ts-cont-sw > i { width:18px; height:18px; }
   .ts-warn-pop.is-sheet .ts-cont-sw::after { content:''; position:absolute; inset:-11px -2px; }
@@ -281,12 +284,17 @@ body.ts-desk-nochat [data-conversation-region="composer"] {
 .ts-sec-list { flex:1 1 auto; min-height:0; display:flex; flex-direction:column; }
 .ts-sec + .ts-sec { border-top:1px solid rgba(127,127,127,.22); }
 /* 区域标题行：与「对话清单」原头部同款排版，但中性色（不再是某一区的专属样式） */
-.ts-sec-head { display:flex; align-items:center; gap:8px; padding:9px 22px 8px 12px; font-size:calc(var(--ts-fs, 12.5px) * 0.88); font-weight:600; opacity:.62; letter-spacing:.04em; }
+/* 右内距 21px（不是 22）：要跟清单区右缘严格对齐 —— 清单区是 12(区块) + 1(边框) +
+   3(ts-box 内距) + 5(ts-warn-pop-list 内距) = 21。差 1px 会让标题行的图标与逐行图标
+   错开半像素（图标居中，右缘差 1px → 中心差 0.5px 累积到 6px 视觉错位）。 */
+.ts-sec-head { display:flex; align-items:center; gap:8px; padding:9px 21px 8px 12px; font-size:calc(var(--ts-fs, 12.5px) * 0.88); font-weight:600; opacity:.62; letter-spacing:.04em; }
 .ts-sec-title { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 /* 标题右侧的浅色计数（如「对话清单 3」里的 3） */
 .ts-sec-note { flex:none; font-weight:500; opacity:.75; }
-/* 标题行右侧的操作推到最右（「全部已读」按钮、主开关都靠这个定位） */
-.ts-sec-head > .ts-mark-all-read-btn,
+/* 标题行右侧的操作推到最右（图标按钮组 / 主开关都靠这个定位）。
+   .ts-warn-headops 是「全部已读 + 全部归档 + 占位」那一组 —— 必须一并推右，
+   否则它与下面逐行的三个槽位就不在同一列了（用户要求垂直对齐）。 */
+.ts-sec-head > .ts-warn-headops,
 .ts-sec-head > .ts-cont-sw { margin-left:auto; }
 /*
  * 外框（box）：把一组子控件包起来（提示音的四行、自动继续的两行、清单的条目列表）。
@@ -339,17 +347,20 @@ body.ts-desk-nochat [data-conversation-region="composer"] {
 .ts-cont-num { flex:none; width:46px; height:22px; box-sizing:border-box; border:1px solid rgba(127,127,127,.35); border-radius:6px; background:rgba(127,127,127,.1); color:inherit; font-family:inherit; font-size:calc(var(--ts-fs, 12.5px) * 0.84); line-height:1; padding:0 5px; text-align:center; -moz-appearance:textfield; appearance:textfield; }
 .ts-cont-num::-webkit-outer-spin-button, .ts-cont-num::-webkit-inner-spin-button { -webkit-appearance:none; appearance:none; margin:0; }
 .ts-cont-unit { flex:none; font-size:calc(var(--ts-fs, 12.5px) * 0.8); opacity:.5; }
-/* 头部「全部已读」：牌形按钮，与行内「已读」同一套视觉语言（不再是一个孤零零的黄胖按钮） */
-.ts-mark-all-read-btn { flex:none; display:inline-flex; align-items:center; gap:3px; border:1px solid rgba(127,127,127,.36); background:rgba(127,127,127,.12); color:inherit; font-size:calc(var(--ts-fs, 12.5px) * 0.84); font-weight:500; line-height:1; padding:4px 9px; border-radius:999px; cursor:pointer; opacity:.82; transition:background .12s, opacity .12s; }
-.ts-mark-all-read-btn:hover { opacity:1; background:rgba(127,127,127,.26); }
-.ts-mark-all-read-btn:focus-visible { outline:2px solid rgba(96,165,250,.85); outline-offset:1px; }
-.ts-mark-all-read-btn:disabled { opacity:.4; cursor:not-allowed; pointer-events:none; }
 .ts-warn-pop-list { flex:1 1 auto; overflow:auto; overflow-x:hidden; padding:5px; display:flex; flex-direction:column; gap:2px; min-height:32px; }
 /* 一行 = 条目（点它跳转）+ 右侧操作区。align-items:center 让操作按钮与两行文本居中对齐，
    不再像以前那样贴顶显得歪。 */
-.ts-warn-row { display:flex; align-items:center; gap:6px; box-sizing:border-box; padding-right:1px; border-radius:9px; }
+/* padding-right:0 —— 行内三个图标槽位要和标题行的「全部」图标**逐列同中心**：
+   以前这里留 1px 让右缘对齐，但图标是居中的，1px 会让每一列都偏 0.5px 看起来发虚。 */
+.ts-warn-row { display:flex; align-items:center; gap:6px; box-sizing:border-box; padding-right:0; border-radius:9px; }
 .ts-warn-item { flex:1; min-width:0; display:flex; align-items:flex-start; gap:8px; padding:7px 8px; border:0; border-radius:9px; background:transparent; color:inherit; font:inherit; text-align:left; cursor:pointer; }
-.ts-warn-actions { flex:none; display:flex; align-items:center; gap:5px; }
+/* 行内操作区：三个**固定宽度槽位**（继续 / 已读 / 归档）。
+   固定槽位是“不挤压内容 + 垂直对齐”的关键：每个槽宽恒定，有没有按钮都占位，
+   所以每一行的三个图标落在同一列，标题行的两个「全部」按钮也与它们对齐。 */
+.ts-warn-actions { flex:none; display:flex; align-items:center; gap:4px; }
+/* 槽位宽 = 按钮宽（22px）：按钮是靠 justify-content 在槽里居中的，槽更宽会
+   把相邻槽位推远，标题行与行内的列中心就对不上（实测 24 vs 22 差 2px/列）。 */
+.ts-warn-slot { flex:none; width:22px; height:22px; display:inline-flex; align-items:center; justify-content:center; }
 .ts-warn-row:not(.is-active) .ts-warn-item:hover { background:rgba(245,158,11,.14); }
 .ts-warn-row.is-active .ts-warn-item:hover { background:rgba(34,197,94,.12); }
 .ts-warn-item:focus-visible { outline:1px solid rgba(96,165,250,.8); }
@@ -364,29 +375,26 @@ body.ts-desk-nochat [data-conversation-region="composer"] {
 .ts-warn-reason { flex:none; box-sizing:border-box; font-size:calc(var(--ts-fs, 12.5px) * 0.8); line-height:1.5; padding:0 6px; border-radius:999px; background:rgba(245,158,11,.16); border:1px solid rgba(245,158,11,.42); color:#fbbf24; white-space:nowrap; }
 /* 计时器：距上次正常发言的耗时（仅活跃对话显示） */
 .ts-warn-timer { flex:none; font-size:calc(var(--ts-fs, 12.5px) * 0.8); opacity:.55; font-variant-numeric:tabular-nums; white-space:nowrap; margin-left:0; }
-/* 行内「已读」：轻牌按钮 + 对勾图标（以前那个裸「✓」太小、难看出是按钮） */
-.ts-warn-read { flex:none; display:inline-flex; align-items:center; gap:3px; border:1px solid rgba(127,127,127,.34); background:rgba(127,127,127,.12); color:inherit; font-size:calc(var(--ts-fs, 12.5px) * 0.84); line-height:1; padding:4px 8px; border-radius:999px; cursor:pointer; opacity:.68; transition:background .12s, opacity .12s, border-color .12s; }
-.ts-warn-read:hover { opacity:1; background:rgba(74,222,128,.18); border-color:rgba(74,222,128,.5); color:#86efac; }
-.ts-warn-read:focus-visible { outline:2px solid rgba(96,165,250,.85); outline-offset:1px; }
-/* 归档按钮（行内 + 标题行「归档所有」）：同「已读」的轻牌风格，但用中性色区分。
-   图标是线条归档盒（icons.ts 的 archive），不是 emoji。 */
-.ts-warn-archive-btn, .ts-warn-archive-all-btn { flex:none; display:inline-flex; align-items:center; gap:3px; border:1px solid rgba(127,127,127,.34); background:rgba(127,127,127,.12); color:inherit; font-size:calc(var(--ts-fs, 12.5px) * 0.84); line-height:1; padding:4px 8px; border-radius:999px; cursor:pointer; opacity:.68; transition:background .12s, opacity .12s, border-color .12s; }
-.ts-warn-archive-btn:hover, .ts-warn-archive-all-btn:hover { opacity:1; background:rgba(148,163,184,.22); border-color:rgba(148,163,184,.55); }
-.ts-warn-archive-btn:focus-visible, .ts-warn-archive-all-btn:focus-visible { outline:2px solid rgba(96,165,250,.85); outline-offset:1px; }
-.ts-warn-archive-btn:disabled, .ts-warn-archive-all-btn:disabled { opacity:.4; cursor:not-allowed; pointer-events:none; }
-.ts-warn-archive-ico { display:inline-flex; align-items:center; justify-content:center; }
-.ts-warn-archive-ico svg { display:block; }
-/* 标题行里的两个操作（已读 / 归档）同行排：左对齐进标题右侧，整体不换行。 */
-.ts-warn-headops { flex:none; display:inline-flex; align-items:center; gap:6px; }
-/* 行内「继续」：不能自动时的唯一手动入口，做成主色调强调 */
-.ts-warn-continue-btn { flex:none; border:1px solid rgba(96,165,250,.6); background:rgba(96,165,250,.18); color:#93c5fd; font-size:calc(var(--ts-fs, 12.5px) * 0.84); font-weight:600; line-height:1; padding:5px 9px; border-radius:999px; cursor:pointer; transition:background .12s; }
-.ts-warn-continue-btn:hover:not(:disabled) { background:rgba(96,165,250,.34); }
-.ts-warn-continue-btn:disabled { opacity:.6; cursor:default; }
-.ts-warn-continue-btn.is-error { border-color:rgba(248,113,113,.6); background:rgba(248,113,113,.18); color:#fca5a5; }
-.ts-warn-continue-btn:focus-visible { outline:2px solid rgba(96,165,250,.85); outline-offset:1px; }
-/* 已发送：不是按钮，只是告诉用户「机器已经接手了，不用管」 */
-.ts-warn-done { flex:none; display:inline-flex; align-items:center; gap:3px; font-size:calc(var(--ts-fs, 12.5px) * 0.84); line-height:1; padding:4px 8px; border-radius:999px; border:1px solid rgba(74,222,128,.45); background:rgba(74,222,128,.14); color:#86efac; white-space:nowrap; }
+/* —— 图标按钮（继续 / 已读 / 归档，行内与标题行共用同一套）——
+   只放图标不放文字：三个动作挤在一行时文字会把标题压到看不全（用户反馈）；
+   统一成 22×22 的圆形/方角牌，悬停才显底色，含义靠 title / aria-label。
+   三种动作不靠颜色区分主次（都是中性色），靠图标形状本身。 */
+.ts-warn-icon-btn { flex:none; display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px; padding:0; border:1px solid rgba(127,127,127,.34); background:rgba(127,127,127,.12); color:inherit; border-radius:7px; cursor:pointer; opacity:.7; transition:background .12s, opacity .12s, border-color .12s, color .12s; }
+.ts-warn-icon-btn:hover:not(:disabled) { opacity:1; background:rgba(127,127,127,.26); border-color:rgba(127,127,127,.6); }
+.ts-warn-icon-btn:focus-visible { outline:2px solid rgba(96,165,250,.85); outline-offset:1px; }
+.ts-warn-icon-btn:disabled { opacity:.35; cursor:not-allowed; pointer-events:none; }
+/* 错误态：只有「继续」会用到（发送失败） */
+.ts-warn-icon-btn.is-error:not(:disabled) { border-color:rgba(248,113,113,.6); background:rgba(248,113,113,.18); color:#fca5a5; }
+/* 图标容器：svg 不撑高行（display:block） */
+.ts-warn-ico { display:inline-flex; align-items:center; justify-content:center; }
+.ts-warn-ico svg { display:block; }
+/* 「已发送 / 发送中」不是按钮，但占同一个 22×22 槽位 —— 不占位会让后面的两个
+   图标跟着左移，与上下行对不齐。 */
+.ts-warn-done { flex:none; display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px; padding:0; border-radius:7px; border:1px solid rgba(74,222,128,.45); background:rgba(74,222,128,.14); color:#86efac; }
 .ts-warn-done.is-busy { border-color:rgba(96,165,250,.45); background:rgba(96,165,250,.14); color:#93c5fd; }
+/* 标题行的「全部」按钮组：三个 22px 槽位 + 4px 间隔，与行内操作区同宽同位置。
+   第三枚是空槽位（占位）：单个对话有「继续」，标题行没有，留空才能对齐。 */
+.ts-warn-headops { flex:none; display:inline-flex; align-items:center; gap:4px; }
 .ts-warn-empty { display:flex; align-items:center; justify-content:center; gap:6px; padding:18px 8px; font-size:calc(var(--ts-fs, 12.5px) * 0.92); opacity:.45; }
 @media (prefers-reduced-motion: reduce) { .ts-side-badge { animation:none; opacity:1; } }
 

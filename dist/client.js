@@ -2355,8 +2355,11 @@ body.ts-desk-nochat [data-conversation-region="composer"] {
    \u300C\u624B\u673A\u7AEF\u56DE\u6D88\u606F\u4E4B\u7C7B\u7684\uFF0C\u4E5F\u65E0\u6CD5\u5173\u95ED\u63D0\u793A\u97F3\u300D\u2014\u2014\u5F00\u5173\u5C31\u5728\u9762\u677F\u91CC\uFF0C\u4F46\u624B\u70B9\u4E0D\u5230\uFF09\u3002 */
 @media (pointer: coarse) {
   .ts-warn-pop.is-sheet .ts-warn-item { min-height:44px; padding:10px 10px; }
-  .ts-warn-pop.is-sheet .ts-warn-read,
-  .ts-warn-pop.is-sheet .ts-warn-continue-btn { min-height:30px; padding:0 10px; }
+  /* \u56FE\u6807\u6309\u94AE\u5728\u89E6\u5C4F\u4E0A\u8981\u7ED9\u591F\u70ED\u533A\uFF0822px \u592A\u5C0F\u70B9\u4E0D\u51C6\uFF09\uFF1A\u69FD\u4F4D\u4E0E\u6309\u94AE\u4E00\u8D77\u653E\u5927\u5230 34px */
+  .ts-warn-pop.is-sheet .ts-warn-icon-btn,
+  .ts-warn-pop.is-sheet .ts-warn-done { width:34px; height:34px; }
+  .ts-warn-pop.is-sheet .ts-warn-slot { width:34px; height:34px; }
+  .ts-warn-pop.is-sheet .ts-warn-headops > .ts-warn-slot { width:34px; }
   .ts-warn-pop.is-sheet .ts-cont-sw { width:40px; height:22px; }
   .ts-warn-pop.is-sheet .ts-cont-sw > i { width:18px; height:18px; }
   .ts-warn-pop.is-sheet .ts-cont-sw::after { content:''; position:absolute; inset:-11px -2px; }
@@ -2380,12 +2383,17 @@ body.ts-desk-nochat [data-conversation-region="composer"] {
 .ts-sec-list { flex:1 1 auto; min-height:0; display:flex; flex-direction:column; }
 .ts-sec + .ts-sec { border-top:1px solid rgba(127,127,127,.22); }
 /* \u533A\u57DF\u6807\u9898\u884C\uFF1A\u4E0E\u300C\u5BF9\u8BDD\u6E05\u5355\u300D\u539F\u5934\u90E8\u540C\u6B3E\u6392\u7248\uFF0C\u4F46\u4E2D\u6027\u8272\uFF08\u4E0D\u518D\u662F\u67D0\u4E00\u533A\u7684\u4E13\u5C5E\u6837\u5F0F\uFF09 */
-.ts-sec-head { display:flex; align-items:center; gap:8px; padding:9px 22px 8px 12px; font-size:calc(var(--ts-fs, 12.5px) * 0.88); font-weight:600; opacity:.62; letter-spacing:.04em; }
+/* \u53F3\u5185\u8DDD 21px\uFF08\u4E0D\u662F 22\uFF09\uFF1A\u8981\u8DDF\u6E05\u5355\u533A\u53F3\u7F18\u4E25\u683C\u5BF9\u9F50 \u2014\u2014 \u6E05\u5355\u533A\u662F 12(\u533A\u5757) + 1(\u8FB9\u6846) +
+   3(ts-box \u5185\u8DDD) + 5(ts-warn-pop-list \u5185\u8DDD) = 21\u3002\u5DEE 1px \u4F1A\u8BA9\u6807\u9898\u884C\u7684\u56FE\u6807\u4E0E\u9010\u884C\u56FE\u6807
+   \u9519\u5F00\u534A\u50CF\u7D20\uFF08\u56FE\u6807\u5C45\u4E2D\uFF0C\u53F3\u7F18\u5DEE 1px \u2192 \u4E2D\u5FC3\u5DEE 0.5px \u7D2F\u79EF\u5230 6px \u89C6\u89C9\u9519\u4F4D\uFF09\u3002 */
+.ts-sec-head { display:flex; align-items:center; gap:8px; padding:9px 21px 8px 12px; font-size:calc(var(--ts-fs, 12.5px) * 0.88); font-weight:600; opacity:.62; letter-spacing:.04em; }
 .ts-sec-title { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 /* \u6807\u9898\u53F3\u4FA7\u7684\u6D45\u8272\u8BA1\u6570\uFF08\u5982\u300C\u5BF9\u8BDD\u6E05\u5355 3\u300D\u91CC\u7684 3\uFF09 */
 .ts-sec-note { flex:none; font-weight:500; opacity:.75; }
-/* \u6807\u9898\u884C\u53F3\u4FA7\u7684\u64CD\u4F5C\u63A8\u5230\u6700\u53F3\uFF08\u300C\u5168\u90E8\u5DF2\u8BFB\u300D\u6309\u94AE\u3001\u4E3B\u5F00\u5173\u90FD\u9760\u8FD9\u4E2A\u5B9A\u4F4D\uFF09 */
-.ts-sec-head > .ts-mark-all-read-btn,
+/* \u6807\u9898\u884C\u53F3\u4FA7\u7684\u64CD\u4F5C\u63A8\u5230\u6700\u53F3\uFF08\u56FE\u6807\u6309\u94AE\u7EC4 / \u4E3B\u5F00\u5173\u90FD\u9760\u8FD9\u4E2A\u5B9A\u4F4D\uFF09\u3002
+   .ts-warn-headops \u662F\u300C\u5168\u90E8\u5DF2\u8BFB + \u5168\u90E8\u5F52\u6863 + \u5360\u4F4D\u300D\u90A3\u4E00\u7EC4 \u2014\u2014 \u5FC5\u987B\u4E00\u5E76\u63A8\u53F3\uFF0C
+   \u5426\u5219\u5B83\u4E0E\u4E0B\u9762\u9010\u884C\u7684\u4E09\u4E2A\u69FD\u4F4D\u5C31\u4E0D\u5728\u540C\u4E00\u5217\u4E86\uFF08\u7528\u6237\u8981\u6C42\u5782\u76F4\u5BF9\u9F50\uFF09\u3002 */
+.ts-sec-head > .ts-warn-headops,
 .ts-sec-head > .ts-cont-sw { margin-left:auto; }
 /*
  * \u5916\u6846\uFF08box\uFF09\uFF1A\u628A\u4E00\u7EC4\u5B50\u63A7\u4EF6\u5305\u8D77\u6765\uFF08\u63D0\u793A\u97F3\u7684\u56DB\u884C\u3001\u81EA\u52A8\u7EE7\u7EED\u7684\u4E24\u884C\u3001\u6E05\u5355\u7684\u6761\u76EE\u5217\u8868\uFF09\u3002
@@ -2438,17 +2446,20 @@ body.ts-desk-nochat [data-conversation-region="composer"] {
 .ts-cont-num { flex:none; width:46px; height:22px; box-sizing:border-box; border:1px solid rgba(127,127,127,.35); border-radius:6px; background:rgba(127,127,127,.1); color:inherit; font-family:inherit; font-size:calc(var(--ts-fs, 12.5px) * 0.84); line-height:1; padding:0 5px; text-align:center; -moz-appearance:textfield; appearance:textfield; }
 .ts-cont-num::-webkit-outer-spin-button, .ts-cont-num::-webkit-inner-spin-button { -webkit-appearance:none; appearance:none; margin:0; }
 .ts-cont-unit { flex:none; font-size:calc(var(--ts-fs, 12.5px) * 0.8); opacity:.5; }
-/* \u5934\u90E8\u300C\u5168\u90E8\u5DF2\u8BFB\u300D\uFF1A\u724C\u5F62\u6309\u94AE\uFF0C\u4E0E\u884C\u5185\u300C\u5DF2\u8BFB\u300D\u540C\u4E00\u5957\u89C6\u89C9\u8BED\u8A00\uFF08\u4E0D\u518D\u662F\u4E00\u4E2A\u5B64\u96F6\u96F6\u7684\u9EC4\u80D6\u6309\u94AE\uFF09 */
-.ts-mark-all-read-btn { flex:none; display:inline-flex; align-items:center; gap:3px; border:1px solid rgba(127,127,127,.36); background:rgba(127,127,127,.12); color:inherit; font-size:calc(var(--ts-fs, 12.5px) * 0.84); font-weight:500; line-height:1; padding:4px 9px; border-radius:999px; cursor:pointer; opacity:.82; transition:background .12s, opacity .12s; }
-.ts-mark-all-read-btn:hover { opacity:1; background:rgba(127,127,127,.26); }
-.ts-mark-all-read-btn:focus-visible { outline:2px solid rgba(96,165,250,.85); outline-offset:1px; }
-.ts-mark-all-read-btn:disabled { opacity:.4; cursor:not-allowed; pointer-events:none; }
 .ts-warn-pop-list { flex:1 1 auto; overflow:auto; overflow-x:hidden; padding:5px; display:flex; flex-direction:column; gap:2px; min-height:32px; }
 /* \u4E00\u884C = \u6761\u76EE\uFF08\u70B9\u5B83\u8DF3\u8F6C\uFF09+ \u53F3\u4FA7\u64CD\u4F5C\u533A\u3002align-items:center \u8BA9\u64CD\u4F5C\u6309\u94AE\u4E0E\u4E24\u884C\u6587\u672C\u5C45\u4E2D\u5BF9\u9F50\uFF0C
    \u4E0D\u518D\u50CF\u4EE5\u524D\u90A3\u6837\u8D34\u9876\u663E\u5F97\u6B6A\u3002 */
-.ts-warn-row { display:flex; align-items:center; gap:6px; box-sizing:border-box; padding-right:1px; border-radius:9px; }
+/* padding-right:0 \u2014\u2014 \u884C\u5185\u4E09\u4E2A\u56FE\u6807\u69FD\u4F4D\u8981\u548C\u6807\u9898\u884C\u7684\u300C\u5168\u90E8\u300D\u56FE\u6807**\u9010\u5217\u540C\u4E2D\u5FC3**\uFF1A
+   \u4EE5\u524D\u8FD9\u91CC\u7559 1px \u8BA9\u53F3\u7F18\u5BF9\u9F50\uFF0C\u4F46\u56FE\u6807\u662F\u5C45\u4E2D\u7684\uFF0C1px \u4F1A\u8BA9\u6BCF\u4E00\u5217\u90FD\u504F 0.5px \u770B\u8D77\u6765\u53D1\u865A\u3002 */
+.ts-warn-row { display:flex; align-items:center; gap:6px; box-sizing:border-box; padding-right:0; border-radius:9px; }
 .ts-warn-item { flex:1; min-width:0; display:flex; align-items:flex-start; gap:8px; padding:7px 8px; border:0; border-radius:9px; background:transparent; color:inherit; font:inherit; text-align:left; cursor:pointer; }
-.ts-warn-actions { flex:none; display:flex; align-items:center; gap:5px; }
+/* \u884C\u5185\u64CD\u4F5C\u533A\uFF1A\u4E09\u4E2A**\u56FA\u5B9A\u5BBD\u5EA6\u69FD\u4F4D**\uFF08\u7EE7\u7EED / \u5DF2\u8BFB / \u5F52\u6863\uFF09\u3002
+   \u56FA\u5B9A\u69FD\u4F4D\u662F\u201C\u4E0D\u6324\u538B\u5185\u5BB9 + \u5782\u76F4\u5BF9\u9F50\u201D\u7684\u5173\u952E\uFF1A\u6BCF\u4E2A\u69FD\u5BBD\u6052\u5B9A\uFF0C\u6709\u6CA1\u6709\u6309\u94AE\u90FD\u5360\u4F4D\uFF0C
+   \u6240\u4EE5\u6BCF\u4E00\u884C\u7684\u4E09\u4E2A\u56FE\u6807\u843D\u5728\u540C\u4E00\u5217\uFF0C\u6807\u9898\u884C\u7684\u4E24\u4E2A\u300C\u5168\u90E8\u300D\u6309\u94AE\u4E5F\u4E0E\u5B83\u4EEC\u5BF9\u9F50\u3002 */
+.ts-warn-actions { flex:none; display:flex; align-items:center; gap:4px; }
+/* \u69FD\u4F4D\u5BBD = \u6309\u94AE\u5BBD\uFF0822px\uFF09\uFF1A\u6309\u94AE\u662F\u9760 justify-content \u5728\u69FD\u91CC\u5C45\u4E2D\u7684\uFF0C\u69FD\u66F4\u5BBD\u4F1A
+   \u628A\u76F8\u90BB\u69FD\u4F4D\u63A8\u8FDC\uFF0C\u6807\u9898\u884C\u4E0E\u884C\u5185\u7684\u5217\u4E2D\u5FC3\u5C31\u5BF9\u4E0D\u4E0A\uFF08\u5B9E\u6D4B 24 vs 22 \u5DEE 2px/\u5217\uFF09\u3002 */
+.ts-warn-slot { flex:none; width:22px; height:22px; display:inline-flex; align-items:center; justify-content:center; }
 .ts-warn-row:not(.is-active) .ts-warn-item:hover { background:rgba(245,158,11,.14); }
 .ts-warn-row.is-active .ts-warn-item:hover { background:rgba(34,197,94,.12); }
 .ts-warn-item:focus-visible { outline:1px solid rgba(96,165,250,.8); }
@@ -2463,29 +2474,26 @@ body.ts-desk-nochat [data-conversation-region="composer"] {
 .ts-warn-reason { flex:none; box-sizing:border-box; font-size:calc(var(--ts-fs, 12.5px) * 0.8); line-height:1.5; padding:0 6px; border-radius:999px; background:rgba(245,158,11,.16); border:1px solid rgba(245,158,11,.42); color:#fbbf24; white-space:nowrap; }
 /* \u8BA1\u65F6\u5668\uFF1A\u8DDD\u4E0A\u6B21\u6B63\u5E38\u53D1\u8A00\u7684\u8017\u65F6\uFF08\u4EC5\u6D3B\u8DC3\u5BF9\u8BDD\u663E\u793A\uFF09 */
 .ts-warn-timer { flex:none; font-size:calc(var(--ts-fs, 12.5px) * 0.8); opacity:.55; font-variant-numeric:tabular-nums; white-space:nowrap; margin-left:0; }
-/* \u884C\u5185\u300C\u5DF2\u8BFB\u300D\uFF1A\u8F7B\u724C\u6309\u94AE + \u5BF9\u52FE\u56FE\u6807\uFF08\u4EE5\u524D\u90A3\u4E2A\u88F8\u300C\u2713\u300D\u592A\u5C0F\u3001\u96BE\u770B\u51FA\u662F\u6309\u94AE\uFF09 */
-.ts-warn-read { flex:none; display:inline-flex; align-items:center; gap:3px; border:1px solid rgba(127,127,127,.34); background:rgba(127,127,127,.12); color:inherit; font-size:calc(var(--ts-fs, 12.5px) * 0.84); line-height:1; padding:4px 8px; border-radius:999px; cursor:pointer; opacity:.68; transition:background .12s, opacity .12s, border-color .12s; }
-.ts-warn-read:hover { opacity:1; background:rgba(74,222,128,.18); border-color:rgba(74,222,128,.5); color:#86efac; }
-.ts-warn-read:focus-visible { outline:2px solid rgba(96,165,250,.85); outline-offset:1px; }
-/* \u5F52\u6863\u6309\u94AE\uFF08\u884C\u5185 + \u6807\u9898\u884C\u300C\u5F52\u6863\u6240\u6709\u300D\uFF09\uFF1A\u540C\u300C\u5DF2\u8BFB\u300D\u7684\u8F7B\u724C\u98CE\u683C\uFF0C\u4F46\u7528\u4E2D\u6027\u8272\u533A\u5206\u3002
-   \u56FE\u6807\u662F\u7EBF\u6761\u5F52\u6863\u76D2\uFF08icons.ts \u7684 archive\uFF09\uFF0C\u4E0D\u662F emoji\u3002 */
-.ts-warn-archive-btn, .ts-warn-archive-all-btn { flex:none; display:inline-flex; align-items:center; gap:3px; border:1px solid rgba(127,127,127,.34); background:rgba(127,127,127,.12); color:inherit; font-size:calc(var(--ts-fs, 12.5px) * 0.84); line-height:1; padding:4px 8px; border-radius:999px; cursor:pointer; opacity:.68; transition:background .12s, opacity .12s, border-color .12s; }
-.ts-warn-archive-btn:hover, .ts-warn-archive-all-btn:hover { opacity:1; background:rgba(148,163,184,.22); border-color:rgba(148,163,184,.55); }
-.ts-warn-archive-btn:focus-visible, .ts-warn-archive-all-btn:focus-visible { outline:2px solid rgba(96,165,250,.85); outline-offset:1px; }
-.ts-warn-archive-btn:disabled, .ts-warn-archive-all-btn:disabled { opacity:.4; cursor:not-allowed; pointer-events:none; }
-.ts-warn-archive-ico { display:inline-flex; align-items:center; justify-content:center; }
-.ts-warn-archive-ico svg { display:block; }
-/* \u6807\u9898\u884C\u91CC\u7684\u4E24\u4E2A\u64CD\u4F5C\uFF08\u5DF2\u8BFB / \u5F52\u6863\uFF09\u540C\u884C\u6392\uFF1A\u5DE6\u5BF9\u9F50\u8FDB\u6807\u9898\u53F3\u4FA7\uFF0C\u6574\u4F53\u4E0D\u6362\u884C\u3002 */
-.ts-warn-headops { flex:none; display:inline-flex; align-items:center; gap:6px; }
-/* \u884C\u5185\u300C\u7EE7\u7EED\u300D\uFF1A\u4E0D\u80FD\u81EA\u52A8\u65F6\u7684\u552F\u4E00\u624B\u52A8\u5165\u53E3\uFF0C\u505A\u6210\u4E3B\u8272\u8C03\u5F3A\u8C03 */
-.ts-warn-continue-btn { flex:none; border:1px solid rgba(96,165,250,.6); background:rgba(96,165,250,.18); color:#93c5fd; font-size:calc(var(--ts-fs, 12.5px) * 0.84); font-weight:600; line-height:1; padding:5px 9px; border-radius:999px; cursor:pointer; transition:background .12s; }
-.ts-warn-continue-btn:hover:not(:disabled) { background:rgba(96,165,250,.34); }
-.ts-warn-continue-btn:disabled { opacity:.6; cursor:default; }
-.ts-warn-continue-btn.is-error { border-color:rgba(248,113,113,.6); background:rgba(248,113,113,.18); color:#fca5a5; }
-.ts-warn-continue-btn:focus-visible { outline:2px solid rgba(96,165,250,.85); outline-offset:1px; }
-/* \u5DF2\u53D1\u9001\uFF1A\u4E0D\u662F\u6309\u94AE\uFF0C\u53EA\u662F\u544A\u8BC9\u7528\u6237\u300C\u673A\u5668\u5DF2\u7ECF\u63A5\u624B\u4E86\uFF0C\u4E0D\u7528\u7BA1\u300D */
-.ts-warn-done { flex:none; display:inline-flex; align-items:center; gap:3px; font-size:calc(var(--ts-fs, 12.5px) * 0.84); line-height:1; padding:4px 8px; border-radius:999px; border:1px solid rgba(74,222,128,.45); background:rgba(74,222,128,.14); color:#86efac; white-space:nowrap; }
+/* \u2014\u2014 \u56FE\u6807\u6309\u94AE\uFF08\u7EE7\u7EED / \u5DF2\u8BFB / \u5F52\u6863\uFF0C\u884C\u5185\u4E0E\u6807\u9898\u884C\u5171\u7528\u540C\u4E00\u5957\uFF09\u2014\u2014
+   \u53EA\u653E\u56FE\u6807\u4E0D\u653E\u6587\u5B57\uFF1A\u4E09\u4E2A\u52A8\u4F5C\u6324\u5728\u4E00\u884C\u65F6\u6587\u5B57\u4F1A\u628A\u6807\u9898\u538B\u5230\u770B\u4E0D\u5168\uFF08\u7528\u6237\u53CD\u9988\uFF09\uFF1B
+   \u7EDF\u4E00\u6210 22\xD722 \u7684\u5706\u5F62/\u65B9\u89D2\u724C\uFF0C\u60AC\u505C\u624D\u663E\u5E95\u8272\uFF0C\u542B\u4E49\u9760 title / aria-label\u3002
+   \u4E09\u79CD\u52A8\u4F5C\u4E0D\u9760\u989C\u8272\u533A\u5206\u4E3B\u6B21\uFF08\u90FD\u662F\u4E2D\u6027\u8272\uFF09\uFF0C\u9760\u56FE\u6807\u5F62\u72B6\u672C\u8EAB\u3002 */
+.ts-warn-icon-btn { flex:none; display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px; padding:0; border:1px solid rgba(127,127,127,.34); background:rgba(127,127,127,.12); color:inherit; border-radius:7px; cursor:pointer; opacity:.7; transition:background .12s, opacity .12s, border-color .12s, color .12s; }
+.ts-warn-icon-btn:hover:not(:disabled) { opacity:1; background:rgba(127,127,127,.26); border-color:rgba(127,127,127,.6); }
+.ts-warn-icon-btn:focus-visible { outline:2px solid rgba(96,165,250,.85); outline-offset:1px; }
+.ts-warn-icon-btn:disabled { opacity:.35; cursor:not-allowed; pointer-events:none; }
+/* \u9519\u8BEF\u6001\uFF1A\u53EA\u6709\u300C\u7EE7\u7EED\u300D\u4F1A\u7528\u5230\uFF08\u53D1\u9001\u5931\u8D25\uFF09 */
+.ts-warn-icon-btn.is-error:not(:disabled) { border-color:rgba(248,113,113,.6); background:rgba(248,113,113,.18); color:#fca5a5; }
+/* \u56FE\u6807\u5BB9\u5668\uFF1Asvg \u4E0D\u6491\u9AD8\u884C\uFF08display:block\uFF09 */
+.ts-warn-ico { display:inline-flex; align-items:center; justify-content:center; }
+.ts-warn-ico svg { display:block; }
+/* \u300C\u5DF2\u53D1\u9001 / \u53D1\u9001\u4E2D\u300D\u4E0D\u662F\u6309\u94AE\uFF0C\u4F46\u5360\u540C\u4E00\u4E2A 22\xD722 \u69FD\u4F4D \u2014\u2014 \u4E0D\u5360\u4F4D\u4F1A\u8BA9\u540E\u9762\u7684\u4E24\u4E2A
+   \u56FE\u6807\u8DDF\u7740\u5DE6\u79FB\uFF0C\u4E0E\u4E0A\u4E0B\u884C\u5BF9\u4E0D\u9F50\u3002 */
+.ts-warn-done { flex:none; display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px; padding:0; border-radius:7px; border:1px solid rgba(74,222,128,.45); background:rgba(74,222,128,.14); color:#86efac; }
 .ts-warn-done.is-busy { border-color:rgba(96,165,250,.45); background:rgba(96,165,250,.14); color:#93c5fd; }
+/* \u6807\u9898\u884C\u7684\u300C\u5168\u90E8\u300D\u6309\u94AE\u7EC4\uFF1A\u4E09\u4E2A 22px \u69FD\u4F4D + 4px \u95F4\u9694\uFF0C\u4E0E\u884C\u5185\u64CD\u4F5C\u533A\u540C\u5BBD\u540C\u4F4D\u7F6E\u3002
+   \u7B2C\u4E09\u679A\u662F\u7A7A\u69FD\u4F4D\uFF08\u5360\u4F4D\uFF09\uFF1A\u5355\u4E2A\u5BF9\u8BDD\u6709\u300C\u7EE7\u7EED\u300D\uFF0C\u6807\u9898\u884C\u6CA1\u6709\uFF0C\u7559\u7A7A\u624D\u80FD\u5BF9\u9F50\u3002 */
+.ts-warn-headops { flex:none; display:inline-flex; align-items:center; gap:4px; }
 .ts-warn-empty { display:flex; align-items:center; justify-content:center; gap:6px; padding:18px 8px; font-size:calc(var(--ts-fs, 12.5px) * 0.92); opacity:.45; }
 @media (prefers-reduced-motion: reduce) { .ts-side-badge { animation:none; opacity:1; } }
 
@@ -8031,6 +8039,25 @@ function paneIcon(id) {
   return isKind(kind) ? KIND_ICON[kind] : "report";
 }
 
+// client/src/panel/desk-first-layout.ts
+var LAYOUT_NO_PREVIEW = {
+  region: { preview: "center", chat: "center", board: "right", talk: "right", save: "right" },
+  stack: { board: void 0, talk: "board", save: "talk" }
+};
+var LAYOUT_WITH_PREVIEW = {
+  region: { preview: "center", chat: "right", board: "right", talk: "right", save: "right" },
+  stack: { chat: void 0, board: "chat", talk: "board", save: "talk" }
+};
+function layoutFor(hasPreview) {
+  return hasPreview ? LAYOUT_WITH_PREVIEW : LAYOUT_NO_PREVIEW;
+}
+function regionOfKind(kind, hasPreview) {
+  return layoutFor(hasPreview).region[kind] ?? "center";
+}
+function stackAnchorOf(kind, hasPreview) {
+  return layoutFor(hasPreview).stack[kind];
+}
+
 // client/src/panel/chrome-position.ts
 var CHROME_POSITIONS = ["top", "left", "right"];
 var CHROME_KEY = "tokensave:desk-chrome.v1";
@@ -8111,6 +8138,12 @@ var ICON_BODIES = {
   pencil: '<path d="M4.5 19.5h4L19 9a2.1 2.1 0 0 0-3-3L4.5 17.5z"/><path d="M14.5 6.5l3 3"/>',
   /** 归档盒：归档对话 */
   archive: '<rect x="3.5" y="4.5" width="17" height="4.5" rx="1.5"/><path d="M5.5 9v9a1.5 1.5 0 0 0 1.5 1.5h10a1.5 1.5 0 0 0 1.5-1.5V9"/><path d="M10 13h4"/>',
+  /** 对勾：已读（与归档、继续同一套牌形图标按钮） */
+  check: '<path d="M4.5 12.5l5 5 10-11"/>',
+  /** 右箭头：继续（让对话接着输出） */
+  play: '<path d="M8 5.5l11 6.5-11 6.5z"/>',
+  /** 双勾：已发送（自动继续已接手，不再是可点按钮） */
+  sent: '<path d="M3 12.5l4.2 4.2 7-7.4"/><path d="M11 14.5l2.2 2.2 7.3-8"/>',
   /** 列表：项目中心（原来的 🗂️） */
   list: '<rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M7 9.5h10"/><path d="M7 13.5h6"/>',
   /** 书：项目预览 */
@@ -8162,22 +8195,6 @@ var STALE_PREFIX = [
 var REGIONS = ["left", "center", "right"];
 var REGION_LABEL = { left: "\u4E3B\u4FA7\u680F", center: "\u7F16\u8F91\u533A/\u9762\u677F\u533A", right: "\u8F85\u52A9\u4FA7\u680F" };
 var REGION_ICON = { left: "regionLeft", center: "regionCenter", right: "regionRight" };
-var KIND_REGION = {
-  // 用户要求（首次进入的界面）：
-  //   面板区 = 项目预览 + DSH 主对话（两个图标紧紧相邻，左右并排）；
-  //   辅助侧栏 = 共享黑板 / 协作对话 / 协作收益。
-  // 主侧栏默认整体收起（首次进入不留空栏），用户可随时拉出来。
-  preview: "center",
-  chat: "center",
-  board: "right",
-  talk: "right",
-  save: "right"
-};
-var RIGHT_STACK_ORDER = {
-  board: void 0,
-  talk: "board",
-  save: "talk"
-};
 var ICONS = {
   // 共享图标（folder/compass/book/report/chat/comment/database/explorers/branch/search/lock/close/list）
   // 来自 icons.ts —— 全站一份，改形状只改一处。
@@ -8737,6 +8754,8 @@ function DeskDock({ project, sessionId, onBack }) {
   const paneOptsRef = (0, import_react19.useRef)(() => null);
   const [, bump] = (0, import_react19.useState)(0);
   const [data, setData] = (0, import_react19.useState)({ explorers: [] });
+  const peekDevUrlRef = (0, import_react19.useRef)("");
+  peekDevUrlRef.current = data.devUrl || "";
   const [font, setFont] = (0, import_react19.useState)(readFont);
   const [fontFamily, setFontFamily] = (0, import_react19.useState)(readFontFamily);
   const [liveIds, setLiveIds] = (0, import_react19.useState)([]);
@@ -9219,14 +9238,27 @@ function DeskDock({ project, sessionId, onBack }) {
       apis[region].addPanel(paneOptsRef.current(paneId(project.id, kind), position));
     };
     const buildDefault = () => {
-      const chat = paneId(project.id, "chat");
-      addTo("center", "chat");
-      if (data.devUrl) addTo("center", "preview", { direction: "left", referencePanel: chat });
-      const board = paneId(project.id, "board");
-      addTo("right", "board");
-      const talk = paneId(project.id, "talk");
-      addTo("right", "talk", { direction: "below", referencePanel: board });
-      addTo("right", "save", { direction: "below", referencePanel: talk });
+      const hasPreview = !!data.devUrl;
+      const layout = layoutFor(hasPreview);
+      const add = (kind, firstOfRegion = false) => {
+        const region = layout.region[kind];
+        const anchorKind = region === "right" ? layout.stack[kind] : void 0;
+        let position;
+        if (anchorKind) {
+          position = { direction: "below", referencePanel: paneId(project.id, anchorKind) };
+        } else if (firstOfRegion) {
+          const centerAnchor = paneId(project.id, hasPreview ? "preview" : "chat");
+          position = { direction: region === "right" ? "right" : "left", referencePanel: centerAnchor };
+        }
+        apis[region].addPanel(paneOptsRef.current(paneId(project.id, kind), position));
+      };
+      const rightKinds = ["chat", "board", "talk", "save"].filter((k) => layout.region[k] === "right");
+      const rightFirst = rightKinds.filter((k) => layout.stack[k] === void 0);
+      const rightRest = rightKinds.filter((k) => layout.stack[k] !== void 0);
+      const centerKind = ["preview", "chat"].find((k) => layout.region[k] === "center");
+      if (centerKind) add(centerKind);
+      rightFirst.forEach((k) => add(k, true));
+      rightRest.forEach((k) => add(k));
     };
     resetToBuiltinRef.current = () => {
       REGIONS.forEach((r) => apis[r].panels.slice().forEach((p) => apis[r].removePanel(p)));
@@ -9399,9 +9431,10 @@ function DeskDock({ project, sessionId, onBack }) {
   (0, import_react19.useEffect)(() => {
     const apis = apiRef.current;
     if (!apis) return;
+    const hasPreview = !!data.devUrl;
     const defaultRegionOf = (id) => {
       const kind = parsePaneId(id)?.kind ?? "";
-      return kind.startsWith("exp:") ? "center" : KIND_REGION[kind] ?? "center";
+      return kind.startsWith("exp:") ? "center" : regionOfKind(kind, hasPreview);
     };
     const inHidden = (id) => hiddenRegions.includes(defaultRegionOf(id));
     const ensure = (id) => {
@@ -9413,7 +9446,7 @@ function DeskDock({ project, sessionId, onBack }) {
       const chatAnchor = apis.center.getPanel(paneId(project.id, "chat"));
       const kind = parsePaneId(id)?.kind ?? "";
       const isPreview = kind === "preview";
-      const sibling = KIND_REGION[kind] === "right" && !kind.startsWith("exp:") ? RIGHT_STACK_ORDER[kind] : void 0;
+      const sibling = defaultRegionOf(id) === "right" && !kind.startsWith("exp:") ? stackAnchorOf(kind, hasPreview) : void 0;
       const siblingAnchor = sibling && apis.right.getPanel(paneId(project.id, sibling));
       const position = isPreview && region === "center" && chatAnchor ? { direction: "left", referencePanel: String(chatAnchor.id) } : siblingAnchor ? { direction: "below", referencePanel: String(siblingAnchor.id) } : hasOwnAnchor ? { direction: "within", referencePanel: String(apis[region].panels[0].id) } : void 0;
       try {
@@ -9443,9 +9476,9 @@ function DeskDock({ project, sessionId, onBack }) {
     });
     try {
       const mk = `tokensave:desk-preview-in-editor.v1:${project.id}`;
-      if (!restoredFromSnapshotRef.current && window.localStorage.getItem(mk) !== "v2") {
+      if (!restoredFromSnapshotRef.current && window.localStorage.getItem(mk) !== "v3" && data.devUrl) {
         const pid = paneId(project.id, "preview");
-        const anchor = paneId(project.id, "chat");
+        const chatId = paneId(project.id, "chat");
         let hit = null;
         for (const r of REGIONS) {
           const p = apis[r].getPanel(pid);
@@ -9455,19 +9488,22 @@ function DeskDock({ project, sessionId, onBack }) {
           }
         }
         if (hit) {
-          const chat = apis.center.getPanel(anchor);
+          const chat = apis.center.getPanel(chatId);
           const sameGroup = !!(hit.panel.group && chat && hit.panel.group === chat.group);
           if (hit.region === "left" || sameGroup) {
-            const pos = chat ? { direction: "left", referencePanel: anchor } : void 0;
             if (hit.region === "center") {
               apis.center.removePanel(hit.panel);
-              apis.center.addPanel(paneOptsRef.current(pid, pos));
+              apis.center.addPanel(paneOptsRef.current(pid));
             } else {
-              moveWindowTo(pid, "center", pos);
+              moveWindowTo(pid, "center");
             }
           }
-          window.localStorage.setItem(mk, "v2");
         }
+        const chatHome = REGIONS.find((r) => apis[r].getPanel(chatId));
+        if (chatHome && chatHome !== "right") {
+          moveWindowTo(chatId, "right");
+        }
+        window.localStorage.setItem(mk, "v3");
       }
     } catch (e) {
       console.warn("[desk-dock] \u9884\u89C8\u5F52\u4F4D\u5931\u8D25", e);
@@ -9922,7 +9958,8 @@ function DeskDock({ project, sessionId, onBack }) {
         return;
       }
       const kind = parsePaneId(id)?.kind ?? "";
-      const region = kind.startsWith("exp:") ? "center" : KIND_REGION[kind] ?? "center";
+      const hasPreviewNow = !!peekDevUrlRef.current;
+      const region = kind.startsWith("exp:") ? "center" : regionOfKind(kind, hasPreviewNow);
       setHiddenRegions((h) => {
         const next = h.filter((r) => r !== region);
         try {
@@ -9931,7 +9968,7 @@ function DeskDock({ project, sessionId, onBack }) {
         }
         return next;
       });
-      const sibling = KIND_REGION[kind] === "right" && !kind.startsWith("exp:") ? RIGHT_STACK_ORDER[kind] : void 0;
+      const sibling = region === "right" && !kind.startsWith("exp:") ? stackAnchorOf(kind, hasPreviewNow) : void 0;
       const siblingAnchor = sibling && apis.right.getPanel(paneId(project.id, sibling));
       const position = siblingAnchor ? { direction: "below", referencePanel: String(siblingAnchor.id) } : apis[region].panels.length ? { direction: "within", referencePanel: String(apis[region].panels[0].id) } : void 0;
       try {
@@ -13181,11 +13218,13 @@ var SETTINGS_MIN_W = Math.max(
 ) + CARD_ROW_CHROME_W;
 var POP_W_MIN = Math.max(236, Math.ceil(SETTINGS_MIN_W));
 var POP_W_MAX = 360;
-var ROW_PAD_W = 17;
+var ROW_PAD_W = 16;
 var ICON_W = 19;
 var ROW_GAP_W = 6;
-var ACTIONS_READ_W = 53;
-var ACTIONS_CONTINUE_W = 41 + 5 + 53;
+var ACTION_SLOT_W = 22;
+var ACTION_SLOT_GAP = 4;
+var ACTION_SLOTS = 3;
+var ACTIONS_W = ACTION_SLOTS * ACTION_SLOT_W + (ACTION_SLOTS - 1) * ACTION_SLOT_GAP;
 var PANEL_PAD_W = 2 * (12 + 1 + 3 + 5);
 var PILL_CHROME_W = 16;
 var TAGS_GAP_W = 4;
@@ -13197,8 +13236,7 @@ function rowContentWidth(r) {
   return Math.max(titleW, tagsW);
 }
 function rowOuterWidth(r) {
-  const actions = r.canContinue ? ACTIONS_CONTINUE_W : ACTIONS_READ_W;
-  return rowContentWidth(r) + ROW_PAD_W + ICON_W + ROW_GAP_W + actions + PANEL_PAD_W;
+  return rowContentWidth(r) + ROW_PAD_W + ICON_W + ROW_GAP_W + ACTIONS_W + PANEL_PAD_W;
 }
 function widestRowWidth(rows) {
   let widest = 0;
@@ -13625,34 +13663,31 @@ function HoverPanel({ pos, panelRef, items, onPick, onHover, onMarkRead, onMarkA
           /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { className: "ts-sec", children: /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(ContinueSettingsBlock, {}) }),
           /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-sec ts-sec-list", children: [
             /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(SectionHead, { title: "\u5BF9\u8BDD\u6E05\u5355", note: String(items.length), children: /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("span", { className: "ts-warn-headops", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)(
+              /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
                 "button",
                 {
                   type: "button",
-                  className: "ts-mark-all-read-btn",
+                  className: "ts-warn-icon-btn",
                   disabled: readable === 0,
                   title: readable === 0 ? "\u6CA1\u6709\u9700\u8981\u6807\u6CE8\u5DF2\u8BFB\u7684\u5BF9\u8BDD" : `\u628A\u6E05\u5355\u91CC\u8FD9 ${readable} \u6761\u5168\u90E8\u6807\u4E3A\u5DF2\u8BFB\uFF0C\u4E0D\u518D\u63D0\u9192\uFF08\u65B0\u4E00\u8F6E / \u65B0\u7684\u5F85\u786E\u8BA4\u4F1A\u91CD\u65B0\u63D0\u9192\uFF09`,
+                  "aria-label": "\u5168\u90E8\u6807\u4E3A\u5DF2\u8BFB",
                   onClick: onMarkAllRead,
-                  children: [
-                    /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { "aria-hidden": "true", children: "\u2713" }),
-                    " \u5DF2\u8BFB"
-                  ]
+                  children: /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-warn-ico", "aria-hidden": "true", dangerouslySetInnerHTML: { __html: iconSvg("check", 12) } })
                 }
               ),
-              /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)(
+              /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
                 "button",
                 {
                   type: "button",
-                  className: "ts-warn-archive-all-btn",
+                  className: "ts-warn-icon-btn",
                   disabled: items.length === 0,
                   title: items.length === 0 ? "\u6E05\u5355\u91CC\u6CA1\u6709\u5BF9\u8BDD" : `\u628A\u6E05\u5355\u91CC\u8FD9 ${items.length} \u6761\u5BF9\u8BDD\u5168\u90E8\u5F52\u6863\uFF08\u53EF\u5728\u4FA7\u680F\u300C\u5168\u90E8\u5BF9\u8BDD\uFF08\u663E\u793A\u5DF2\u5F52\u6863\uFF09\u300D\u91CC\u6062\u590D\uFF09`,
+                  "aria-label": "\u5168\u90E8\u5F52\u6863",
                   onClick: onArchiveAll,
-                  children: [
-                    /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-warn-archive-ico", "aria-hidden": "true", dangerouslySetInnerHTML: { __html: iconSvg("archive", 12) } }),
-                    "\u5F52\u6863"
-                  ]
+                  children: /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-warn-ico", "aria-hidden": "true", dangerouslySetInnerHTML: { __html: iconSvg("archive", 12) } })
                 }
-              )
+              ),
+              /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-warn-slot", "aria-hidden": "true" })
             ] }) }),
             /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { className: "ts-list-body", children: /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { className: "ts-box ts-box-list", children: /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-warn-pop-list", children: [
               items.map((it) => {
@@ -13679,56 +13714,60 @@ function HoverPanel({ pos, panelRef, items, onPick, onHover, onMarkRead, onMarkA
                     }
                   ),
                   /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-warn-actions", children: [
-                    it.canContinue && auto === "sent" && /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-warn-done", title: it.continueHint ? `\u5DF2\u81EA\u52A8\u53D1\u9001\u300C\u7EE7\u7EED\u300D\uFF1A${it.continueHint}` : "\u5DF2\u81EA\u52A8\u53D1\u9001\u300C\u7EE7\u7EED\u300D\u8BA9\u6A21\u578B\u63A5\u7740\u8F93\u51FA", children: "\u5DF2\u53D1\u9001" }),
-                    it.canContinue && auto === "sending" && /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-warn-done is-busy", title: "\u6B63\u5728\u53D1\u9001\u300C\u7EE7\u7EED\u300D\u2026", children: "\u53D1\u9001\u4E2D" }),
-                    it.canContinue && (auto === "idle" || auto === "error") && /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
+                    /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("span", { className: "ts-warn-slot", children: [
+                      it.canContinue && auto === "sent" && /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
+                        "span",
+                        {
+                          className: "ts-warn-done",
+                          title: it.continueHint ? `\u5DF2\u81EA\u52A8\u53D1\u9001\u300C\u7EE7\u7EED\u300D\uFF1A${it.continueHint}` : "\u5DF2\u81EA\u52A8\u53D1\u9001\u300C\u7EE7\u7EED\u300D\u8BA9\u6A21\u578B\u63A5\u7740\u8F93\u51FA",
+                          children: /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-warn-ico", "aria-hidden": "true", dangerouslySetInnerHTML: { __html: iconSvg("sent", 12) } })
+                        }
+                      ),
+                      it.canContinue && auto === "sending" && /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-warn-done is-busy", title: "\u6B63\u5728\u53D1\u9001\u300C\u7EE7\u7EED\u300D\u2026", children: /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-warn-ico", "aria-hidden": "true", dangerouslySetInnerHTML: { __html: iconSvg("play", 12) } }) }),
+                      it.canContinue && (auto === "idle" || auto === "error") && /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
+                        "button",
+                        {
+                          type: "button",
+                          className: `ts-warn-icon-btn${sendState[it.key] === "error" || auto === "error" ? " is-error" : ""}`,
+                          title: sendState[it.key] === "error" ? `\u53D1\u9001\u5931\u8D25\uFF1A${sendErr}\uFF08\u70B9\u4E00\u4E0B\u91CD\u8BD5\uFF09` : auto === "error" ? `\u81EA\u52A8\u53D1\u9001\u5931\u8D25\uFF0C\u53EF\u624B\u52A8\u91CD\u8BD5${it.continueHint ? `\uFF1A${it.continueHint}` : ""}` : it.continueHint || "\u7ED9\u8FD9\u6761\u5BF9\u8BDD\u53D1\u4E00\u6761\u300C\u7EE7\u7EED\u300D\uFF0C\u8BA9\u5B83\u63A5\u7740\u8F93\u51FA",
+                          "aria-label": `\u7EE7\u7EED\uFF1A${it.title}`,
+                          onClick: (e) => {
+                            e.stopPropagation();
+                            void cont(it);
+                          },
+                          disabled: sendState[it.key] === "sending",
+                          children: /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-warn-ico", "aria-hidden": "true", dangerouslySetInnerHTML: { __html: iconSvg("play", 12) } })
+                        }
+                      )
+                    ] }),
+                    /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-warn-slot", children: /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
                       "button",
                       {
                         type: "button",
-                        className: `ts-warn-continue-btn${sendState[it.key] === "error" || auto === "error" ? " is-error" : ""}`,
-                        title: sendState[it.key] === "error" ? `\u53D1\u9001\u5931\u8D25\uFF1A${sendErr}\uFF08\u70B9\u4E00\u4E0B\u91CD\u8BD5\uFF09` : auto === "error" ? `\u81EA\u52A8\u53D1\u9001\u5931\u8D25\uFF0C\u53EF\u624B\u52A8\u91CD\u8BD5${it.continueHint ? `\uFF1A${it.continueHint}` : ""}` : it.continueHint || "\u7ED9\u8FD9\u6761\u5BF9\u8BDD\u53D1\u4E00\u6761\u300C\u7EE7\u7EED\u300D\uFF0C\u8BA9\u5B83\u63A5\u7740\u8F93\u51FA",
-                        onClick: (e) => {
-                          e.stopPropagation();
-                          void cont(it);
-                        },
-                        disabled: sendState[it.key] === "sending",
-                        children: sendState[it.key] === "sending" ? "\u53D1\u9001\u4E2D" : "\u7EE7\u7EED"
-                      }
-                    ),
-                    /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)(
-                      "button",
-                      {
-                        type: "button",
-                        className: "ts-warn-read",
+                        className: "ts-warn-icon-btn",
                         title: "\u6807\u4E3A\u5DF2\u8BFB\uFF1A\u4E0D\u518D\u63D0\u9192\u8FD9\u4E00\u6761\uFF08\u65B0\u4E00\u8F6E\u4F1A\u91CD\u65B0\u63D0\u9192\uFF09",
                         "aria-label": `\u6807\u4E3A\u5DF2\u8BFB\uFF1A${it.title}`,
                         onClick: (e) => {
                           e.stopPropagation();
                           onMarkRead(it.key);
                         },
-                        children: [
-                          /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("svg", { width: "11", height: "11", viewBox: "0 0 12 12", "aria-hidden": "true", focusable: "false", children: /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("path", { d: "M2.5 6.4l2.4 2.4 4.6-5.2", fill: "none", stroke: "currentColor", strokeWidth: "1.8", strokeLinecap: "round", strokeLinejoin: "round" }) }),
-                          "\u5DF2\u8BFB"
-                        ]
+                        children: /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-warn-ico", "aria-hidden": "true", dangerouslySetInnerHTML: { __html: iconSvg("check", 12) } })
                       }
-                    ),
-                    /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)(
+                    ) }),
+                    /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-warn-slot", children: /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
                       "button",
                       {
                         type: "button",
-                        className: "ts-warn-archive-btn",
+                        className: "ts-warn-icon-btn",
                         title: `\u5F52\u6863\u8FD9\u6761\u5BF9\u8BDD\uFF1A${it.title}\uFF08\u53EF\u5728\u4FA7\u680F\u300C\u5168\u90E8\u5BF9\u8BDD\uFF08\u663E\u793A\u5DF2\u5F52\u6863\uFF09\u300D\u91CC\u6062\u590D\uFF09`,
                         "aria-label": `\u5F52\u6863\uFF1A${it.title}`,
                         onClick: (e) => {
                           e.stopPropagation();
                           onArchive(it);
                         },
-                        children: [
-                          /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-warn-archive-ico", "aria-hidden": "true", dangerouslySetInnerHTML: { __html: iconSvg("archive", 12) } }),
-                          "\u5F52\u6863"
-                        ]
+                        children: /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-warn-ico", "aria-hidden": "true", dangerouslySetInnerHTML: { __html: iconSvg("archive", 12) } })
                       }
-                    )
+                    ) })
                   ] })
                 ] }, it.key);
               }),

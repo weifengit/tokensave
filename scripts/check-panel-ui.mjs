@@ -92,8 +92,8 @@ check('区域之间才画分隔线（最后一个不悬空）', css.includes('.t
 check('各块不再自画 border-bottom（改由 .ts-sec 统一给）',
   !/ts-(sound-body|cont-block) \{[^}]*border-bottom/.test(css))
 // 同一区域里标题行与内容要同边距，否则标题会与控件左右错开
-check('标题行左内距与内容同为 12px（右侧 22px：让标题行控件与子行控件同列）',
-  (ruleOf('.ts-sec-head') || '').includes('padding:9px 22px 8px 12px')
+check('标题行左内距与内容同为 12px（右侧 21px：让标题行控件与子行控件同列）',
+  (ruleOf('.ts-sec-head') || '').includes('padding:9px 21px 8px 12px')
   && ['ts-sound-body', 'ts-cont-block', 'ts-list-body'].every((c) => (ruleOf(`.${c}`) || '').includes('padding:0 12px 10px')))
 
 // —— 本轮反馈：开关上标题行 + 子内容用外框包住 ——
@@ -117,8 +117,10 @@ check('提示音开关在 SectionHead 内（不再占一行「提醒」）',
 check('自动继续主开关在 SectionHead 内',
   /<SectionHead title="自动继续">[\s\S]{0,2000}?ts-cont-sw/.test(tsx))
 check('已删除旧的「提醒」行', !/>提醒<\/label>/.test(tsx))
-check('标题行开关右对齐（margin-left:auto）',
-  /\.ts-sec-head > \.ts-mark-all-read-btn,[\s\S]{0,80}\.ts-sec-head > \.ts-cont-sw \{ margin-left:auto/.test(css))
+check('标题行开关/图标组右对齐（margin-left:auto）',
+  // .ts-warn-headops（全部已读+全部归档+占位那一组）也必须推右，
+  // 否则它与下面逐行的三个图标不在同一列（用户要求垂直对齐）
+  /\.ts-sec-head > \.ts-warn-headops,[\s\S]{0,80}\.ts-sec-head > \.ts-cont-sw \{ margin-left:auto/.test(css))
 
 // 文字改为「发送上限」「冷却基数」
 check('文字为「发送上限」', tsx.includes('>发送上限</label>'))
@@ -164,10 +166,21 @@ const padDecl = /const PANEL_PAD_W = 2 \* \(([^)]+)\)/.exec(
 const padConst = 2 * padDecl.split('+').reduce((a, b) => a + Number(b.trim() || 0), 0)
 check('PANEL_PAD_W 数值 = 2×(12+1+3+5) = 42', padConst === 42, `${padConst}（算式 ${padDecl}）`)
 
-// —— 反馈 4：已读按钮做成带图标的牌按钮，不再是裸「✓」——
-check('已读按钮含 SVG 对勾 + 文字', /ts-warn-read[\s\S]{0,400}<svg/.test(tsx) && /ts-warn-read[\s\S]{0,600}已读/.test(tsx))
-check('头部一键已读与行内同款视觉', css.includes('.ts-mark-all-read-btn')
-  && /\.ts-mark-all-read-btn \{[^}]*border-radius:999px/.test(css))
+// —— 反馈 4（本轮改口径）：三个动作全部改成**图标按钮**、无文字 ——
+// 用户原话：「现在有【已读、继续、归档】3 个按钮了，请改为线图不要文字了，
+//            3 个按钮的风格保持一致，不要挤压原来的内容导致看不完整信息」。
+check('行内三个动作都是图标按钮（继续 / 已读 / 归档，无文字）',
+  (tsx.match(/className="ts-warn-icon-btn/g) || []).length >= 3 &&
+  // 图标走共享 icons.ts 的线条 SVG
+  /iconSvg\('play', 12\)/.test(tsx) && /iconSvg\('check', 12\)/.test(tsx) && /iconSvg\('archive', 12\)/.test(tsx) &&
+  // 按钮里不得再有中文文字（只有图标 span）
+  !/className="ts-warn-icon-btn"[\s\S]{0,400}?>\s*(继续|已读|归档)\s*</.test(tsx))
+check('图标按钮统一同款视觉（22×22 / 同一套描边底色）',
+  /\.ts-warn-icon-btn \{[^}]*width:22px; height:22px/.test(css) &&
+  /\.ts-warn-icon-btn \{[^}]*border-radius:7px/.test(css) &&
+  // 旧的三种牌按钮样式已整体移除（避免两套并存）
+  !/\.ts-mark-all-read-btn \{/.test(css) && !/\.ts-warn-continue-btn \{/.test(css) &&
+  !/\.ts-warn-read \{/.test(css) && !/\.ts-warn-archive-btn \{/.test(css))
 
 // —— 本轮反馈：鼠标还没挪到面板上就消失 ——
 // 根因是面板与触发器之间有一道缝。修法是「走廊命中测试 + 到点时重查」。
@@ -262,16 +275,26 @@ check('计时器渲染在标签行内（与项目胶囊同行，不在下面另�
 check('标签行下方不再有计时器兄弟节点',
   !/\n\s*\{it\.icon === '●' && <Timer at=\{it\.lastPromptAt\} \/>\}\n\s*<\/span>/.test(tsx))
 
-// —— 本轮反馈 4+5：标题行控件与子行控件同列（右侧一律落在 22px 内距上）——
-check('标题行右内距 22px（= 12 区块 + 1 边框 + 3 + 5 + 1 行内距）',
-  (ruleOf('.ts-sec-head') || '').includes('padding:9px 22px 8px 12px'))
-check('清单行右内距 1px（行内「已读」与标题行「全部已读」同列）',
-  /\.ts-warn-row \{[^}]*padding-right:1px/.test(css))
-check('操作区有样式定义（继续 + 已读，5px 间隔与 ACTIONS_CONTINUE_W 对应）',
-  !!ruleOf('.ts-warn-actions') && /\.ts-warn-actions \{[^}]*gap:5px/.test(css))
+// —— 标题行控件与子行控件同列（右侧一律落在 21px 内距上）——
+// 21 = 12(ts-list-body) + 1(ts-box-list 边框) + 3(其内距) + 5(ts-warn-pop-list 内距)，
+// 与 .ts-warn-row 现在的 padding-right:0 配合，图标按钮的**中心**逐列一致。
+check('标题行右内距 21px（= 12 + 1 + 3 + 5，与清单区右缘严格对齐）',
+  (ruleOf('.ts-sec-head') || '').includes('padding:9px 21px 8px 12px'))
+// 本轮改为 0：图标按钮是**居中**的，右缘对齐 + 1px 内距会让三列的图标中心
+// 比标题行偏 0.5px（看起来发虚）。现在两侧右缘与每列中心都一致。
+check('清单行右内距 0（行内三个图标与标题行图标逐列同中心）',
+  /\.ts-warn-row \{[^}]*padding-right:0/.test(css))
+check('操作区是三个固定槽位（槽宽=按钮宽 22px + 4px 间隔，保证每行同宽同列）',
+  !!ruleOf('.ts-warn-actions') && /\.ts-warn-actions \{[^}]*gap:4px/.test(css) &&
+  // 槽位宽必须等于按钮宽：槽更宽会把相邻槽位推远，两边的列中心就对不上
+  /\.ts-warn-slot \{[^}]*width:22px; height:22px/.test(css) &&
+  /\.ts-warn-icon-btn \{[^}]*width:22px; height:22px/.test(css) &&
+  // 标题行那组同 gap（第三枚是占位）——垂直对齐的前提
+  /\.ts-warn-headops \{[^}]*gap:4px/.test(css))
 const widthSrc = readFileSync(join(root, 'client/src/panel/panel-width.ts'), 'utf8')
-check('ROW_PAD_W 与清单行右内距对得上（8×2 + 1 = 17）',
-  /const ROW_PAD_W = 17\b/.test(widthSrc), widthSrc.match(/const ROW_PAD_W = \d+/)?.[0] ?? '未找到')
+// 行内右内距本轮改成 0（图标居中，留 1px 会让三列中心偏 0.5px）→ 8×2 = 16
+check('ROW_PAD_W 与清单行内边距对得上（8×2 + 0 = 16）',
+  /const ROW_PAD_W = 16\b/.test(widthSrc), widthSrc.match(/const ROW_PAD_W = \d+/)?.[0] ?? '未找到')
 
 // —— 本轮反馈：对话消息较多时「对话清单显示不全」——
 // 根因：.ts-sec 是 flex:none，面板又 overflow:hidden —— 条目一多总高超过
@@ -314,10 +337,12 @@ check('手机摆法下 max-width 与 sheetBox 的 vw-16 对齐（不被再夹一
   /pos\.mode === 'sheet' \? ' is-sheet' : ''/.test(tsx))
 check('窄屏层级压过抽屉/黑纱（899~900），但不盖官方弹窗(1000)/菜单(1100)',
   /z-index:950/.test(css) && 950 < 1000 && 950 > 900)
-check('触屏给足热区（清单行≥44px、已读/继续≥30px）',
+check('触屏给足热区（清单行≥44px、图标按钮与槽位放大到 34px）',
   /@media \(pointer: coarse\)/.test(css) &&
   /\.ts-warn-pop\.is-sheet \.ts-warn-item \{[^}]*min-height:44px/.test(css) &&
-  /\.ts-warn-pop\.is-sheet \.ts-warn-read,[\s\S]{0,120}?ts-warn-continue-btn \{[^}]*min-height:30px/.test(css))
+  // 图标按钮在触屏上放大到 34px（22px 太小点不准），槽位同步放大以保持对齐
+  /\.ts-warn-pop\.is-sheet \.ts-warn-icon-btn,[\s\S]{0,120}?ts-warn-done \{ width:34px; height:34px/.test(css) &&
+  /\.ts-warn-pop\.is-sheet \.ts-warn-slot \{ width:34px; height:34px/.test(css))
 check('视口变化（转屏/抽屉开合）重算位置',
   /const computePanelPos = \(\): PanelPos \| null/.test(tsx) &&
   /window\.addEventListener\('resize', onResize\)/.test(tsx) &&

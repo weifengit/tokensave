@@ -599,27 +599,31 @@ function HoverPanel({ pos, panelRef, items, onPick, onHover, onMarkRead, onMarkA
       {/* 区域三：对话清单（标题行 + 右侧「全部已读」，条目也用 card 包住） */}
       <div className="ts-sec ts-sec-list">
         <SectionHead title="对话清单" note={String(items.length)}>
-          {/* 同行两个操作：「全部已读」与「全部归档」（用户要求） */}
+          {/* 标题行的「全部」按钮：与下面逐行三个槽位**垂直对齐** ——
+              右侧留出同宽的 3 个槽位：前两枚是「全部已读 / 全部归档」，
+              第三枚是占位（「继续」是单个对话才有的动作）。 */}
           <span className="ts-warn-headops">
             <button
               type="button"
-              className="ts-mark-all-read-btn"
+              className="ts-warn-icon-btn"
               disabled={readable === 0}
               title={readable === 0 ? '没有需要标注已读的对话' : `把清单里这 ${readable} 条全部标为已读，不再提醒（新一轮 / 新的待确认会重新提醒）`}
+              aria-label="全部标为已读"
               onClick={onMarkAllRead}
             >
-              <span aria-hidden="true">✓</span> 已读
+              <span className="ts-warn-ico" aria-hidden="true" dangerouslySetInnerHTML={{ __html: iconSvg('check', 12) }} />
             </button>
             <button
               type="button"
-              className="ts-warn-archive-all-btn"
+              className="ts-warn-icon-btn"
               disabled={items.length === 0}
               title={items.length === 0 ? '清单里没有对话' : `把清单里这 ${items.length} 条对话全部归档（可在侧栏「全部对话（显示已归档）」里恢复）`}
+              aria-label="全部归档"
               onClick={onArchiveAll}
             >
-              <span className="ts-warn-archive-ico" aria-hidden="true" dangerouslySetInnerHTML={{ __html: iconSvg('archive', 12) }} />
-              归档
+              <span className="ts-warn-ico" aria-hidden="true" dangerouslySetInnerHTML={{ __html: iconSvg('archive', 12) }} />
             </button>
+            <span className="ts-warn-slot" aria-hidden="true" />
           </span>
         </SectionHead>
         {/* 清单区与提示音 / 自动继续同构：外层给 0 12px 10px 的外距，外框才是 .ts-box */}
@@ -646,63 +650,73 @@ function HoverPanel({ pos, panelRef, items, onPick, onHover, onMarkRead, onMarkA
                   </span>
                 </span>
               </button>
+              {/* 行内操作区：三个固定槽位（继续 / 已读 / 归档），**图标按钮**无文字。
+                  固定槽位的目的：每一行占据同一列，标题行的同类按钮与下面逐行的
+                  按钮垂直对齐（用户要求）。 */}
               <div className="ts-warn-actions">
-                {/* 自动发过了就只报结果（用户不必再点）；不能自动的才给「继续」 */}
-                {it.canContinue && auto === 'sent' && (
-                  <span className="ts-warn-done" title={it.continueHint
-                    ? `已自动发送「继续」：${it.continueHint}`
-                    : '已自动发送「继续」让模型接着输出'}>已发送</span>
-                )}
-                {it.canContinue && auto === 'sending' && (
-                  <span className="ts-warn-done is-busy" title="正在发送「继续」…">发送中</span>
-                )}
-                {it.canContinue && (auto === 'idle' || auto === 'error') && (
+                <span className="ts-warn-slot">
+                  {/* 自动发过了就只报结果（不可点）；不能动的才给「继续」 */}
+                  {it.canContinue && auto === 'sent' && (
+                    <span className="ts-warn-done" title={it.continueHint
+                      ? `已自动发送「继续」：${it.continueHint}`
+                      : '已自动发送「继续」让模型接着输出'}
+                    >
+                      <span className="ts-warn-ico" aria-hidden="true" dangerouslySetInnerHTML={{ __html: iconSvg('sent', 12) }} />
+                    </span>
+                  )}
+                  {it.canContinue && auto === 'sending' && (
+                    <span className="ts-warn-done is-busy" title="正在发送「继续」…">
+                      <span className="ts-warn-ico" aria-hidden="true" dangerouslySetInnerHTML={{ __html: iconSvg('play', 12) }} />
+                    </span>
+                  )}
+                  {it.canContinue && (auto === 'idle' || auto === 'error') && (
+                    <button
+                      type="button"
+                      className={`ts-warn-icon-btn${sendState[it.key] === 'error' || auto === 'error' ? ' is-error' : ''}`}
+                      title={sendState[it.key] === 'error'
+                        ? `发送失败：${sendErr}（点一下重试）`
+                        : auto === 'error'
+                          ? `自动发送失败，可手动重试${it.continueHint ? `：${it.continueHint}` : ''}`
+                          : it.continueHint || '给这条对话发一条「继续」，让它接着输出'}
+                      aria-label={`继续：${it.title}`}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        void cont(it)
+                      }}
+                      disabled={sendState[it.key] === 'sending'}
+                    >
+                      <span className="ts-warn-ico" aria-hidden="true" dangerouslySetInnerHTML={{ __html: iconSvg('play', 12) }} />
+                    </button>
+                  )}
+                </span>
+                <span className="ts-warn-slot">
                   <button
                     type="button"
-                    className={`ts-warn-continue-btn${sendState[it.key] === 'error' || auto === 'error' ? ' is-error' : ''}`}
-                    title={sendState[it.key] === 'error'
-                      ? `发送失败：${sendErr}（点一下重试）`
-                      : auto === 'error'
-                        ? `自动发送失败，可手动重试${it.continueHint ? `：${it.continueHint}` : ''}`
-                        : it.continueHint || '给这条对话发一条「继续」，让它接着输出'}
+                    className="ts-warn-icon-btn"
+                    title="标为已读：不再提醒这一条（新一轮会重新提醒）"
+                    aria-label={`标为已读：${it.title}`}
                     onClick={(e) => {
                       e.stopPropagation()
-                      void cont(it)
+                      onMarkRead(it.key)
                     }}
-                    disabled={sendState[it.key] === 'sending'}
                   >
-                    {sendState[it.key] === 'sending' ? '发送中' : '继续'}
+                    <span className="ts-warn-ico" aria-hidden="true" dangerouslySetInnerHTML={{ __html: iconSvg('check', 12) }} />
                   </button>
-                )}
-                <button
-                  type="button"
-                  className="ts-warn-read"
-                  title="标为已读：不再提醒这一条（新一轮会重新提醒）"
-                  aria-label={`标为已读：${it.title}`}
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    onMarkRead(it.key)
-                  }}
-                >
-                  <svg width="11" height="11" viewBox="0 0 12 12" aria-hidden="true" focusable="false">
-                    <path d="M2.5 6.4l2.4 2.4 4.6-5.2" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-                  </svg>
-                  已读
-                </button>
-                {/* 单一归档：每条对话后面的归档按钮 */}
-                <button
-                  type="button"
-                  className="ts-warn-archive-btn"
-                  title={`归档这条对话：${it.title}（可在侧栏「全部对话（显示已归档）」里恢复）`}
-                  aria-label={`归档：${it.title}`}
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    onArchive(it)
-                  }}
-                >
-                  <span className="ts-warn-archive-ico" aria-hidden="true" dangerouslySetInnerHTML={{ __html: iconSvg('archive', 12) }} />
-                  归档
-                </button>
+                </span>
+                <span className="ts-warn-slot">
+                  <button
+                    type="button"
+                    className="ts-warn-icon-btn"
+                    title={`归档这条对话：${it.title}（可在侧栏「全部对话（显示已归档）」里恢复）`}
+                    aria-label={`归档：${it.title}`}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onArchive(it)
+                    }}
+                  >
+                    <span className="ts-warn-ico" aria-hidden="true" dangerouslySetInnerHTML={{ __html: iconSvg('archive', 12) }} />
+                  </button>
+                </span>
               </div>
             </div>
           )
