@@ -11,9 +11,25 @@
 // 降级：retain/eventSource → session.subscribe（逐事件推送）→ 控制台留痕等待态。
 import type { Context } from '@deepseek-ai/cordis'
 
+/** 会话事件里的一张持久化图片（与 dsh-attachment 的 ImageAttachmentRef 同形，只保留展示所需字段）。 */
+export interface StreamImageAttachment {
+  attachmentId: string
+  mediaType: 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif'
+  bytes: number
+  width: number
+  height: number
+  /** 展示名（仅用于 title / alt，不参与读取） */
+  name?: string
+}
+
 export interface StreamMsg {
   role: string
   content: string
+  /**
+   * 该条消息携带的持久化图片（用户附件 / 工具结果 / 模型回复都可能带）。
+   * 读取走宿主 uiConversation 的授权 URL（见 resolveSessionImageUrl）。
+   */
+  images?: StreamImageAttachment[]
   /** 事件时间（Unix ms，来自 SessionEvent.time）；窗口重建时保留，供时间轴/计时使用 */
   time?: number
   /** 该条消息的 token 用量（assistant/message.usage）；主 agent 与探索者同源可用 */
@@ -146,6 +162,47 @@ interface Channel {
 
 const channels = new Map<string, Channel>()
 
+/**
+ * 解析一张会话图片的浏览器 URL。
+ *
+ * 首选宿主 uiConversation 的授权缓存（同一张图只读一次，URL 随会话释放而回收）；
+ * 服务缺失或版本不同时退回 session.readAttachment + data URL（不产生需要手动回收的 blob URL）。
+ */
+export async function resolveSessionImageUrl(
+  sessionId: string,
+  attachment: StreamImageAttachment,
+): Promise<string> {
+  const conv = readService<any>(clientCtx, 'uiConversation')
+  if (conv && typeof conv.imageUrl === 'function') {
+    try {
+      const url = await conv.imageUrl(sessionId, attachment)
+      if (typeof url === 'string' && url) return url
+    } catch {
+      // 会话 binding 未就绪 / 服务版本差异 → 继续走 readAttachment
+    }
+  }
+  const session = channels.get(sessionId)?.binding?.session as any
+  if (session && typeof session.readAttachment === 'function') {
+    const result = await session.readAttachment(attachment)
+    if (result?.ok && result.value?.data) {
+      return bytesToDataUrl(result.value.data, attachment.mediaType)
+    }
+    const code = result?.error?.code
+    throw new Error(code ? `图片读取失败（${code}）` : '图片读取失败')
+  }
+  throw new Error('会话图片读取接口不可用')
+}
+
+/** 把图片字节转成 data URL（只用于没有 uiConversation 缓存的兜底路径）。 */
+function bytesToDataUrl(data: Uint8Array, mediaType: string): string {
+  let binary = ''
+  const chunk = 0x8000
+  for (let i = 0; i < data.length; i += chunk) {
+    binary += String.fromCharCode(...data.subarray(i, i + chunk))
+  }
+  return `data:${mediaType};base64,${btoa(binary)}`
+}
+
 // —— 事件 → 消息 投影 ————————————————————————————————
 
 function textOf(c: any): string {
@@ -261,6 +318,55 @@ function visibleTextOf(ev: any): string {
   return ''
 }
 
+/** 图片媒体类型白名单（与 dsh-attachment 的 ImageMediaType 对齐）。 */
+const IMAGE_MEDIA_TYPES: ReadonlySet<string> = new Set([
+  'image/png', 'image/jpeg', 'image/webp', 'image/gif',
+])
+
+/** 正整数校验：持久化引用里的字节数 / 宽高必须是可用值。 */
+function positiveInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value > 0
+}
+
+/** 一个 content 块 → 持久化图片引用（形状不完整就丢弃，不猜）。 */
+function imageOf(block: any): StreamImageAttachment | null {
+  if (!block || typeof block !== 'object' || block.type !== 'image') return null
+  const a = block.attachment
+  if (!a || typeof a !== 'object' || Array.isArray(a)) return null
+  const { attachmentId, mediaType, bytes, width, height, name } = a as Record<string, unknown>
+  if (typeof attachmentId !== 'string' || attachmentId === '') return null
+  if (typeof mediaType !== 'string' || !IMAGE_MEDIA_TYPES.has(mediaType)) return null
+  if (!positiveInteger(bytes) || !positiveInteger(width) || !positiveInteger(height)) return null
+  if (name !== undefined && typeof name !== 'string') return null
+  return {
+    attachmentId,
+    mediaType: mediaType as StreamImageAttachment['mediaType'],
+    bytes,
+    width,
+    height,
+    ...(name ? { name } : {}),
+  }
+}
+
+/**
+ * 从事件里抽出持久化图片（保持事件里的原始顺序）。
+ *
+ * 三类来源同形：user/message 的附件、assistant/message 的图片块、
+ * tool/result 里 read_image / 截图类工具返回的图片块。
+ * 哪个候选数组先出现图片就以它为准（同一份 content 可能挂在多个位置）。
+ */
+export function imagesOf(ev: any): StreamImageAttachment[] {
+  if (!ev || typeof ev !== 'object') return []
+  const data = ev.data && typeof ev.data === 'object' ? ev.data : ev
+  const cands = [data.content, data.message?.content, data.result?.content, ev.content]
+  for (const c of cands) {
+    if (!Array.isArray(c)) continue
+    const images = c.map(imageOf).filter(Boolean) as StreamImageAttachment[]
+    if (images.length > 0) return images
+  }
+  return []
+}
+
 function roleOf(type: string): string {
   if (type.startsWith('user/')) return 'user'
   if (type.startsWith('assistant/')) return 'assistant'
@@ -294,8 +400,9 @@ function injectionOf(ev: any): { injected: boolean; kind?: string } {
 function queuedMsgOf(m: any, time?: number): StreamMsg | null {
   if (!m || typeof m !== 'object') return null
   const text = visibleTextOf(m)
-  if (!text) return null
-  return { role: 'user', content: text, time, type: 'agent/inbox/spliced', queued: true }
+  const images = imagesOf(m)
+  if (!text && images.length === 0) return null
+  return { role: 'user', content: text, time, type: 'agent/inbox/spliced', queued: true, ...(images.length > 0 ? { images } : {}) }
 }
 
 /**
@@ -444,12 +551,13 @@ export function messagesFromWindow(snap: any): StreamMsg[] {
     if (ev.type === 'assistant/message') {
       const think = reasoningOf(ev)
       const text = visibleTextOf(ev)
+      const imgs = imagesOf(ev)
       const t = typeof ev.time === 'number' ? ev.time : undefined
       const u = ev?.data?.usage
       live = null
       if (think) out.push({ role: 'assistant', content: think, kind: 'reasoning', time: t, type: ev.type })
-      if (text) out.push({ role: 'assistant', content: text, time: t, usage: u, type: ev.type })
-      // 思考与正文都空（例如只含 tool-call）时不产出行
+      if (text || imgs.length > 0) out.push({ role: 'assistant', content: text, time: t, usage: u, type: ev.type, ...(imgs.length > 0 ? { images: imgs } : {}) })
+      // 思考、正文、图片都空（例如只含 tool-call）时不产出行
       continue
     }
     // 本轮的异常结局：必须显式呈现，否则工作台里「中断」与「正常结束」无从分辨。
@@ -468,7 +576,8 @@ export function messagesFromWindow(snap: any): StreamMsg[] {
       continue
     }
     const content = visibleTextOf(ev)
-    if (!content) continue
+    const images = imagesOf(ev)
+    if (!content && images.length === 0) continue
     live = null
     const inj = injectionOf(ev)
     out.push({
@@ -477,6 +586,7 @@ export function messagesFromWindow(snap: any): StreamMsg[] {
       time: typeof ev.time === 'number' ? ev.time : undefined,
       usage: ev?.data?.usage,
       type: ev.type,
+      ...(images.length > 0 ? { images } : {}),
       ...inj.injected ? { injected: true, injectKind: inj.kind } : {},
     })
   }
@@ -619,7 +729,8 @@ function emitEvent(ch: Channel, x: any): void {
     return
   }
   const content = contentOf(ev)
-  if (!content) return
+  const images = imagesOf(ev)
+  if (!content && images.length === 0) return
   const inj = injectionOf(ev)
   ch.msgs = ch.msgs.concat({
     role: roleOf(ev.type),
@@ -627,6 +738,7 @@ function emitEvent(ch: Channel, x: any): void {
     time: typeof ev.time === 'number' ? ev.time : undefined,
     usage: ev?.data?.usage,
     type: ev.type,
+    ...(images.length > 0 ? { images } : {}),
     ...inj.injected ? { injected: true, injectKind: inj.kind } : {},
   })
   if (typeof ev.time === 'number') ch.metrics.lastMs = ev.time

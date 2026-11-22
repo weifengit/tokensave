@@ -22,6 +22,7 @@ import type { StreamMsg } from '../session-subscribe'
 import { RichText, stripMarkdown } from './RichText'
 import type { ChatView } from './chat-view'
 import { ChangesCard } from './changes-card'
+import { MessageImages } from './message-images'
 import { injectProjectCenterStyles } from './styles'
 
 /** 最多渲染的轮数（超出只显示最近这些） */
@@ -286,10 +287,13 @@ function InjectionRow({ items }: { items: StreamMsg[] }) {
  * 头部会报出「思考 N 段」/「工具 M 次」——用户发完消息后一眼就能确认模型已开工，
  * 不必展开（反馈 #1）。展开后逐条列出，思考单独标注。
  */
-function ProcessGroup({ items }: { items: StreamMsg[] }) {
+function ProcessGroup({ items, sessionId }: { items: StreamMsg[]; sessionId: string }) {
   const [open, setOpen] = useState(false)
   const tools = items.filter((m) => m.role === 'tool').length
   const thinks = items.filter((m) => m.kind === 'reasoning').length
+  // 工具结果里的图片（read_image / 截图）必须**在折叠之外**可见：
+  // 用户要的是「能看到智能体回复里的图」，埋进「过程 N 步」里等于没有。
+  const withImages = items.filter((m) => (m.images?.length ?? 0) > 0)
   return (
     <div className="ts-proc">
       {/* title 保留完整信息：宽度不足时视觉上会被省略号截断，悬停仍能看到全量计数 */}
@@ -304,6 +308,13 @@ function ProcessGroup({ items }: { items: StreamMsg[] }) {
         {tools > 0 && <span className="ts-dim">工具 {tools} 次</span>}
         <MsgTime time={items[items.length - 1]?.time} className="ts-proc-time" />
       </button>
+      {withImages.length > 0 && (
+        <div className="ts-proc-images">
+          {withImages.map((m, i) => (
+            <MessageImages key={`img${i}`} sessionId={sessionId} images={m.images!} align="start" />
+          ))}
+        </div>
+      )}
       {open && (
         <div className="ts-proc-body" onClick={collapseOnBodyClick(() => setOpen(false))}>
           {items.map((m, i) => <ProcItem key={i} msg={m} />)}
@@ -377,7 +388,7 @@ function splitTurn(turn: StreamMsg[]): Turn {
   let answer: StreamMsg | null = null
   for (let i = rest.length - 1; i >= 0; i--) {
     const m = rest[i]
-    if (m.role === 'assistant' && m.kind !== 'reasoning' && m.content.trim()) {
+    if (m.role === 'assistant' && m.kind !== 'reasoning' && (m.content.trim() || (m.images?.length ?? 0) > 0)) {
       answer = m
       break
     }
@@ -1100,16 +1111,18 @@ export function MsgList({
           <div className="ts-turn" key={visibleKeys[ti] ?? ti} data-turn-key={visibleKeys[ti]}>
             {t.users.map((m, i) => (
               <div className="ts-msg-block ts-msg-block-user" key={`u${i}`}>
-                <div className="ts-msg-user">{m.content}</div>
+                {m.content ? <div className="ts-msg-user">{m.content}</div> : null}
+                {m.images?.length ? <MessageImages sessionId={sessionId} images={m.images} align="end" /> : null}
                 <MsgTime time={m.time} copyContent={m.content} />
               </div>
             ))}
             <InjectionRow items={t.injects} />
-            {t.proc.length > 0 && <ProcessGroup items={t.proc} />}
+            {t.proc.length > 0 && <ProcessGroup items={t.proc} sessionId={sessionId} />}
             {t.answer && (
               <div className="ts-msg-block ts-msg-block-assistant">
                 <div className="ts-msg-assistant">
                   <RichText text={t.answer.content} />
+                  {t.answer.images?.length ? <MessageImages sessionId={sessionId} images={t.answer.images} align="start" /> : null}
                 </div>
                 <MsgTime time={t.answer.time} copyContent={t.answer.content} />
               </div>
@@ -1126,6 +1139,7 @@ export function MsgList({
                   {m.content}
                   <span className="ts-queued-tag" title="会话正忙：这条消息在宿主收件箱队列里，下一轮开始时送达模型（与原生对话的队列面板同源）">排队中</span>
                 </div>
+                {m.images?.length ? <MessageImages sessionId={sessionId} images={m.images} align="end" /> : null}
                 <MsgTime time={m.time} copyContent={m.content} />
               </div>
             ))}

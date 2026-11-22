@@ -872,7 +872,8 @@ body.ts-vsplit-dragging .ts-card { transition:none !important; animation:none !i
 .ts-fs-item-name { display:inline-flex; align-items:center; gap:6px; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 /* 目录操作块（右列）：「+ 新建文件夹 / 重命名 / 选择当前文件夹」。
    这些按钮归到右列后不再带提示文字（用户要求）—— 语义全靠按钮文案 + title。 */
-.ts-addproj-folderops { display:flex; flex-direction:column; gap:8px; flex:none; }
+/* 用户要求整块下移一行：与左侧目录列表首行对齐，而不是跟字段标签齐平。 */
+.ts-addproj-folderops { margin-top:24px; display:flex; flex-direction:column; gap:8px; flex:none; }
 .ts-addproj-folderops .ts-newfolder { margin-top:0; }
 .ts-addproj-pickbtn { flex:none; white-space:nowrap; align-self:flex-start; }
 /* 窄屏（单列）：两列上下排，弹窗仍不滚动 —— 每一块内部自己滚。 */
@@ -1137,6 +1138,26 @@ body.ts-vsplit-dragging .ts-card { transition:none !important; animation:none !i
 /* 回复区块：右边缘与用户气泡的右边缘对齐（用户气泡靠右、右边缘贴容器右端，
    因此回复块改为拉伸满宽，不再留右侧那一小块空白） */
 .ts-msg-assistant { align-self:stretch; background:rgba(127,127,127,.14); border-radius:8px 8px 8px 2px; padding:5px 9px; max-width:none; white-space:pre-wrap; word-break:break-word; }
+/* —— 会话图片（用户附件 / 工具结果 / 模型回复）——
+   单图按长边 240px 展示，多图收成 64px 方块；灯箱 portal 到 body。
+   64px 与宿主「对话」的消息附件同尺寸，切两个 tab 不会突然变大变小。 */
+.ts-msg-images { display:flex; flex-wrap:wrap; gap:6px; max-width:100%; min-width:0; }
+.ts-msg-images.is-end { justify-content:flex-end; }
+.ts-msg-image { display:inline-flex; align-items:center; justify-content:center; box-sizing:border-box; padding:0; border:1px solid rgba(127,127,127,.35); border-radius:8px; background:rgba(127,127,127,.1); color:inherit; overflow:hidden; cursor:zoom-in; max-width:100%; font:inherit; }
+.ts-msg-image img { display:block; max-width:min(240px,100%); max-height:240px; width:auto; height:auto; object-fit:contain; }
+.ts-msg-image.is-tile { flex:none; width:64px; height:64px; }
+.ts-msg-image.is-tile img { width:100%; height:100%; max-width:none; max-height:none; object-fit:cover; }
+.ts-msg-image.is-loading { flex:none; width:64px; height:64px; cursor:default; animation:ts-pulse-breathe 1.2s ease-in-out infinite; }
+.ts-msg-image.is-failed { flex:none; width:64px; height:64px; cursor:pointer; font-size:calc(var(--ts-fs, 12.5px) * 1.2); opacity:.7; }
+.ts-msg-image.is-failed:hover { opacity:1; }
+/* 「过程」里的图片：与过程头左缘对齐，折叠时也常显 */
+.ts-proc-images { display:flex; flex-direction:column; gap:6px; margin-top:6px; padding-left:10px; }
+/* 灯箱：Esc / 遮罩 / 关闭按钮都能关；关闭按钮 44×44 命中区 */
+.ts-img-lightbox { position:fixed; inset:0; z-index:1100; display:flex; align-items:center; justify-content:center; padding:24px; background:rgba(0,0,0,.84); cursor:zoom-out; }
+.ts-img-lightbox img { display:block; max-width:min(92vw,1600px); max-height:86vh; width:auto; height:auto; object-fit:contain; border-radius:10px; box-shadow:0 24px 70px rgba(0,0,0,.6); cursor:default; }
+.ts-img-lightbox-close { position:fixed; top:max(12px, env(safe-area-inset-top, 0px)); right:max(12px, env(safe-area-inset-right, 0px)); box-sizing:border-box; width:44px; height:44px; padding:0; display:inline-flex; align-items:center; justify-content:center; border:1px solid rgba(255,255,255,.3); border-radius:12px; background:rgba(0,0,0,.45); color:#fff; font:inherit; font-size:18px; line-height:1; cursor:pointer; }
+.ts-img-lightbox-close:hover { background:rgba(0,0,0,.7); }
+.ts-img-lightbox-close:focus-visible { outline:2px solid rgba(96,165,250,.9); outline-offset:2px; }
 .ts-msg-tool, .ts-msg-system { align-self:stretch; opacity:.62; font-size:calc(var(--ts-fs, 12.5px) * 0.88); border-left:2px solid rgba(127,127,127,.5); padding:2px 8px; }
 /* —— 每条消息的发出时间（用户气泡 / 助手回答 / 过程项 / 注入项）——
    块容器：气泡与时间的 column flex；user 块整体右对齐、assistant 块拉伸满宽。 */

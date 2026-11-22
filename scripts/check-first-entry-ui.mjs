@@ -70,11 +70,16 @@ check('预览归位迁移改成「预览独占面板区 + 主对话搬去辅助�
 console.log('— 2. 左侧边栏入口（图标 + 外框宽度）—')
 
 check('入口图标改线条（不再用 emoji 🧭 / 🗂️）',
-  /iconSvg\(toDesk \? 'compass' : 'folder', 15\)/.test(entry) &&
+  /iconSvg\(toDesk \? 'compass' : 'folder', wide \? 16 : 18\)/.test(entry) &&
   !/🧭/.test(entry) && !/🗂/.test(entry) &&
   // 图标本体在共享的 icons.ts
   /compass: '<circle cx="12" cy="12" r="8\.5"/.test(icons) &&
   /folder: '<path d="M3\.5 7\.5a2 2 0 0 1 2-2h4l2 2\.5/.test(icons))
+
+check('入口图标与侧栏其它图标同尺寸（展开 16px / 收起 rail 18px）',
+  /iconSvg\(toDesk \? 'compass' : 'folder', wide \? 16 : 18\)/.test(entry) &&
+  // 宿主 sidebar.panel.icon 的口径：展开 16、rail 18；不能再回退到 15
+  !/iconSvg\(toDesk \? 'compass' : 'folder', 15\)/.test(entry))
 
 check('入口**自己注入样式**（DSH 刚启动时其它视图还没挂载 → 否则是半截宽的空框）',
   /import \{ injectProjectCenterStyles \} from '\.\/styles'/.test(entry) &&
@@ -127,10 +132,13 @@ check('弹窗里的目录项用线条图标（不再用 emoji 📁）',
   /<Icon name="folder" size=\{13\} \/>/.test(dialog) &&
   /<Icon name="pencil" size=\{12\} \/>/.test(dialog))
 
+check('「新建文件夹」整块下移一行（与左侧目录列表首行对齐）',
+  /\.ts-addproj-folderops \{ margin-top:24px; display:flex;/.test(styles))
+
 check('「新建文件夹 / 选择当前文件夹」已归到**右列**，且不再占提示文字',
   /className="ts-addproj-folderops"/.test(dialog) &&
   dialog.indexOf('ts-addproj-col-right') < dialog.indexOf('ts-addproj-folderops') &&
-  /\.ts-addproj-folderops \{ display:flex; flex-direction:column; gap:8px; flex:none; \}/.test(styles) &&
+  /\.ts-addproj-folderops \{[^}]*display:flex; flex-direction:column; gap:8px; flex:none; \}/.test(styles) &&
   /\.ts-addproj-pickbtn \{ flex:none; white-space:nowrap; align-self:flex-start; \}/.test(styles) &&
   // 旧提示文字不得复活（用户明确要求去掉）
   !/浏览到目标文件夹后/.test(dialog) &&

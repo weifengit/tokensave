@@ -39,7 +39,7 @@ __export(index_exports, {
   inject: () => inject
 });
 module.exports = __toCommonJS(index_exports);
-var import_react26 = require("react");
+var import_react27 = require("react");
 
 // client/src/session-subscribe.ts
 var clientCtx = null;
@@ -58,6 +58,34 @@ function readService(ctx, name) {
   }
 }
 var channels = /* @__PURE__ */ new Map();
+async function resolveSessionImageUrl(sessionId, attachment) {
+  const conv = readService(clientCtx, "uiConversation");
+  if (conv && typeof conv.imageUrl === "function") {
+    try {
+      const url = await conv.imageUrl(sessionId, attachment);
+      if (typeof url === "string" && url) return url;
+    } catch {
+    }
+  }
+  const session = channels.get(sessionId)?.binding?.session;
+  if (session && typeof session.readAttachment === "function") {
+    const result = await session.readAttachment(attachment);
+    if (result?.ok && result.value?.data) {
+      return bytesToDataUrl(result.value.data, attachment.mediaType);
+    }
+    const code = result?.error?.code;
+    throw new Error(code ? `\u56FE\u7247\u8BFB\u53D6\u5931\u8D25\uFF08${code}\uFF09` : "\u56FE\u7247\u8BFB\u53D6\u5931\u8D25");
+  }
+  throw new Error("\u4F1A\u8BDD\u56FE\u7247\u8BFB\u53D6\u63A5\u53E3\u4E0D\u53EF\u7528");
+}
+function bytesToDataUrl(data, mediaType) {
+  let binary = "";
+  const chunk = 32768;
+  for (let i = 0; i < data.length; i += chunk) {
+    binary += String.fromCharCode(...data.subarray(i, i + chunk));
+  }
+  return `data:${mediaType};base64,${btoa(binary)}`;
+}
 function textOf(c) {
   if (typeof c === "string") return c;
   if (Array.isArray(c)) {
@@ -125,6 +153,44 @@ function visibleTextOf(ev) {
   if (typeof data.text === "string") return data.text;
   return "";
 }
+var IMAGE_MEDIA_TYPES = /* @__PURE__ */ new Set([
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+  "image/gif"
+]);
+function positiveInteger(value) {
+  return typeof value === "number" && Number.isInteger(value) && value > 0;
+}
+function imageOf(block) {
+  if (!block || typeof block !== "object" || block.type !== "image") return null;
+  const a = block.attachment;
+  if (!a || typeof a !== "object" || Array.isArray(a)) return null;
+  const { attachmentId, mediaType, bytes, width, height, name } = a;
+  if (typeof attachmentId !== "string" || attachmentId === "") return null;
+  if (typeof mediaType !== "string" || !IMAGE_MEDIA_TYPES.has(mediaType)) return null;
+  if (!positiveInteger(bytes) || !positiveInteger(width) || !positiveInteger(height)) return null;
+  if (name !== void 0 && typeof name !== "string") return null;
+  return {
+    attachmentId,
+    mediaType,
+    bytes,
+    width,
+    height,
+    ...name ? { name } : {}
+  };
+}
+function imagesOf(ev) {
+  if (!ev || typeof ev !== "object") return [];
+  const data = ev.data && typeof ev.data === "object" ? ev.data : ev;
+  const cands = [data.content, data.message?.content, data.result?.content, ev.content];
+  for (const c of cands) {
+    if (!Array.isArray(c)) continue;
+    const images = c.map(imageOf).filter(Boolean);
+    if (images.length > 0) return images;
+  }
+  return [];
+}
 function roleOf(type) {
   if (type.startsWith("user/")) return "user";
   if (type.startsWith("assistant/")) return "assistant";
@@ -141,8 +207,9 @@ function injectionOf(ev) {
 function queuedMsgOf(m, time) {
   if (!m || typeof m !== "object") return null;
   const text = visibleTextOf(m);
-  if (!text) return null;
-  return { role: "user", content: text, time, type: "agent/inbox/spliced", queued: true };
+  const images = imagesOf(m);
+  if (!text && images.length === 0) return null;
+  return { role: "user", content: text, time, type: "agent/inbox/spliced", queued: true, ...images.length > 0 ? { images } : {} };
 }
 function applySplice(queue, data, time) {
   if (!data || data.target !== "next-turn") return;
@@ -235,11 +302,12 @@ function messagesFromWindow(snap) {
     if (ev.type === "assistant/message") {
       const think = reasoningOf(ev);
       const text = visibleTextOf(ev);
+      const imgs = imagesOf(ev);
       const t = typeof ev.time === "number" ? ev.time : void 0;
       const u = ev?.data?.usage;
       live = null;
       if (think) out.push({ role: "assistant", content: think, kind: "reasoning", time: t, type: ev.type });
-      if (text) out.push({ role: "assistant", content: text, time: t, usage: u, type: ev.type });
+      if (text || imgs.length > 0) out.push({ role: "assistant", content: text, time: t, usage: u, type: ev.type, ...imgs.length > 0 ? { images: imgs } : {} });
       continue;
     }
     if (ev.type === "turn/end" || ev.type === "agent/error") {
@@ -257,7 +325,8 @@ function messagesFromWindow(snap) {
       continue;
     }
     const content = visibleTextOf(ev);
-    if (!content) continue;
+    const images = imagesOf(ev);
+    if (!content && images.length === 0) continue;
     live = null;
     const inj = injectionOf(ev);
     out.push({
@@ -266,6 +335,7 @@ function messagesFromWindow(snap) {
       time: typeof ev.time === "number" ? ev.time : void 0,
       usage: ev?.data?.usage,
       type: ev.type,
+      ...images.length > 0 ? { images } : {},
       ...inj.injected ? { injected: true, injectKind: inj.kind } : {}
     });
   }
@@ -398,7 +468,8 @@ function emitEvent(ch, x) {
     return;
   }
   const content = contentOf(ev);
-  if (!content) return;
+  const images = imagesOf(ev);
+  if (!content && images.length === 0) return;
   const inj = injectionOf(ev);
   ch.msgs = ch.msgs.concat({
     role: roleOf(ev.type),
@@ -406,6 +477,7 @@ function emitEvent(ch, x) {
     time: typeof ev.time === "number" ? ev.time : void 0,
     usage: ev?.data?.usage,
     type: ev.type,
+    ...images.length > 0 ? { images } : {},
     ...inj.injected ? { injected: true, injectKind: inj.kind } : {}
   });
   if (typeof ev.time === "number") ch.metrics.lastMs = ev.time;
@@ -2104,7 +2176,7 @@ async function stopSession(sessionId) {
 }
 
 // client/src/panel/ControlRoom.tsx
-var import_react20 = require("react");
+var import_react21 = require("react");
 
 // client/src/panel/styles.ts
 var STYLE_ID = "tokensave-project-center-css";
@@ -2971,7 +3043,8 @@ body.ts-vsplit-dragging .ts-card { transition:none !important; animation:none !i
 .ts-fs-item-name { display:inline-flex; align-items:center; gap:6px; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 /* \u76EE\u5F55\u64CD\u4F5C\u5757\uFF08\u53F3\u5217\uFF09\uFF1A\u300C+ \u65B0\u5EFA\u6587\u4EF6\u5939 / \u91CD\u547D\u540D / \u9009\u62E9\u5F53\u524D\u6587\u4EF6\u5939\u300D\u3002
    \u8FD9\u4E9B\u6309\u94AE\u5F52\u5230\u53F3\u5217\u540E\u4E0D\u518D\u5E26\u63D0\u793A\u6587\u5B57\uFF08\u7528\u6237\u8981\u6C42\uFF09\u2014\u2014 \u8BED\u4E49\u5168\u9760\u6309\u94AE\u6587\u6848 + title\u3002 */
-.ts-addproj-folderops { display:flex; flex-direction:column; gap:8px; flex:none; }
+/* \u7528\u6237\u8981\u6C42\u6574\u5757\u4E0B\u79FB\u4E00\u884C\uFF1A\u4E0E\u5DE6\u4FA7\u76EE\u5F55\u5217\u8868\u9996\u884C\u5BF9\u9F50\uFF0C\u800C\u4E0D\u662F\u8DDF\u5B57\u6BB5\u6807\u7B7E\u9F50\u5E73\u3002 */
+.ts-addproj-folderops { margin-top:24px; display:flex; flex-direction:column; gap:8px; flex:none; }
 .ts-addproj-folderops .ts-newfolder { margin-top:0; }
 .ts-addproj-pickbtn { flex:none; white-space:nowrap; align-self:flex-start; }
 /* \u7A84\u5C4F\uFF08\u5355\u5217\uFF09\uFF1A\u4E24\u5217\u4E0A\u4E0B\u6392\uFF0C\u5F39\u7A97\u4ECD\u4E0D\u6EDA\u52A8 \u2014\u2014 \u6BCF\u4E00\u5757\u5185\u90E8\u81EA\u5DF1\u6EDA\u3002 */
@@ -3236,6 +3309,26 @@ body.ts-vsplit-dragging .ts-card { transition:none !important; animation:none !i
 /* \u56DE\u590D\u533A\u5757\uFF1A\u53F3\u8FB9\u7F18\u4E0E\u7528\u6237\u6C14\u6CE1\u7684\u53F3\u8FB9\u7F18\u5BF9\u9F50\uFF08\u7528\u6237\u6C14\u6CE1\u9760\u53F3\u3001\u53F3\u8FB9\u7F18\u8D34\u5BB9\u5668\u53F3\u7AEF\uFF0C
    \u56E0\u6B64\u56DE\u590D\u5757\u6539\u4E3A\u62C9\u4F38\u6EE1\u5BBD\uFF0C\u4E0D\u518D\u7559\u53F3\u4FA7\u90A3\u4E00\u5C0F\u5757\u7A7A\u767D\uFF09 */
 .ts-msg-assistant { align-self:stretch; background:rgba(127,127,127,.14); border-radius:8px 8px 8px 2px; padding:5px 9px; max-width:none; white-space:pre-wrap; word-break:break-word; }
+/* \u2014\u2014 \u4F1A\u8BDD\u56FE\u7247\uFF08\u7528\u6237\u9644\u4EF6 / \u5DE5\u5177\u7ED3\u679C / \u6A21\u578B\u56DE\u590D\uFF09\u2014\u2014
+   \u5355\u56FE\u6309\u957F\u8FB9 240px \u5C55\u793A\uFF0C\u591A\u56FE\u6536\u6210 64px \u65B9\u5757\uFF1B\u706F\u7BB1 portal \u5230 body\u3002
+   64px \u4E0E\u5BBF\u4E3B\u300C\u5BF9\u8BDD\u300D\u7684\u6D88\u606F\u9644\u4EF6\u540C\u5C3A\u5BF8\uFF0C\u5207\u4E24\u4E2A tab \u4E0D\u4F1A\u7A81\u7136\u53D8\u5927\u53D8\u5C0F\u3002 */
+.ts-msg-images { display:flex; flex-wrap:wrap; gap:6px; max-width:100%; min-width:0; }
+.ts-msg-images.is-end { justify-content:flex-end; }
+.ts-msg-image { display:inline-flex; align-items:center; justify-content:center; box-sizing:border-box; padding:0; border:1px solid rgba(127,127,127,.35); border-radius:8px; background:rgba(127,127,127,.1); color:inherit; overflow:hidden; cursor:zoom-in; max-width:100%; font:inherit; }
+.ts-msg-image img { display:block; max-width:min(240px,100%); max-height:240px; width:auto; height:auto; object-fit:contain; }
+.ts-msg-image.is-tile { flex:none; width:64px; height:64px; }
+.ts-msg-image.is-tile img { width:100%; height:100%; max-width:none; max-height:none; object-fit:cover; }
+.ts-msg-image.is-loading { flex:none; width:64px; height:64px; cursor:default; animation:ts-pulse-breathe 1.2s ease-in-out infinite; }
+.ts-msg-image.is-failed { flex:none; width:64px; height:64px; cursor:pointer; font-size:calc(var(--ts-fs, 12.5px) * 1.2); opacity:.7; }
+.ts-msg-image.is-failed:hover { opacity:1; }
+/* \u300C\u8FC7\u7A0B\u300D\u91CC\u7684\u56FE\u7247\uFF1A\u4E0E\u8FC7\u7A0B\u5934\u5DE6\u7F18\u5BF9\u9F50\uFF0C\u6298\u53E0\u65F6\u4E5F\u5E38\u663E */
+.ts-proc-images { display:flex; flex-direction:column; gap:6px; margin-top:6px; padding-left:10px; }
+/* \u706F\u7BB1\uFF1AEsc / \u906E\u7F69 / \u5173\u95ED\u6309\u94AE\u90FD\u80FD\u5173\uFF1B\u5173\u95ED\u6309\u94AE 44\xD744 \u547D\u4E2D\u533A */
+.ts-img-lightbox { position:fixed; inset:0; z-index:1100; display:flex; align-items:center; justify-content:center; padding:24px; background:rgba(0,0,0,.84); cursor:zoom-out; }
+.ts-img-lightbox img { display:block; max-width:min(92vw,1600px); max-height:86vh; width:auto; height:auto; object-fit:contain; border-radius:10px; box-shadow:0 24px 70px rgba(0,0,0,.6); cursor:default; }
+.ts-img-lightbox-close { position:fixed; top:max(12px, env(safe-area-inset-top, 0px)); right:max(12px, env(safe-area-inset-right, 0px)); box-sizing:border-box; width:44px; height:44px; padding:0; display:inline-flex; align-items:center; justify-content:center; border:1px solid rgba(255,255,255,.3); border-radius:12px; background:rgba(0,0,0,.45); color:#fff; font:inherit; font-size:18px; line-height:1; cursor:pointer; }
+.ts-img-lightbox-close:hover { background:rgba(0,0,0,.7); }
+.ts-img-lightbox-close:focus-visible { outline:2px solid rgba(96,165,250,.9); outline-offset:2px; }
 .ts-msg-tool, .ts-msg-system { align-self:stretch; opacity:.62; font-size:calc(var(--ts-fs, 12.5px) * 0.88); border-left:2px solid rgba(127,127,127,.5); padding:2px 8px; }
 /* \u2014\u2014 \u6BCF\u6761\u6D88\u606F\u7684\u53D1\u51FA\u65F6\u95F4\uFF08\u7528\u6237\u6C14\u6CE1 / \u52A9\u624B\u56DE\u7B54 / \u8FC7\u7A0B\u9879 / \u6CE8\u5165\u9879\uFF09\u2014\u2014
    \u5757\u5BB9\u5668\uFF1A\u6C14\u6CE1\u4E0E\u65F6\u95F4\u7684 column flex\uFF1Buser \u5757\u6574\u4F53\u53F3\u5BF9\u9F50\u3001assistant \u5757\u62C9\u4F38\u6EE1\u5BBD\u3002 */
@@ -3576,8 +3669,8 @@ function injectProjectCenterStyles() {
 }
 
 // client/src/panel/DeskDock.tsx
-var import_react19 = require("react");
-var import_react_dom5 = require("react-dom");
+var import_react20 = require("react");
+var import_react_dom6 = require("react-dom");
 
 // client/src/vendor/dockview.css
 var dockview_default = '.dv-drop-target-container {\n  position: absolute;\n  z-index: 9999;\n  top: 0px;\n  left: 0px;\n  height: 100%;\n  width: 100%;\n  pointer-events: none;\n  overflow: hidden;\n  --dv-transition-duration: 300ms;\n}\n.dv-drop-target-container .dv-drop-target-anchor {\n  position: relative;\n  border: var(--dv-drag-over-border);\n  background-color: var(--dv-drag-over-background-color);\n  opacity: 1;\n  /* GPU optimizations */\n  will-change: transform, opacity;\n  transform: translate3d(0, 0, 0);\n  backface-visibility: hidden;\n  contain: layout paint;\n  transition: opacity var(--dv-transition-duration) ease-in, top var(--dv-transition-duration) ease-out, left var(--dv-transition-duration) ease-out, width var(--dv-transition-duration) ease-out, height var(--dv-transition-duration) ease-out;\n}\n.dv-drop-target {\n  position: relative;\n  --dv-transition-duration: 70ms;\n}\n.dv-drop-target > .dv-drop-target-dropzone {\n  position: absolute;\n  left: 0px;\n  top: 0px;\n  height: 100%;\n  width: 100%;\n  z-index: 1000;\n  pointer-events: none;\n}\n.dv-drop-target > .dv-drop-target-dropzone > .dv-drop-target-selection {\n  position: relative;\n  box-sizing: border-box;\n  height: 100%;\n  width: 100%;\n  border: var(--dv-drag-over-border);\n  background-color: var(--dv-drag-over-background-color);\n  transition: top var(--dv-transition-duration) ease-out, left var(--dv-transition-duration) ease-out, width var(--dv-transition-duration) ease-out, height var(--dv-transition-duration) ease-out, opacity var(--dv-transition-duration) ease-out;\n  will-change: transform;\n  pointer-events: none;\n}\n.dv-drop-target > .dv-drop-target-dropzone > .dv-drop-target-selection.dv-drop-target-top.dv-drop-target-small-vertical {\n  border-top: 1px solid var(--dv-drag-over-border-color);\n}\n.dv-drop-target > .dv-drop-target-dropzone > .dv-drop-target-selection.dv-drop-target-bottom.dv-drop-target-small-vertical {\n  border-bottom: 1px solid var(--dv-drag-over-border-color);\n}\n.dv-drop-target > .dv-drop-target-dropzone > .dv-drop-target-selection.dv-drop-target-left.dv-drop-target-small-horizontal {\n  border-left: 1px solid var(--dv-drag-over-border-color);\n}\n.dv-drop-target > .dv-drop-target-dropzone > .dv-drop-target-selection.dv-drop-target-right.dv-drop-target-small-horizontal {\n  border-right: 1px solid var(--dv-drag-over-border-color);\n}\n\n.dv-dnd-compass {\n  z-index: 1001;\n}\n\n.dv-dnd-compass-cell {\n  box-sizing: border-box;\n  border-radius: 2px;\n  border: 1px solid var(--dv-dnd-compass-color, #1f9cf0);\n  background-color: var(--dv-dnd-compass-cell-color, rgba(31, 156, 240, 0.25));\n}\n\n.dv-dnd-compass-cell-edge {\n  border-style: dashed;\n  background-color: var(--dv-dnd-compass-edge-cell-color, rgba(31, 156, 240, 0.12));\n}\n\n.dv-dnd-compass-cell-active {\n  background-color: var(--dv-dnd-compass-active-cell-color, rgba(31, 156, 240, 0.5));\n  border-style: solid;\n}\n\n.dv-dnd-compass-edge-preview {\n  z-index: 1000;\n  box-sizing: border-box;\n  background-color: var(--dv-drag-over-background-color);\n  border: var(--dv-drag-over-border);\n}\n.dv-dragged {\n  transform: translate3d(0px, 0px, 0px); /* forces tab to be drawn on a separate layer (see https://github.com/microsoft/vscode/issues/18733) */\n}\n\n/* Applied to the ghost tab clone during drag so it shows the same border as a focused tab */\n.dv-tab-ghost-drag {\n  position: relative;\n}\n.dv-tab-ghost-drag::after {\n  position: absolute;\n  content: "";\n  height: 100%;\n  width: 100%;\n  top: 0px;\n  left: 0px;\n  pointer-events: none;\n  outline: 1px solid var(--dv-tab-divider-color) !important;\n  outline-offset: -1px;\n  z-index: 5;\n}\n\n.dv-tab {\n  flex-shrink: 0;\n}\n.dv-tab:focus-visible, .dv-tab:has(:focus-visible) {\n  position: relative;\n}\n.dv-tab:focus-visible::after, .dv-tab:has(:focus-visible)::after {\n  position: absolute;\n  content: "";\n  height: 100%;\n  width: 100%;\n  top: 0px;\n  left: 0px;\n  pointer-events: none;\n  outline: 1px solid var(--dv-tab-divider-color) !important;\n  outline-offset: -1px;\n  z-index: 5;\n}\n.dv-tab.dv-tab-dragging .dv-default-tab-action {\n  background-color: var(--dv-activegroup-visiblepanel-tab-color);\n}\n.dv-tab.dv-active-tab .dv-default-tab .dv-default-tab-action {\n  visibility: visible;\n}\n.dv-tab.dv-inactive-tab .dv-default-tab .dv-default-tab-action {\n  visibility: hidden;\n}\n.dv-tab.dv-inactive-tab .dv-default-tab:hover .dv-default-tab-action {\n  visibility: visible;\n}\n@media (hover: none) {\n  .dv-tab.dv-inactive-tab .dv-default-tab .dv-default-tab-action {\n    visibility: visible;\n  }\n}\n.dv-tab .dv-default-tab {\n  position: relative;\n  height: 100%;\n  width: 100%;\n  display: flex;\n  align-items: center;\n  white-space: nowrap;\n  text-overflow: ellipsis;\n}\n.dv-tab .dv-default-tab .dv-default-tab-content {\n  flex-grow: 1;\n  margin-right: 4px;\n}\n.dv-tab .dv-default-tab .dv-default-tab-action {\n  padding: 4px;\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  box-sizing: border-box;\n  border: none;\n  background: none;\n  color: inherit;\n  font: inherit;\n  cursor: pointer;\n}\n.dv-tab .dv-default-tab .dv-default-tab-action:hover {\n  border-radius: 2px;\n  background-color: var(--dv-icon-hover-background-color);\n}\n@media (pointer: coarse) {\n  .dv-tab .dv-default-tab .dv-default-tab-action {\n    padding: 8px;\n  }\n}\n.dv-tabs-overflow-dropdown-default {\n  height: 100%;\n  box-sizing: border-box;\n  color: var(--dv-activegroup-hiddenpanel-tab-color);\n  margin: var(--dv-tab-margin);\n  display: flex;\n  align-items: center;\n  flex-shrink: 0;\n  padding: 0.25rem 0.5rem;\n  cursor: pointer;\n}\n.dv-tabs-overflow-dropdown-default > span {\n  padding-left: 0.25rem;\n}\n.dv-tabs-overflow-dropdown-default > svg {\n  transform: rotate(90deg);\n}\n.dv-tabs-overflow-dropdown-default:hover {\n  border-radius: 2px;\n  background-color: var(--dv-icon-hover-background-color);\n}\n.dv-tabs-container {\n  display: flex;\n  position: relative;\n  height: 100%;\n  overflow: auto;\n  scrollbar-width: thin;\n  /**\n   * Multi-row (wrapping) tabs. Inert until the `MultiRowTabsModule` toggles\n   * `.dv-tabs-container--wrap` on this element (`overflow.mode: \'wrap\'`):\n   * tabs wrap onto multiple rows instead of clipping into the dropdown, and\n   * the strip grows to fit (the header grows via the `:has()` rule in\n   * tabsContainer.scss; the free header-aware content-sizing seam then shrinks\n   * the content area to match). Restricted to horizontal headers in v1.\n   */\n}\n.dv-tabs-container.dv-tabs-container--wrap:not(.dv-tabs-container-vertical) {\n  flex-wrap: wrap;\n  height: auto;\n  overflow: visible;\n  align-content: flex-start;\n}\n.dv-tabs-container.dv-tabs-container--wrap:not(.dv-tabs-container-vertical) .dv-tab {\n  height: var(--dv-tabs-and-actions-container-height);\n}\n.dv-tabs-container.dv-tabs-container--wrap:not(.dv-tabs-container-vertical).dv-tabs-container--wrap-capped {\n  max-height: calc(var(--dv-tabs-and-actions-container-height) * var(--dv-max-tab-rows));\n  overflow: hidden;\n}\n.dv-tabs-container.dv-tabs-container--wrap:not(.dv-tabs-container-vertical) .dv-tab--reorder-before::after,\n.dv-tabs-container.dv-tabs-container--wrap:not(.dv-tabs-container-vertical) .dv-tab--reorder-after::after {\n  content: "";\n  position: absolute;\n  top: 0;\n  bottom: 0;\n  width: 2px;\n  z-index: 10;\n  pointer-events: none;\n  background-color: var(--dv-drag-over-border-color);\n}\n.dv-tabs-container.dv-tabs-container--wrap:not(.dv-tabs-container-vertical) .dv-tab--reorder-before::after {\n  left: 0;\n}\n.dv-tabs-container.dv-tabs-container--wrap:not(.dv-tabs-container-vertical) .dv-tab--reorder-after::after {\n  right: 0;\n}\n.dv-tabs-container {\n  /**\n   * Multi-column (wrapping) tabs for a vertical (edge-group) header: the\n   * mirror of the horizontal rule above with the axes swapped. The main axis\n   * is vertical (bounded by the header height, so overflowing tabs wrap) and\n   * the cross axis is horizontal (grows into additional columns). The header\n   * grows in width via the `:has()` rule in tabsContainer.scss.\n   *\n   * Column flow direction under `writing-mode: vertical-rl` differs\n   * between left and right header positions; this needs visual verification\n   * in a real browser (jsdom lays out neither writing-mode nor flex-wrap).\n   */\n}\n.dv-tabs-container.dv-tabs-container--wrap.dv-tabs-container-vertical {\n  flex-wrap: wrap;\n  width: auto;\n  height: 100%;\n  max-height: 100%;\n  overflow: visible;\n  align-content: flex-start;\n}\n.dv-tabs-container.dv-tabs-container--wrap.dv-tabs-container-vertical .dv-tab {\n  width: var(--dv-tabs-and-actions-container-height);\n  height: var(--dv-wrap-vertical-tab-height, auto);\n}\n.dv-tabs-container.dv-tabs-container--wrap.dv-tabs-container-vertical.dv-tabs-container--wrap-capped {\n  max-width: calc(var(--dv-tabs-and-actions-container-height) * var(--dv-max-tab-rows));\n  overflow: hidden;\n}\n.dv-tabs-container.dv-tabs-container--wrap.dv-tabs-container-vertical .dv-tab--reorder-before::after,\n.dv-tabs-container.dv-tabs-container--wrap.dv-tabs-container-vertical .dv-tab--reorder-after::after {\n  content: "";\n  position: absolute;\n  left: 0;\n  right: 0;\n  height: 2px;\n  z-index: 10;\n  pointer-events: none;\n  background-color: var(--dv-drag-over-border-color);\n}\n.dv-tabs-container.dv-tabs-container--wrap.dv-tabs-container-vertical .dv-tab--reorder-before::after {\n  top: 0;\n}\n.dv-tabs-container.dv-tabs-container--wrap.dv-tabs-container-vertical .dv-tab--reorder-after::after {\n  bottom: 0;\n}\n.dv-tabs-container {\n  /* GPU optimizations for smooth scrolling */\n  will-change: scroll-position;\n  transform: translate3d(0, 0, 0);\n  /**\n   * Stop scroll-chaining at the tab strip so that wheel / trackpad\n   * overscroll past the strip\'s edges doesn\'t trigger the browser\'s\n   * swipe-to-go-back-or-forward gesture (and doesn\'t scroll the page\n   * either). `contain` keeps the native bounce visuals; `none` would\n   * also disable them.\n   */\n  overscroll-behavior: contain;\n  /**\n   * Empty space between tabs (and the scrollbar lane) keeps pan-x so a\n   * flick on those areas produces native momentum scroll. The tab and\n   * chip elements themselves opt out (`touch-action: none`) so the\n   * pointer drag source owns the gesture from pointerdown - a flick on\n   * a tab or chip always becomes a drag, regardless of direction.\n   */\n  touch-action: pan-x;\n}\n.dv-tabs-container.dv-tabs-container-vertical {\n  width: 100%;\n  height: fit-content;\n  max-height: 100%;\n  writing-mode: vertical-rl;\n  touch-action: pan-y;\n}\n.dv-tabs-container.dv-horizontal .dv-tab:not(:first-child)::before, .dv-tabs-container.dv-vertical .dv-tab:not(:first-child)::before {\n  content: " ";\n  position: absolute;\n  top: 0;\n  left: 0;\n  z-index: 5;\n  pointer-events: none;\n  background-color: var(--dv-tab-divider-color);\n}\n.dv-tabs-container.dv-horizontal .dv-tab:not(:first-child)::before {\n  width: 1px;\n  height: 100%;\n}\n.dv-tabs-container.dv-vertical .dv-tab:not(:first-child)::before {\n  width: 100%;\n  height: 1px;\n}\n.dv-tabs-container::-webkit-scrollbar {\n  height: 3px;\n}\n.dv-tabs-container {\n  /* Track */\n}\n.dv-tabs-container::-webkit-scrollbar-track {\n  background: transparent;\n}\n.dv-tabs-container {\n  /* Handle */\n}\n.dv-tabs-container::-webkit-scrollbar-thumb {\n  background: var(--dv-tabs-container-scrollbar-color);\n}\n\n.dv-scrollable > .dv-tabs-container {\n  overflow: hidden;\n}\n\n.dv-tab {\n  user-select: none;\n  -webkit-user-select: none;\n  -moz-user-select: none;\n  -ms-user-select: none;\n  outline: none;\n  padding: 0.25rem 0.5rem;\n  cursor: pointer;\n  position: relative;\n  box-sizing: border-box;\n  font-size: var(--dv-tab-font-size);\n  margin: var(--dv-tab-margin);\n  touch-action: none;\n}\n.dv-tab.dv-tab--shifting {\n  will-change: transform, margin-left, margin-right, margin-top, margin-bottom;\n  transition: transform var(--dv-transition-duration, 200ms) ease-out, margin-left var(--dv-transition-duration, 200ms) ease-out, margin-right var(--dv-transition-duration, 200ms) ease-out, margin-top var(--dv-transition-duration, 200ms) ease-out, margin-bottom var(--dv-transition-duration, 200ms) ease-out;\n}\n.dv-tab.dv-tab--dragging {\n  width: 0 !important;\n  min-width: 0 !important;\n  padding: 0 !important;\n  margin: 0 !important;\n  overflow: hidden;\n  opacity: 0;\n  pointer-events: none;\n  transition: width var(--dv-transition-duration, 200ms) ease-out, padding var(--dv-transition-duration, 200ms) ease-out, margin var(--dv-transition-duration, 200ms) ease-out, opacity var(--dv-transition-duration, 200ms) ease-out;\n}\n.dv-tab.dv-tab--group-collapsed {\n  width: 0 !important;\n  min-width: 0 !important;\n  padding: 0 !important;\n  margin: 0 !important;\n  overflow: hidden;\n  opacity: 0;\n  pointer-events: none;\n  transition: width var(--dv-transition-duration, 200ms) ease-out, padding var(--dv-transition-duration, 200ms) ease-out, margin var(--dv-transition-duration, 200ms) ease-out, opacity var(--dv-transition-duration, 200ms) ease-out;\n}\n.dv-tab.dv-tab--group-expanding {\n  transition: width var(--dv-transition-duration, 200ms) ease-out, padding var(--dv-transition-duration, 200ms) ease-out, margin var(--dv-transition-duration, 200ms) ease-out, opacity var(--dv-transition-duration, 200ms) ease-out;\n}\n\n.dv-tab.dv-tab--pinned:has(.dv-tab-pin) {\n  display: flex;\n  align-items: center;\n}\n.dv-tab.dv-tab--pinned .dv-tab-pin {\n  display: inline-flex;\n  align-items: center;\n  flex-shrink: 0;\n  margin-right: 4px;\n  opacity: 0.7;\n  pointer-events: none;\n}\n.dv-tab.dv-tab--pinned .dv-tab-pin .dv-svg {\n  width: 11px;\n  height: 11px;\n}\n.dv-tab.dv-tab--pinned .dv-default-tab {\n  min-width: 0;\n}\n.dv-tab.dv-tab--pinned .dv-default-tab-action {\n  display: none;\n}\n\n.dv-tab.dv-tab--pinned-compact .dv-default-tab-content {\n  display: none;\n}\n.dv-tab.dv-tab--pinned-compact .dv-tab-pin {\n  margin-right: 0;\n}\n\n.dv-tabs-container:not(.dv-tabs-container--wrap):not(.dv-tabs-container-vertical) > .dv-tab.dv-tab--pinned-sticky {\n  position: sticky;\n  left: var(--dv-pinned-sticky-left, 0);\n  z-index: 2;\n}\n\n.dv-tabs-and-actions-container.dv-tabs-and-actions-container--pinned-row {\n  flex-wrap: wrap;\n  height: auto;\n  min-height: var(--dv-tabs-and-actions-container-height);\n  align-content: flex-start;\n}\n.dv-tabs-and-actions-container.dv-tabs-and-actions-container--pinned-row .dv-pinned-row {\n  flex: 0 0 100%;\n  order: -1;\n}\n.dv-tabs-and-actions-container.dv-tabs-and-actions-container--pinned-row .dv-tab.dv-tab--pinned {\n  display: none;\n}\n\n.dv-pinned-row {\n  display: flex;\n  align-items: center;\n  gap: 2px;\n  box-sizing: border-box;\n  width: 100%;\n  min-height: var(--dv-tabs-and-actions-container-height);\n  padding: 2px 4px;\n  background-color: var(--dv-tabs-and-actions-container-background-color);\n  border-bottom: 1px solid var(--dv-tab-divider-color);\n}\n\n.dv-pinned-tab {\n  display: inline-flex;\n  align-items: center;\n  gap: 4px;\n  box-sizing: border-box;\n  padding: 0.25rem 0.5rem;\n  font-size: var(--dv-tab-font-size);\n  cursor: pointer;\n  user-select: none;\n  background-color: var(--dv-activegroup-hiddenpanel-tab-background-color);\n  color: var(--dv-activegroup-hiddenpanel-tab-color);\n}\n.dv-pinned-tab.dv-pinned-tab--active {\n  background-color: var(--dv-activegroup-visiblepanel-tab-background-color);\n  color: var(--dv-activegroup-visiblepanel-tab-color);\n}\n.dv-pinned-tab .dv-pinned-tab-label {\n  max-width: 120px;\n  overflow: hidden;\n  white-space: nowrap;\n  text-overflow: ellipsis;\n}\n.dv-pinned-tab .dv-pinned-tab-unpin {\n  flex-shrink: 0;\n  opacity: 0.6;\n}\n.dv-pinned-tab .dv-pinned-tab-unpin:hover {\n  opacity: 1;\n}\n.dv-pinned-tab.dv-pinned-tab--dragging {\n  opacity: 0.5;\n}\n.dv-pinned-tab.dv-pinned-tab--drop-before, .dv-pinned-tab.dv-pinned-tab--drop-after {\n  position: relative;\n}\n.dv-pinned-tab.dv-pinned-tab--drop-before::after, .dv-pinned-tab.dv-pinned-tab--drop-after::after {\n  content: "";\n  position: absolute;\n  top: 0;\n  bottom: 0;\n  width: 2px;\n  z-index: 10;\n  pointer-events: none;\n  background-color: var(--dv-drag-over-border-color);\n}\n.dv-pinned-tab.dv-pinned-tab--drop-before::after {\n  left: 0;\n}\n.dv-pinned-tab.dv-pinned-tab--drop-after::after {\n  right: 0;\n}\n\n@media (prefers-reduced-motion: reduce) {\n  .dv-tab {\n    transition: none !important;\n  }\n  .dv-tab-group-chip {\n    transition: none !important;\n  }\n}\n.dv-tab-group-chip {\n  display: inline-flex;\n  align-items: center;\n  align-self: center;\n  padding: var(--dv-tab-group-chip-padding);\n  margin: 0 8px 0 8px;\n  border-radius: var(--dv-tab-group-chip-border-radius);\n  font-size: var(--dv-tab-group-chip-font-size);\n  cursor: pointer;\n  user-select: none;\n  white-space: nowrap;\n  box-sizing: border-box;\n  line-height: 1;\n  touch-action: none;\n  background-color: var(--dv-tab-group-color);\n  color: white;\n}\n.dv-tab-group-chip.dv-tab-group-chip--accent-off {\n  background-color: transparent;\n  color: inherit;\n}\n.dv-tab-group-chip.dv-tab-group-chip--shifting {\n  will-change: margin-left, margin-top;\n  transition: margin-left var(--dv-transition-duration, 200ms) ease-out, margin-top var(--dv-transition-duration, 200ms) ease-out;\n}\n.dv-tab-group-chip.dv-tab-group-chip--dragging {\n  width: 0 !important;\n  min-width: 0 !important;\n  padding: 0 !important;\n  margin: 0 !important;\n  overflow: hidden;\n  opacity: 0;\n  pointer-events: none;\n  transition: width var(--dv-transition-duration, 200ms) ease-out, padding var(--dv-transition-duration, 200ms) ease-out, margin var(--dv-transition-duration, 200ms) ease-out, opacity var(--dv-transition-duration, 200ms) ease-out;\n}\n.dv-tab-group-chip .dv-tab-group-chip-label--empty {\n  display: none;\n}\n.dv-tab-group-chip:has(.dv-tab-group-chip-label--empty) {\n  position: relative;\n  width: 12px;\n  height: 12px;\n  padding: 0;\n  border-radius: 50%;\n}\n.dv-tab-group-chip:has(.dv-tab-group-chip-label--empty)::before {\n  content: "";\n  position: absolute;\n  inset: -8px;\n}\n\n.dv-tab-group-underline {\n  position: absolute;\n  bottom: 0;\n  opacity: var(--dv-tab-group-line-opacity);\n  pointer-events: none;\n  z-index: 10;\n}\n\n.dv-tab-group-chip-continuation {\n  position: absolute;\n  width: 8px;\n  height: 8px;\n  border-radius: 50%;\n  opacity: var(--dv-tab-group-line-opacity);\n  pointer-events: none;\n  z-index: 10;\n}\n\n.dv-groupview-header-bottom .dv-tab-group-underline {\n  bottom: auto;\n  top: 0;\n}\n\n.dv-tabs-container-vertical .dv-tab-group-underline {\n  bottom: auto;\n  left: 0;\n}\n\n.dv-tabs-container-vertical .dv-tab-group-chip {\n  margin: 8px 0 8px 0;\n}\n.dv-tabs-container-vertical .dv-tab-group-chip.dv-tab-group-chip--dragging {\n  height: 0 !important;\n  min-height: 0 !important;\n  width: auto !important;\n  min-width: initial !important;\n  transition: height var(--dv-transition-duration, 200ms) ease-out, padding var(--dv-transition-duration, 200ms) ease-out, margin var(--dv-transition-duration, 200ms) ease-out, opacity var(--dv-transition-duration, 200ms) ease-out;\n}\n.dv-tabs-container-vertical .dv-tab {\n  padding: 0.5rem 0.25rem;\n}\n.dv-tabs-container-vertical .dv-tab.dv-tab--group-collapsed {\n  height: 0 !important;\n  min-height: 0 !important;\n  width: auto !important;\n  min-width: initial !important;\n  transition: height var(--dv-transition-duration, 200ms) ease-out, padding var(--dv-transition-duration, 200ms) ease-out, margin var(--dv-transition-duration, 200ms) ease-out, opacity var(--dv-transition-duration, 200ms) ease-out;\n}\n.dv-tabs-container-vertical .dv-tab.dv-tab--group-expanding {\n  transition: height var(--dv-transition-duration, 200ms) ease-out, padding var(--dv-transition-duration, 200ms) ease-out, margin var(--dv-transition-duration, 200ms) ease-out, opacity var(--dv-transition-duration, 200ms) ease-out;\n}\n.dv-tabs-container-vertical .dv-tab.dv-tab--dragging {\n  height: 0 !important;\n  min-height: 0 !important;\n  width: auto !important;\n  min-width: initial !important;\n  transition: height var(--dv-transition-duration, 200ms) ease-out, padding var(--dv-transition-duration, 200ms) ease-out, margin var(--dv-transition-duration, 200ms) ease-out, opacity var(--dv-transition-duration, 200ms) ease-out;\n}\n\n.dv-tabs-overflow-container {\n  flex-direction: column;\n  height: unset;\n  font-size: var(--dv-tabs-and-actions-container-font-size);\n  max-height: min(50vh, 400px);\n  overflow-y: auto;\n  border: 1px solid var(--dv-tab-divider-color);\n  background-color: var(--dv-group-view-background-color);\n  /* Scrollbar styling for webkit browsers */\n}\n.dv-tabs-overflow-container::-webkit-scrollbar {\n  width: 6px;\n}\n.dv-tabs-overflow-container::-webkit-scrollbar-track {\n  background: transparent;\n}\n.dv-tabs-overflow-container::-webkit-scrollbar-thumb {\n  background: var(--dv-tabs-container-scrollbar-color);\n  border-radius: 3px;\n}\n.dv-tabs-overflow-container {\n  /* Firefox scrollbar */\n  scrollbar-width: thin;\n}\n.dv-tabs-overflow-container .dv-tab:not(:last-child) {\n  border-bottom: 1px solid var(--dv-tab-divider-color);\n}\n.dv-tabs-overflow-container .dv-active-tab {\n  background-color: var(--dv-activegroup-visiblepanel-tab-background-color);\n  color: var(--dv-activegroup-visiblepanel-tab-color);\n}\n.dv-tabs-overflow-container .dv-inactive-tab {\n  background-color: var(--dv-activegroup-hiddenpanel-tab-background-color);\n  color: var(--dv-activegroup-hiddenpanel-tab-color);\n}\n.dv-tabs-overflow-container .dv-tabs-overflow-group-header {\n  display: flex;\n  align-items: center;\n  gap: 6px;\n  padding: 4px 8px;\n  font-size: 0.8em;\n  font-weight: 600;\n  color: var(--dv-activegroup-hiddenpanel-tab-color);\n  cursor: pointer;\n  border-bottom: 1px solid var(--dv-tab-divider-color);\n}\n.dv-tabs-overflow-container .dv-tabs-overflow-group-header:hover {\n  background-color: var(--dv-icon-hover-background-color);\n}\n.dv-tabs-overflow-container .dv-tabs-overflow-group-color {\n  display: inline-block;\n  width: 8px;\n  height: 8px;\n  border-radius: 50%;\n  flex-shrink: 0;\n  background-color: var(--dv-tab-group-color);\n}\n.dv-tabs-overflow-container .dv-tabs-overflow-group-label {\n  flex: 1;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n.dv-tabs-overflow-container .dv-tabs-overflow-group-collapsed-badge {\n  font-size: 0.75em;\n  font-weight: 400;\n  opacity: 0.7;\n  padding: 1px 4px;\n  border-radius: 3px;\n  background-color: var(--dv-tab-divider-color);\n}\n.dv-tabs-overflow-container .dv-tabs-overflow-pinned-header {\n  cursor: default;\n}\n.dv-tabs-overflow-container .dv-tabs-overflow-pinned-header:hover {\n  background-color: transparent;\n}\n.dv-tabs-overflow-container .dv-tabs-overflow-pinned-header .dv-tabs-overflow-pinned-icon {\n  display: inline-flex;\n  align-items: center;\n  flex-shrink: 0;\n  opacity: 0.7;\n}\n.dv-tabs-overflow-container .dv-tabs-overflow-pinned-header .dv-tabs-overflow-pinned-icon .dv-svg {\n  width: 11px;\n  height: 11px;\n}\n.dv-tabs-overflow-container .dv-tab.dv-tab--grouped {\n  padding-left: 16px;\n}\n\n/*\n * Advanced overflow popover (AdvancedOverflowModule): the same container as the\n * free list, upgraded in place with a search input, a scrollable listbox, and a\n * keyboard-highlighted active row. Styles live in core so the module ships no\n * CSS; they are inert unless the module renders this body.\n */\n.dv-tabs-overflow-container.dv-tabs-overflow-advanced {\n  min-width: 220px;\n}\n.dv-tabs-overflow-container.dv-tabs-overflow-advanced .dv-tabs-overflow-search {\n  box-sizing: border-box;\n  width: 100%;\n  padding: 6px 8px;\n  border: none;\n  border-bottom: 1px solid var(--dv-tab-divider-color);\n  outline: none;\n  font-size: inherit;\n  font-family: inherit;\n  color: var(--dv-activegroup-visiblepanel-tab-color);\n  background-color: var(--dv-group-view-background-color);\n}\n.dv-tabs-overflow-container.dv-tabs-overflow-advanced .dv-tabs-overflow-list {\n  display: flex;\n  flex-direction: column;\n  outline: none;\n}\n.dv-tabs-overflow-container.dv-tabs-overflow-advanced .dv-tab.dv-tabs-overflow-option--focused {\n  outline: 1px solid var(--dv-tab-divider-color);\n  outline-offset: -1px;\n  background-color: var(--dv-icon-hover-background-color);\n}\n.dv-tabs-and-actions-container {\n  display: flex;\n  background-color: var(--dv-tabs-and-actions-container-background-color);\n  flex-shrink: 0;\n  box-sizing: border-box;\n  height: var(--dv-tabs-and-actions-container-height);\n  font-size: var(--dv-tabs-and-actions-container-font-size);\n  /**\n   * Multi-row (wrapping) tabs: when the tab list wraps onto multiple rows\n   * (`.dv-tabs-container--wrap`, toggled by the `MultiRowTabsModule`), the\n   * header grows to fit instead of clipping. Inert otherwise: the single-row\n   * fixed height above is unchanged.\n   */\n}\n.dv-tabs-and-actions-container:has(.dv-tabs-container--wrap) {\n  height: auto;\n  min-height: var(--dv-tabs-and-actions-container-height);\n  align-items: flex-start;\n}\n.dv-tabs-and-actions-container:has(.dv-tabs-container--wrap) > .dv-pre-actions-container,\n.dv-tabs-and-actions-container:has(.dv-tabs-container--wrap) > .dv-left-actions-container,\n.dv-tabs-and-actions-container:has(.dv-tabs-container--wrap) > .dv-right-actions-container,\n.dv-tabs-and-actions-container:has(.dv-tabs-container--wrap) > .dv-void-container {\n  height: var(--dv-tabs-and-actions-container-height);\n}\n.dv-tabs-and-actions-container.dv-single-tab.dv-full-width-single-tab .dv-scrollable {\n  flex-grow: 1;\n}\n.dv-tabs-and-actions-container.dv-single-tab.dv-full-width-single-tab .dv-tabs-container {\n  flex-grow: 1;\n}\n.dv-tabs-and-actions-container.dv-single-tab.dv-full-width-single-tab .dv-tabs-container .dv-tab {\n  flex-grow: 1;\n  padding: 0px;\n}\n.dv-tabs-and-actions-container.dv-single-tab.dv-full-width-single-tab .dv-void-container {\n  flex-grow: 0;\n}\n.dv-tabs-and-actions-container .dv-void-container {\n  display: flex;\n  flex-grow: 1;\n  user-select: none;\n  -webkit-user-select: none;\n  -moz-user-select: none;\n  -ms-user-select: none;\n  touch-action: none;\n}\n.dv-tabs-and-actions-container .dv-void-container.dv-draggable {\n  cursor: grab;\n}\n.dv-tabs-and-actions-container .dv-right-actions-container {\n  display: flex;\n}\n.dv-tabs-and-actions-container .dv-right-actions-container.dv-right-actions-container-vertical {\n  flex-direction: column;\n}\n.dv-tabs-and-actions-container.dv-groupview-header-vertical {\n  flex-direction: column;\n  height: auto;\n  width: var(--dv-tabs-and-actions-container-height);\n}\n.dv-tabs-and-actions-container.dv-groupview-header-vertical:has(.dv-tabs-container--wrap) {\n  width: auto;\n  min-width: var(--dv-tabs-and-actions-container-height);\n}\n.dv-tabs-and-actions-container.dv-groupview-header-vertical:has(.dv-tabs-container--wrap) > .dv-scrollable {\n  align-self: stretch;\n}\n.dv-watermark {\n  display: flex;\n  height: 100%;\n}\n.dv-dockview {\n  position: relative;\n  background-color: var(--dv-group-view-background-color);\n}\n.dv-dockview .dv-watermark-container {\n  position: absolute;\n  top: 0px;\n  left: 0px;\n  height: 100%;\n  width: 100%;\n  z-index: 1;\n}\n.dv-dockview .dv-overlay-render-container {\n  position: relative;\n}\n\n.dv-groupview.dv-active-group > .dv-tabs-and-actions-container .dv-tabs-container > .dv-tab.dv-active-tab {\n  background-color: var(--dv-activegroup-visiblepanel-tab-background-color);\n  color: var(--dv-activegroup-visiblepanel-tab-color);\n}\n.dv-groupview.dv-active-group > .dv-tabs-and-actions-container .dv-tabs-container > .dv-tab.dv-inactive-tab {\n  background-color: var(--dv-activegroup-hiddenpanel-tab-background-color);\n  color: var(--dv-activegroup-hiddenpanel-tab-color);\n}\n.dv-groupview.dv-inactive-group > .dv-tabs-and-actions-container .dv-tabs-container > .dv-tab.dv-active-tab {\n  background-color: var(--dv-inactivegroup-visiblepanel-tab-background-color);\n  color: var(--dv-inactivegroup-visiblepanel-tab-color);\n}\n.dv-groupview.dv-inactive-group > .dv-tabs-and-actions-container .dv-tabs-container > .dv-tab.dv-inactive-tab {\n  background-color: var(--dv-inactivegroup-hiddenpanel-tab-background-color);\n  color: var(--dv-inactivegroup-hiddenpanel-tab-color);\n}\n\n/**\n * when a tab is dragged we lose the above stylings because they are conditional on parent elements\n * therefore we also set some stylings for the dragging event\n **/\n.dv-tab.dv-tab-dragging {\n  background-color: var(--dv-activegroup-visiblepanel-tab-background-color);\n  color: var(--dv-activegroup-visiblepanel-tab-color);\n}\n\n.dv-keyboard-docking-hint {\n  position: absolute;\n  left: 50%;\n  bottom: 8px;\n  transform: translateX(-50%);\n  z-index: 100;\n  max-width: 90%;\n  padding: 4px 10px;\n  border-radius: 4px;\n  font-size: 12px;\n  line-height: 1.4;\n  white-space: nowrap;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  pointer-events: none;\n  background-color: var(--dv-context-menu-background-color, var(--dv-group-view-background-color));\n  color: var(--dv-activegroup-visiblepanel-tab-color);\n  border: 1px solid var(--dv-tab-divider-color);\n  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);\n}\n.dv-groupview {\n  display: flex;\n  height: 100%;\n  background-color: var(--dv-group-view-background-color);\n  overflow: hidden;\n  flex-direction: column;\n}\n.dv-groupview:focus {\n  outline: none;\n}\n.dv-groupview > .dv-content-container {\n  flex-grow: 1;\n  min-height: 0;\n  outline: none;\n}\n.dv-groupview.dv-groupview-header-bottom {\n  flex-direction: column-reverse;\n}\n.dv-groupview.dv-groupview-header-left {\n  flex-direction: row;\n}\n.dv-groupview.dv-groupview-header-right {\n  flex-direction: row-reverse;\n}\n.dv-groupview.dv-groupview-edge.dv-edge-collapsed > .dv-content-container {\n  display: none;\n}\n.dv-root-wrapper {\n  height: 100%;\n  width: 100%;\n}\n.dv-grid-view,\n.dv-branch-node {\n  height: 100%;\n  width: 100%;\n}\n.dv-debug .dv-resize-container .dv-resize-handle-top {\n  background-color: red;\n}\n.dv-debug .dv-resize-container .dv-resize-handle-bottom {\n  background-color: green;\n}\n.dv-debug .dv-resize-container .dv-resize-handle-left {\n  background-color: yellow;\n}\n.dv-debug .dv-resize-container .dv-resize-handle-right {\n  background-color: blue;\n}\n.dv-debug .dv-resize-container .dv-resize-handle-topleft,\n.dv-debug .dv-resize-container .dv-resize-handle-topright,\n.dv-debug .dv-resize-container .dv-resize-handle-bottomleft,\n.dv-debug .dv-resize-container .dv-resize-handle-bottomright {\n  background-color: cyan;\n}\n\n.dv-floating-overlay-host {\n  position: absolute;\n  pointer-events: none;\n}\n.dv-floating-overlay-host > .dv-resize-container {\n  pointer-events: auto;\n}\n\n.dv-edge-peek {\n  background-color: var(--dv-group-view-background-color);\n  border: 1px solid var(--dv-separator-border);\n  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);\n}\n.dv-edge-peek > * {\n  width: 100%;\n  height: 100%;\n  overflow: auto;\n}\n\n.dv-auto-edge-band {\n  position: absolute;\n  pointer-events: none;\n  z-index: var(--dv-overlay-z-index, 999);\n  background-color: var(--dv-edge-dock-indicator-color);\n  box-shadow: 0 0 6px var(--dv-edge-dock-indicator-color);\n}\n\n.dv-edge-peek-header {\n  display: flex;\n  align-items: center;\n  gap: 4px;\n  padding: 0 4px 0 8px;\n  box-sizing: border-box;\n  background-color: var(--dv-group-view-background-color);\n  border: 1px solid var(--dv-separator-border);\n  border-bottom: none;\n  color: var(--dv-activegroup-visiblepanel-tab-color);\n  font-size: 12px;\n}\n.dv-edge-peek-header .dv-edge-peek-pin,\n.dv-edge-peek-header .dv-edge-peek-close {\n  flex: 0 0 auto;\n  display: inline-flex;\n  align-items: center;\n  justify-content: center;\n  box-sizing: border-box;\n  cursor: pointer;\n  border: none;\n  padding: 4px;\n  color: inherit;\n  background: transparent;\n  outline: none;\n}\n.dv-edge-peek-header .dv-edge-peek-pin:hover,\n.dv-edge-peek-header .dv-edge-peek-close:hover {\n  border-radius: 2px;\n  background-color: var(--dv-icon-hover-background-color);\n}\n.dv-edge-peek-header .dv-edge-peek-pin:focus-visible,\n.dv-edge-peek-header .dv-edge-peek-close:focus-visible {\n  border-radius: 2px;\n  outline: 1px solid var(--dv-tab-divider-color);\n  outline-offset: -1px;\n}\n\n.dv-edge-peek-title {\n  flex: 1 1 auto;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.dv-resize-container > .dv-grid-view {\n  width: 100%;\n  height: 100%;\n}\n\n.dv-resize-container-with-titlebar {\n  display: flex;\n  flex-direction: column;\n}\n.dv-resize-container-with-titlebar > .dv-floating-titlebar {\n  flex: 0 0 auto;\n}\n.dv-resize-container-with-titlebar > .dv-grid-view {\n  height: auto;\n  flex: 1 1 0;\n  min-height: 0;\n}\n\n.dv-floating-titlebar {\n  box-sizing: border-box;\n  flex-shrink: 0;\n  height: var(--dv-floating-titlebar-height, 22px);\n  background-color: var(--dv-floating-titlebar-background-color);\n  border-bottom: var(--dv-floating-titlebar-border-bottom, none);\n  user-select: none;\n  touch-action: none;\n}\n.dv-floating-titlebar.dv-draggable {\n  cursor: grab;\n}\n\n.dv-resize-container {\n  --dv-overlay-z-index: var(--dv-overlay-z-index, 999);\n  position: absolute;\n  z-index: calc(var(--dv-overlay-z-index) - 2);\n  background-color: var(--dv-group-view-background-color);\n  border: var(--dv-floating-border);\n  box-shadow: var(--dv-floating-box-shadow);\n  /* GPU optimizations for floating group movement */\n  will-change: transform, opacity;\n  transform: translate3d(0, 0, 0);\n  backface-visibility: hidden;\n}\n.dv-resize-container.dv-hidden {\n  display: none;\n}\n.dv-resize-container.dv-resize-container-dragging {\n  opacity: var(--dv-floating-group-dragging-opacity);\n  /* Enhanced GPU acceleration during drag */\n  will-change: transform, opacity;\n}\n.dv-resize-container .dv-resize-handle-top,\n.dv-resize-container .dv-resize-handle-bottom,\n.dv-resize-container .dv-resize-handle-left,\n.dv-resize-container .dv-resize-handle-right,\n.dv-resize-container .dv-resize-handle-topleft,\n.dv-resize-container .dv-resize-handle-topright,\n.dv-resize-container .dv-resize-handle-bottomleft,\n.dv-resize-container .dv-resize-handle-bottomright {\n  touch-action: none;\n}\n.dv-resize-container .dv-resize-handle-top {\n  height: 4px;\n  width: calc(100% - 8px);\n  left: 4px;\n  top: -2px;\n  z-index: var(--dv-overlay-z-index);\n  position: absolute;\n  cursor: ns-resize;\n}\n.dv-resize-container .dv-resize-handle-bottom {\n  height: 4px;\n  width: calc(100% - 8px);\n  left: 4px;\n  bottom: -2px;\n  z-index: var(--dv-overlay-z-index);\n  position: absolute;\n  cursor: ns-resize;\n}\n.dv-resize-container .dv-resize-handle-left {\n  height: calc(100% - 8px);\n  width: 4px;\n  left: -2px;\n  top: 4px;\n  z-index: var(--dv-overlay-z-index);\n  position: absolute;\n  cursor: ew-resize;\n}\n.dv-resize-container .dv-resize-handle-right {\n  height: calc(100% - 8px);\n  width: 4px;\n  right: -2px;\n  top: 4px;\n  z-index: var(--dv-overlay-z-index);\n  position: absolute;\n  cursor: ew-resize;\n}\n.dv-resize-container .dv-resize-handle-topleft {\n  height: 4px;\n  width: 4px;\n  top: -2px;\n  left: -2px;\n  z-index: var(--dv-overlay-z-index);\n  position: absolute;\n  cursor: nw-resize;\n}\n.dv-resize-container .dv-resize-handle-topright {\n  height: 4px;\n  width: 4px;\n  right: -2px;\n  top: -2px;\n  z-index: var(--dv-overlay-z-index);\n  position: absolute;\n  cursor: ne-resize;\n}\n.dv-resize-container .dv-resize-handle-bottomleft {\n  height: 4px;\n  width: 4px;\n  left: -2px;\n  bottom: -2px;\n  z-index: var(--dv-overlay-z-index);\n  position: absolute;\n  cursor: sw-resize;\n}\n.dv-resize-container .dv-resize-handle-bottomright {\n  height: 4px;\n  width: 4px;\n  right: -2px;\n  bottom: -2px;\n  z-index: var(--dv-overlay-z-index);\n  position: absolute;\n  cursor: se-resize;\n}\n@media (pointer: coarse) {\n  .dv-resize-container .dv-resize-handle-top,\n  .dv-resize-container .dv-resize-handle-bottom {\n    height: 16px;\n    width: calc(100% - 48px);\n    left: 24px;\n  }\n  .dv-resize-container .dv-resize-handle-top {\n    top: -10px;\n  }\n  .dv-resize-container .dv-resize-handle-bottom {\n    bottom: -10px;\n  }\n  .dv-resize-container .dv-resize-handle-left,\n  .dv-resize-container .dv-resize-handle-right {\n    width: 16px;\n    height: calc(100% - 48px);\n    top: 24px;\n  }\n  .dv-resize-container .dv-resize-handle-left {\n    left: -10px;\n  }\n  .dv-resize-container .dv-resize-handle-right {\n    right: -10px;\n  }\n  .dv-resize-container .dv-resize-handle-topleft,\n  .dv-resize-container .dv-resize-handle-topright,\n  .dv-resize-container .dv-resize-handle-bottomleft,\n  .dv-resize-container .dv-resize-handle-bottomright {\n    height: 24px;\n    width: 24px;\n  }\n  .dv-resize-container .dv-resize-handle-topleft {\n    top: -12px;\n    left: -12px;\n  }\n  .dv-resize-container .dv-resize-handle-topright {\n    top: -12px;\n    right: -12px;\n  }\n  .dv-resize-container .dv-resize-handle-bottomleft {\n    bottom: -12px;\n    left: -12px;\n  }\n  .dv-resize-container .dv-resize-handle-bottomright {\n    bottom: -12px;\n    right: -12px;\n  }\n}\n\n.dv-smart-guides {\n  pointer-events: none;\n  z-index: calc(var(--dv-overlay-z-index, 999) + 100);\n}\n\n.dv-smart-guide {\n  background-color: var(--dv-smart-guides-color, #1f9cf0);\n}\n\n.dv-smart-guide-preview {\n  box-sizing: border-box;\n  background-color: var(--dv-smart-guides-preview-color, rgba(31, 156, 240, 0.18));\n  border: 1px solid var(--dv-smart-guides-color, #1f9cf0);\n}\n.dv-render-overlay {\n  --dv-overlay-z-index: var(--dv-overlay-z-index, 999);\n  position: absolute;\n  z-index: 1;\n  width: 100%;\n  height: 100%;\n  contain: layout paint;\n  isolation: isolate;\n  /* GPU optimizations */\n  will-change: transform;\n  transform: translate3d(0, 0, 0);\n  backface-visibility: hidden;\n}\n.dv-render-overlay.dv-render-overlay-float {\n  z-index: calc(var(--dv-overlay-z-index) - 1);\n}\n\n.dv-debug .dv-render-overlay {\n  outline: 1px solid red;\n  outline-offset: -1;\n}\n.dv-pane-container {\n  height: 100%;\n  width: 100%;\n}\n.dv-pane-container.dv-animated .dv-view {\n  /* GPU optimizations for smooth pane animations */\n  will-change: transform;\n  transform: translate3d(0, 0, 0);\n  backface-visibility: hidden;\n  transition: transform 0.15s ease-out;\n}\n.dv-pane-container .dv-view {\n  overflow: hidden;\n  display: flex;\n  flex-direction: column;\n  padding: 0px !important;\n}\n.dv-pane-container .dv-view:not(:first-child)::before {\n  background-color: transparent !important;\n}\n.dv-pane-container .dv-view:not(:first-child) .dv-pane > .dv-pane-header {\n  border-top: 1px solid var(--dv-paneview-header-border-color);\n}\n.dv-pane-container .dv-view .dv-default-header {\n  background-color: var(--dv-group-view-background-color);\n  color: var(--dv-activegroup-visiblepanel-tab-color);\n  display: flex;\n  padding: 0px 8px;\n  cursor: pointer;\n}\n.dv-pane-container .dv-view .dv-default-header .dv-pane-header-icon {\n  display: flex;\n  justify-content: center;\n  align-items: center;\n}\n.dv-pane-container .dv-view .dv-default-header > span {\n  padding-left: 8px;\n  flex-grow: 1;\n}\n.dv-pane-container:first-of-type > .dv-pane > .dv-pane-header {\n  border-top: none !important;\n}\n.dv-pane-container .dv-pane {\n  display: flex;\n  flex-direction: column;\n  overflow: hidden;\n  height: 100%;\n}\n.dv-pane-container .dv-pane .dv-pane-header {\n  box-sizing: border-box;\n  user-select: none;\n  position: relative;\n  outline: none;\n}\n.dv-pane-container .dv-pane .dv-pane-header.dv-pane-draggable {\n  cursor: pointer;\n}\n.dv-pane-container .dv-pane .dv-pane-header:focus-visible:before, .dv-pane-container .dv-pane .dv-pane-header:has(:focus-visible):before {\n  position: absolute;\n  top: 0;\n  left: 0;\n  width: 100%;\n  height: 100%;\n  z-index: 5;\n  content: "";\n  pointer-events: none;\n  outline: 1px solid;\n  outline-width: -1px;\n  outline-style: solid;\n  outline-offset: -1px;\n  outline-color: var(--dv-paneview-active-outline-color);\n}\n.dv-pane-container .dv-pane .dv-pane-body {\n  overflow-y: auto;\n  overflow-x: hidden;\n  flex-grow: 1;\n  position: relative;\n  outline: none;\n}\n.dv-pane-container .dv-pane .dv-pane-body:focus-visible:before, .dv-pane-container .dv-pane .dv-pane-body:has(:focus-visible):before {\n  position: absolute;\n  top: 0;\n  left: 0;\n  width: 100%;\n  height: 100%;\n  z-index: 5;\n  content: "";\n  pointer-events: none;\n  outline: 1px solid;\n  outline-width: -1px;\n  outline-style: solid;\n  outline-offset: -1px;\n  outline-color: var(--dv-paneview-active-outline-color);\n}\n.dv-scrollable {\n  position: relative;\n  overflow: hidden;\n}\n.dv-scrollable .dv-scrollbar {\n  position: absolute;\n  border-radius: 2px;\n  background-color: transparent;\n  /* GPU optimizations */\n  will-change: background-color, transform;\n  transform: translate3d(0, 0, 0);\n  backface-visibility: hidden;\n  transition-property: background-color;\n  transition-timing-function: ease-in-out;\n  transition-duration: 1s;\n  transition-delay: 0s;\n}\n.dv-scrollable .dv-scrollbar-horizontal {\n  bottom: 0px;\n  left: 0px;\n  height: 4px;\n}\n.dv-scrollable .dv-scrollbar-vertical {\n  right: 0px;\n  top: 0px;\n  width: 4px;\n}\n.dv-scrollable:hover .dv-scrollbar, .dv-scrollable.dv-scrollable-resizing .dv-scrollbar, .dv-scrollable.dv-scrollable-scrolling .dv-scrollbar {\n  background-color: var(--dv-scrollbar-background-color, rgba(255, 255, 255, 0.25));\n}\n.dv-debug .dv-split-view-container .dv-sash-container .dv-sash.dv-enabled {\n  background-color: black;\n}\n.dv-debug .dv-split-view-container .dv-sash-container .dv-sash.dv-disabled {\n  background-color: orange;\n}\n.dv-debug .dv-split-view-container .dv-sash-container .dv-sash.dv-maximum {\n  background-color: green;\n}\n.dv-debug .dv-split-view-container .dv-sash-container .dv-sash.dv-minimum {\n  background-color: red;\n}\n\n.dv-split-view-container {\n  position: relative;\n  overflow: hidden;\n  height: 100%;\n  width: 100%;\n}\n.dv-split-view-container.dv-splitview-disabled > .dv-sash-container > .dv-sash {\n  pointer-events: none;\n}\n.dv-split-view-container.dv-animation .dv-view,\n.dv-split-view-container.dv-animation .dv-sash {\n  /* GPU optimizations for smooth animations */\n  will-change: transform;\n  transform: translate3d(0, 0, 0);\n  backface-visibility: hidden;\n  transition: transform 0.15s ease-out;\n}\n.dv-split-view-container.dv-horizontal {\n  height: 100%;\n}\n.dv-split-view-container.dv-horizontal > .dv-sash-container > .dv-sash {\n  height: 100%;\n  width: 4px;\n}\n.dv-split-view-container.dv-horizontal > .dv-sash-container > .dv-sash.dv-enabled {\n  cursor: ew-resize;\n}\n.dv-split-view-container.dv-horizontal > .dv-sash-container > .dv-sash.dv-disabled {\n  cursor: default;\n}\n.dv-split-view-container.dv-horizontal > .dv-sash-container > .dv-sash.dv-maximum {\n  cursor: w-resize;\n}\n.dv-split-view-container.dv-horizontal > .dv-sash-container > .dv-sash.dv-minimum {\n  cursor: e-resize;\n}\n.dv-split-view-container.dv-horizontal > .dv-view-container > .dv-view:not(:first-child)::before {\n  height: 100%;\n  width: 1px;\n}\n.dv-split-view-container.dv-vertical {\n  width: 100%;\n}\n.dv-split-view-container.dv-vertical > .dv-sash-container > .dv-sash {\n  width: 100%;\n  height: 4px;\n}\n.dv-split-view-container.dv-vertical > .dv-sash-container > .dv-sash.dv-enabled {\n  cursor: ns-resize;\n}\n.dv-split-view-container.dv-vertical > .dv-sash-container > .dv-sash.dv-disabled {\n  cursor: default;\n}\n.dv-split-view-container.dv-vertical > .dv-sash-container > .dv-sash.dv-maximum {\n  cursor: n-resize;\n}\n.dv-split-view-container.dv-vertical > .dv-sash-container > .dv-sash.dv-minimum {\n  cursor: s-resize;\n}\n.dv-split-view-container.dv-vertical > .dv-view-container > .dv-view {\n  width: 100%;\n}\n.dv-split-view-container.dv-vertical > .dv-view-container > .dv-view:not(:first-child)::before {\n  height: 1px;\n  width: 100%;\n}\n.dv-split-view-container .dv-sash-container {\n  height: 100%;\n  width: 100%;\n  position: absolute;\n}\n.dv-split-view-container .dv-sash-container .dv-sash {\n  position: absolute;\n  z-index: 99;\n  outline: none;\n  user-select: none;\n  -webkit-user-select: none;\n  -moz-user-select: none;\n  -ms-user-select: none;\n  touch-action: none;\n  background-color: var(--dv-sash-color, transparent);\n}\n.dv-split-view-container .dv-sash-container .dv-sash:not(.disabled):active, .dv-split-view-container .dv-sash-container .dv-sash:not(.disabled):hover {\n  background-color: var(--dv-active-sash-color, transparent);\n  transition-property: background-color;\n  transition-timing-function: ease-in-out;\n  transition-duration: var(--dv-active-sash-transition-duration, 0.1s);\n  transition-delay: var(--dv-active-sash-transition-delay, 0.5s);\n}\n@media (pointer: coarse) {\n  .dv-split-view-container .dv-sash-container > .dv-sash:not(.dv-disabled)::before {\n    content: "";\n    position: absolute;\n    background: transparent;\n  }\n  .dv-split-view-container.dv-horizontal > .dv-sash-container > .dv-sash:not(.dv-disabled)::before {\n    top: 0;\n    bottom: 0;\n    left: -10px;\n    right: -10px;\n  }\n  .dv-split-view-container.dv-vertical > .dv-sash-container > .dv-sash:not(.dv-disabled)::before {\n    left: 0;\n    right: 0;\n    top: -10px;\n    bottom: -10px;\n  }\n}\n.dv-split-view-container .dv-view-container {\n  position: relative;\n  height: 100%;\n  width: 100%;\n}\n.dv-split-view-container .dv-view-container .dv-view {\n  height: 100%;\n  box-sizing: border-box;\n  overflow: auto;\n  position: absolute;\n}\n.dv-split-view-container.dv-separator-border .dv-view:not(:first-child)::before {\n  content: " ";\n  position: absolute;\n  top: 0;\n  left: 0;\n  z-index: 5;\n  pointer-events: none;\n  background-color: var(--dv-separator-border);\n}\n.dv-svg {\n  display: inline-block;\n  fill: currentcolor;\n  line-height: 1;\n  stroke: currentcolor;\n  stroke-width: 0;\n}\n.dockview-theme-dark {\n  --dv-paneview-active-outline-color: dodgerblue;\n  --dv-tabs-and-actions-container-font-size: 13px;\n  --dv-tabs-and-actions-container-height: 35px;\n  --dv-drag-over-background-color: rgba(83, 89, 93, 0.5);\n  --dv-drag-over-border-color: transparent;\n  --dv-edge-dock-indicator-color: rgba(56, 139, 253, 0.9);\n  --dv-tabs-container-scrollbar-color: #888;\n  --dv-icon-hover-background-color: rgba(90, 93, 94, 0.31);\n  --dv-floating-box-shadow:\n      0 8px 32px rgba(0, 0, 0, 0.4), 0 2px 8px rgba(0, 0, 0, 0.25);\n  --dv-floating-border: 1px solid rgba(255, 255, 255, 0.1);\n  --dv-overlay-z-index: 999;\n  --dv-tab-font-size: inherit;\n  --dv-border-radius: 0px;\n  --dv-tab-margin: 0;\n  --dv-sash-color: transparent;\n  --dv-active-sash-color: transparent;\n  --dv-active-sash-transition-duration: 0.1s;\n  --dv-active-sash-transition-delay: 0.5s;\n  --dv-spacing-padding: 0px;\n  --dv-tab-border-radius: 0px;\n  --dv-sash-border-radius: 0px;\n  --dv-dropdown-border-radius: 0px;\n  --dv-tab-close-icon-size: inherit;\n  --dv-floating-group-border: none;\n  --dv-drag-over-border: none;\n  --dv-floating-group-dragging-opacity: 0.5;\n  --dv-floating-titlebar-height: 22px;\n  --dv-floating-titlebar-background-color: var(\n      --dv-tabs-and-actions-container-background-color\n  );\n  --dv-floating-titlebar-border-bottom: var(--dv-floating-border);\n  --dv-tab-group-color-grey: #5f6368;\n  --dv-tab-group-color-blue: #1a73e8;\n  --dv-tab-group-color-red: #d93025;\n  --dv-tab-group-color-yellow: #f9ab00;\n  --dv-tab-group-color-green: #188038;\n  --dv-tab-group-color-pink: #d01884;\n  --dv-tab-group-color-purple: #a142f4;\n  --dv-tab-group-color-cyan: #007b83;\n  --dv-tab-group-color-orange: #e8710a;\n  --dv-tab-group-chip-padding: 4px 8px;\n  --dv-tab-group-chip-border-radius: 6px;\n  --dv-tab-group-chip-font-size: 11px;\n  --dv-tab-group-line-height: 2px;\n  --dv-tab-group-line-opacity: 0.6;\n}\n.dockview-theme-dark .dv-drop-target-container .dv-drop-target-anchor.dv-drop-target-anchor-container-changed {\n  opacity: 0;\n  transition: none;\n}\n.dockview-theme-dark {\n  color-scheme: dark;\n  --dv-group-view-background-color: #1e1e1e;\n  --dv-tabs-and-actions-container-background-color: #252526;\n  --dv-activegroup-visiblepanel-tab-background-color: #1e1e1e;\n  --dv-activegroup-hiddenpanel-tab-background-color: #2d2d2d;\n  --dv-inactivegroup-visiblepanel-tab-background-color: #1e1e1e;\n  --dv-inactivegroup-hiddenpanel-tab-background-color: #2d2d2d;\n  --dv-tab-divider-color: #1e1e1e;\n  --dv-activegroup-visiblepanel-tab-color: white;\n  --dv-activegroup-hiddenpanel-tab-color: #969696;\n  --dv-inactivegroup-visiblepanel-tab-color: #8f8f8f;\n  --dv-inactivegroup-hiddenpanel-tab-color: #626262;\n  --dv-separator-border: rgb(68, 68, 68);\n  --dv-paneview-header-border-color: rgba(204, 204, 204, 0.2);\n}\n\n.dockview-theme-light {\n  --dv-paneview-active-outline-color: dodgerblue;\n  --dv-tabs-and-actions-container-font-size: 13px;\n  --dv-tabs-and-actions-container-height: 35px;\n  --dv-drag-over-background-color: rgba(83, 89, 93, 0.5);\n  --dv-drag-over-border-color: transparent;\n  --dv-edge-dock-indicator-color: rgba(56, 139, 253, 0.9);\n  --dv-tabs-container-scrollbar-color: #888;\n  --dv-icon-hover-background-color: rgba(90, 93, 94, 0.31);\n  --dv-floating-box-shadow:\n      0 8px 32px rgba(0, 0, 0, 0.4), 0 2px 8px rgba(0, 0, 0, 0.25);\n  --dv-floating-border: 1px solid rgba(255, 255, 255, 0.1);\n  --dv-overlay-z-index: 999;\n  --dv-tab-font-size: inherit;\n  --dv-border-radius: 0px;\n  --dv-tab-margin: 0;\n  --dv-sash-color: transparent;\n  --dv-active-sash-color: transparent;\n  --dv-active-sash-transition-duration: 0.1s;\n  --dv-active-sash-transition-delay: 0.5s;\n  --dv-spacing-padding: 0px;\n  --dv-tab-border-radius: 0px;\n  --dv-sash-border-radius: 0px;\n  --dv-dropdown-border-radius: 0px;\n  --dv-tab-close-icon-size: inherit;\n  --dv-floating-group-border: none;\n  --dv-drag-over-border: none;\n  --dv-floating-group-dragging-opacity: 0.5;\n  --dv-floating-titlebar-height: 22px;\n  --dv-floating-titlebar-background-color: var(\n      --dv-tabs-and-actions-container-background-color\n  );\n  --dv-floating-titlebar-border-bottom: var(--dv-floating-border);\n  --dv-tab-group-color-grey: #5f6368;\n  --dv-tab-group-color-blue: #1a73e8;\n  --dv-tab-group-color-red: #d93025;\n  --dv-tab-group-color-yellow: #f9ab00;\n  --dv-tab-group-color-green: #188038;\n  --dv-tab-group-color-pink: #d01884;\n  --dv-tab-group-color-purple: #a142f4;\n  --dv-tab-group-color-cyan: #007b83;\n  --dv-tab-group-color-orange: #e8710a;\n  --dv-tab-group-chip-padding: 4px 8px;\n  --dv-tab-group-chip-border-radius: 6px;\n  --dv-tab-group-chip-font-size: 11px;\n  --dv-tab-group-line-height: 2px;\n  --dv-tab-group-line-opacity: 0.6;\n}\n.dockview-theme-light .dv-drop-target-container .dv-drop-target-anchor.dv-drop-target-anchor-container-changed {\n  opacity: 0;\n  transition: none;\n}\n.dockview-theme-light {\n  color-scheme: light;\n  --dv-group-view-background-color: white;\n  --dv-tabs-and-actions-container-background-color: #f3f3f3;\n  --dv-activegroup-visiblepanel-tab-background-color: white;\n  --dv-activegroup-hiddenpanel-tab-background-color: #ececec;\n  --dv-inactivegroup-visiblepanel-tab-background-color: white;\n  --dv-inactivegroup-hiddenpanel-tab-background-color: #ececec;\n  --dv-tab-divider-color: white;\n  --dv-activegroup-visiblepanel-tab-color: rgb(51, 51, 51);\n  --dv-activegroup-hiddenpanel-tab-color: rgba(51, 51, 51, 0.7);\n  --dv-inactivegroup-visiblepanel-tab-color: rgba(51, 51, 51, 0.7);\n  --dv-inactivegroup-hiddenpanel-tab-color: rgba(51, 51, 51, 0.35);\n  --dv-separator-border: rgba(128, 128, 128, 0.35);\n  --dv-paneview-header-border-color: rgb(51, 51, 51);\n  --dv-scrollbar-background-color: rgba(0, 0, 0, 0.25);\n  --dv-floating-box-shadow:\n      0 8px 32px rgba(0, 0, 0, 0.12), 0 2px 8px rgba(0, 0, 0, 0.08);\n  --dv-floating-border: 1px solid rgba(0, 0, 0, 0.1);\n}\n\n.dockview-theme-vs {\n  --dv-paneview-active-outline-color: dodgerblue;\n  --dv-tabs-and-actions-container-font-size: 13px;\n  --dv-tabs-and-actions-container-height: 35px;\n  --dv-drag-over-background-color: rgba(83, 89, 93, 0.5);\n  --dv-drag-over-border-color: transparent;\n  --dv-edge-dock-indicator-color: rgba(56, 139, 253, 0.9);\n  --dv-tabs-container-scrollbar-color: #888;\n  --dv-icon-hover-background-color: rgba(90, 93, 94, 0.31);\n  --dv-floating-box-shadow:\n      0 8px 32px rgba(0, 0, 0, 0.4), 0 2px 8px rgba(0, 0, 0, 0.25);\n  --dv-floating-border: 1px solid rgba(255, 255, 255, 0.1);\n  --dv-overlay-z-index: 999;\n  --dv-tab-font-size: inherit;\n  --dv-border-radius: 0px;\n  --dv-tab-margin: 0;\n  --dv-sash-color: transparent;\n  --dv-active-sash-color: transparent;\n  --dv-active-sash-transition-duration: 0.1s;\n  --dv-active-sash-transition-delay: 0.5s;\n  --dv-spacing-padding: 0px;\n  --dv-tab-border-radius: 0px;\n  --dv-sash-border-radius: 0px;\n  --dv-dropdown-border-radius: 0px;\n  --dv-tab-close-icon-size: inherit;\n  --dv-floating-group-border: none;\n  --dv-drag-over-border: none;\n  --dv-floating-group-dragging-opacity: 0.5;\n  --dv-floating-titlebar-height: 22px;\n  --dv-floating-titlebar-background-color: var(\n      --dv-tabs-and-actions-container-background-color\n  );\n  --dv-floating-titlebar-border-bottom: var(--dv-floating-border);\n  --dv-tab-group-color-grey: #5f6368;\n  --dv-tab-group-color-blue: #1a73e8;\n  --dv-tab-group-color-red: #d93025;\n  --dv-tab-group-color-yellow: #f9ab00;\n  --dv-tab-group-color-green: #188038;\n  --dv-tab-group-color-pink: #d01884;\n  --dv-tab-group-color-purple: #a142f4;\n  --dv-tab-group-color-cyan: #007b83;\n  --dv-tab-group-color-orange: #e8710a;\n  --dv-tab-group-chip-padding: 4px 8px;\n  --dv-tab-group-chip-border-radius: 6px;\n  --dv-tab-group-chip-font-size: 11px;\n  --dv-tab-group-line-height: 2px;\n  --dv-tab-group-line-opacity: 0.6;\n}\n.dockview-theme-vs .dv-drop-target-container .dv-drop-target-anchor.dv-drop-target-anchor-container-changed {\n  opacity: 0;\n  transition: none;\n}\n.dockview-theme-vs {\n  color-scheme: dark;\n  --dv-group-view-background-color: #1e1e1e;\n  --dv-tabs-and-actions-container-background-color: #252526;\n  --dv-activegroup-visiblepanel-tab-background-color: #1e1e1e;\n  --dv-activegroup-hiddenpanel-tab-background-color: #2d2d2d;\n  --dv-inactivegroup-visiblepanel-tab-background-color: #1e1e1e;\n  --dv-inactivegroup-hiddenpanel-tab-background-color: #2d2d2d;\n  --dv-tab-divider-color: #1e1e1e;\n  --dv-activegroup-visiblepanel-tab-color: white;\n  --dv-activegroup-hiddenpanel-tab-color: #969696;\n  --dv-inactivegroup-visiblepanel-tab-color: #8f8f8f;\n  --dv-inactivegroup-hiddenpanel-tab-color: #626262;\n  --dv-separator-border: rgb(68, 68, 68);\n  --dv-paneview-header-border-color: rgba(204, 204, 204, 0.2);\n  --dv-tabs-and-actions-container-background-color: #2d2d30;\n  --dv-tabs-and-actions-container-height: 20px;\n  --dv-tabs-and-actions-container-font-size: 11px;\n  --dv-activegroup-visiblepanel-tab-background-color: #007acc;\n  --dv-inactivegroup-visiblepanel-tab-background-color: #3f3f46;\n  --dv-activegroup-visiblepanel-tab-color: white;\n  --dv-activegroup-hiddenpanel-tab-color: white;\n  --dv-inactivegroup-visiblepanel-tab-color: white;\n  --dv-inactivegroup-hiddenpanel-tab-color: white;\n}\n.dockview-theme-vs .dv-groupview.dv-active-group > .dv-tabs-and-actions-container {\n  box-sizing: content-box;\n  border-bottom: 2px solid var(--dv-activegroup-visiblepanel-tab-background-color);\n}\n.dockview-theme-vs .dv-groupview.dv-active-group > .dv-tabs-and-actions-container .dv-tab.dv-active-tab {\n  border-top: 2px solid var(--dv-activegroup-visiblepanel-tab-background-color);\n}\n.dockview-theme-vs .dv-groupview.dv-active-group > .dv-tabs-and-actions-container .dv-tab.dv-inactive-tab {\n  border-top: 2px solid var(--dv-activegroup-hiddenpanel-tab-background-color);\n}\n.dockview-theme-vs .dv-groupview.dv-inactive-group > .dv-tabs-and-actions-container {\n  box-sizing: content-box;\n  border-bottom: 2px solid var(--dv-inactivegroup-visiblepanel-tab-background-color);\n}\n.dockview-theme-vs .dv-groupview.dv-inactive-group > .dv-tabs-and-actions-container .dv-tab.dv-active-tab {\n  border-top: 2px solid var(--dv-inactivegroup-visiblepanel-tab-background-color);\n}\n.dockview-theme-vs .dv-groupview.dv-inactive-group > .dv-tabs-and-actions-container .dv-tab.dv-inactive-tab {\n  border-top: 2px solid var(--dv-inactivegroup-hiddenpanel-tab-background-color);\n}\n\n.dockview-theme-abyss {\n  --dv-paneview-active-outline-color: dodgerblue;\n  --dv-tabs-and-actions-container-font-size: 13px;\n  --dv-tabs-and-actions-container-height: 35px;\n  --dv-drag-over-background-color: rgba(83, 89, 93, 0.5);\n  --dv-drag-over-border-color: transparent;\n  --dv-edge-dock-indicator-color: rgba(56, 139, 253, 0.9);\n  --dv-tabs-container-scrollbar-color: #888;\n  --dv-icon-hover-background-color: rgba(90, 93, 94, 0.31);\n  --dv-floating-box-shadow:\n      0 8px 32px rgba(0, 0, 0, 0.4), 0 2px 8px rgba(0, 0, 0, 0.25);\n  --dv-floating-border: 1px solid rgba(255, 255, 255, 0.1);\n  --dv-overlay-z-index: 999;\n  --dv-tab-font-size: inherit;\n  --dv-border-radius: 0px;\n  --dv-tab-margin: 0;\n  --dv-sash-color: transparent;\n  --dv-active-sash-color: transparent;\n  --dv-active-sash-transition-duration: 0.1s;\n  --dv-active-sash-transition-delay: 0.5s;\n  --dv-spacing-padding: 0px;\n  --dv-tab-border-radius: 0px;\n  --dv-sash-border-radius: 0px;\n  --dv-dropdown-border-radius: 0px;\n  --dv-tab-close-icon-size: inherit;\n  --dv-floating-group-border: none;\n  --dv-drag-over-border: none;\n  --dv-floating-group-dragging-opacity: 0.5;\n  --dv-floating-titlebar-height: 22px;\n  --dv-floating-titlebar-background-color: var(\n      --dv-tabs-and-actions-container-background-color\n  );\n  --dv-floating-titlebar-border-bottom: var(--dv-floating-border);\n  --dv-tab-group-color-grey: #5f6368;\n  --dv-tab-group-color-blue: #1a73e8;\n  --dv-tab-group-color-red: #d93025;\n  --dv-tab-group-color-yellow: #f9ab00;\n  --dv-tab-group-color-green: #188038;\n  --dv-tab-group-color-pink: #d01884;\n  --dv-tab-group-color-purple: #a142f4;\n  --dv-tab-group-color-cyan: #007b83;\n  --dv-tab-group-color-orange: #e8710a;\n  --dv-tab-group-chip-padding: 4px 8px;\n  --dv-tab-group-chip-border-radius: 6px;\n  --dv-tab-group-chip-font-size: 11px;\n  --dv-tab-group-line-height: 2px;\n  --dv-tab-group-line-opacity: 0.6;\n}\n.dockview-theme-abyss .dv-drop-target-container .dv-drop-target-anchor.dv-drop-target-anchor-container-changed {\n  opacity: 0;\n  transition: none;\n}\n.dockview-theme-abyss {\n  color-scheme: dark;\n  --dv-color-abyss-dark: #000c18;\n  --dv-color-abyss: #10192c;\n  --dv-color-abyss-light: #1c1c2a;\n  --dv-color-abyss-lighter: #2b2b4a;\n  --dv-color-abyss-accent: rgb(91, 30, 207);\n  --dv-color-abyss-primary-text: white;\n  --dv-color-abyss-secondary-text: rgb(148, 151, 169);\n  --dv-group-view-background-color: var(--dv-color-abyss-dark);\n  --dv-tabs-and-actions-container-background-color: var(\n      --dv-color-abyss-light\n  );\n  --dv-activegroup-visiblepanel-tab-background-color: var(\n      --dv-color-abyss-dark\n  );\n  --dv-activegroup-hiddenpanel-tab-background-color: var(--dv-color-abyss);\n  --dv-inactivegroup-visiblepanel-tab-background-color: var(\n      --dv-color-abyss-dark\n  );\n  --dv-inactivegroup-hiddenpanel-tab-background-color: var(--dv-color-abyss);\n  --dv-tab-divider-color: var(--dv-color-abyss-lighter);\n  --dv-activegroup-visiblepanel-tab-color: white;\n  --dv-activegroup-hiddenpanel-tab-color: rgba(255, 255, 255, 0.5);\n  --dv-inactivegroup-visiblepanel-tab-color: rgba(255, 255, 255, 0.5);\n  --dv-inactivegroup-hiddenpanel-tab-color: rgba(255, 255, 255, 0.25);\n  --dv-separator-border: var(--dv-color-abyss-lighter);\n  --dv-paneview-header-border-color: var(--dv-color-abyss-lighter);\n  --dv-paneview-active-outline-color: #596f99;\n}\n\n.dockview-theme-dracula {\n  --dv-paneview-active-outline-color: dodgerblue;\n  --dv-tabs-and-actions-container-font-size: 13px;\n  --dv-tabs-and-actions-container-height: 35px;\n  --dv-drag-over-background-color: rgba(83, 89, 93, 0.5);\n  --dv-drag-over-border-color: transparent;\n  --dv-edge-dock-indicator-color: rgba(56, 139, 253, 0.9);\n  --dv-tabs-container-scrollbar-color: #888;\n  --dv-icon-hover-background-color: rgba(90, 93, 94, 0.31);\n  --dv-floating-box-shadow:\n      0 8px 32px rgba(0, 0, 0, 0.4), 0 2px 8px rgba(0, 0, 0, 0.25);\n  --dv-floating-border: 1px solid rgba(255, 255, 255, 0.1);\n  --dv-overlay-z-index: 999;\n  --dv-tab-font-size: inherit;\n  --dv-border-radius: 0px;\n  --dv-tab-margin: 0;\n  --dv-sash-color: transparent;\n  --dv-active-sash-color: transparent;\n  --dv-active-sash-transition-duration: 0.1s;\n  --dv-active-sash-transition-delay: 0.5s;\n  --dv-spacing-padding: 0px;\n  --dv-tab-border-radius: 0px;\n  --dv-sash-border-radius: 0px;\n  --dv-dropdown-border-radius: 0px;\n  --dv-tab-close-icon-size: inherit;\n  --dv-floating-group-border: none;\n  --dv-drag-over-border: none;\n  --dv-floating-group-dragging-opacity: 0.5;\n  --dv-floating-titlebar-height: 22px;\n  --dv-floating-titlebar-background-color: var(\n      --dv-tabs-and-actions-container-background-color\n  );\n  --dv-floating-titlebar-border-bottom: var(--dv-floating-border);\n  --dv-tab-group-color-grey: #5f6368;\n  --dv-tab-group-color-blue: #1a73e8;\n  --dv-tab-group-color-red: #d93025;\n  --dv-tab-group-color-yellow: #f9ab00;\n  --dv-tab-group-color-green: #188038;\n  --dv-tab-group-color-pink: #d01884;\n  --dv-tab-group-color-purple: #a142f4;\n  --dv-tab-group-color-cyan: #007b83;\n  --dv-tab-group-color-orange: #e8710a;\n  --dv-tab-group-chip-padding: 4px 8px;\n  --dv-tab-group-chip-border-radius: 6px;\n  --dv-tab-group-chip-font-size: 11px;\n  --dv-tab-group-line-height: 2px;\n  --dv-tab-group-line-opacity: 0.6;\n}\n.dockview-theme-dracula .dv-drop-target-container .dv-drop-target-anchor.dv-drop-target-anchor-container-changed {\n  opacity: 0;\n  transition: none;\n}\n.dockview-theme-dracula {\n  color-scheme: dark;\n  --dv-group-view-background-color: #282a36;\n  --dv-tabs-and-actions-container-background-color: #191a21;\n  --dv-activegroup-visiblepanel-tab-background-color: #282a36;\n  --dv-activegroup-hiddenpanel-tab-background-color: #21222c;\n  --dv-inactivegroup-visiblepanel-tab-background-color: #282a36;\n  --dv-inactivegroup-hiddenpanel-tab-background-color: #21222c;\n  --dv-tab-divider-color: #191a21;\n  --dv-activegroup-visiblepanel-tab-color: rgb(248, 248, 242);\n  --dv-activegroup-hiddenpanel-tab-color: rgb(98, 114, 164);\n  --dv-inactivegroup-visiblepanel-tab-color: rgba(248, 248, 242, 0.5);\n  --dv-inactivegroup-hiddenpanel-tab-color: rgba(98, 114, 164, 0.5);\n  --dv-separator-border: #bd93f9;\n  --dv-paneview-header-border-color: #bd93f9;\n  --dv-paneview-active-outline-color: #6272a4;\n}\n.dockview-theme-dracula .dv-groupview.dv-active-group > .dv-tabs-and-actions-container .dv-tabs-container > .dv-tab.dv-active-tab {\n  position: relative;\n}\n.dockview-theme-dracula .dv-groupview.dv-active-group > .dv-tabs-and-actions-container .dv-tabs-container > .dv-tab.dv-active-tab::after {\n  position: absolute;\n  left: 0px;\n  bottom: 0px;\n  content: "";\n  width: 100%;\n  height: 1px;\n  background-color: #94527e;\n  z-index: 999;\n}\n.dockview-theme-dracula .dv-groupview.dv-inactive-group > .dv-tabs-and-actions-container .dv-tabs-container > .dv-tab.dv-active-tab {\n  position: relative;\n}\n.dockview-theme-dracula .dv-groupview.dv-inactive-group > .dv-tabs-and-actions-container .dv-tabs-container > .dv-tab.dv-active-tab::after {\n  position: absolute;\n  left: 0px;\n  bottom: 0px;\n  content: "";\n  width: 100%;\n  height: 1px;\n  background-color: #5e3d5a;\n  z-index: 999;\n}\n\n.dockview-theme-nord {\n  --dv-paneview-active-outline-color: dodgerblue;\n  --dv-tabs-and-actions-container-font-size: 13px;\n  --dv-tabs-and-actions-container-height: 35px;\n  --dv-drag-over-background-color: rgba(83, 89, 93, 0.5);\n  --dv-drag-over-border-color: transparent;\n  --dv-edge-dock-indicator-color: rgba(56, 139, 253, 0.9);\n  --dv-tabs-container-scrollbar-color: #888;\n  --dv-icon-hover-background-color: rgba(90, 93, 94, 0.31);\n  --dv-floating-box-shadow:\n      0 8px 32px rgba(0, 0, 0, 0.4), 0 2px 8px rgba(0, 0, 0, 0.25);\n  --dv-floating-border: 1px solid rgba(255, 255, 255, 0.1);\n  --dv-overlay-z-index: 999;\n  --dv-tab-font-size: inherit;\n  --dv-border-radius: 0px;\n  --dv-tab-margin: 0;\n  --dv-sash-color: transparent;\n  --dv-active-sash-color: transparent;\n  --dv-active-sash-transition-duration: 0.1s;\n  --dv-active-sash-transition-delay: 0.5s;\n  --dv-spacing-padding: 0px;\n  --dv-tab-border-radius: 0px;\n  --dv-sash-border-radius: 0px;\n  --dv-dropdown-border-radius: 0px;\n  --dv-tab-close-icon-size: inherit;\n  --dv-floating-group-border: none;\n  --dv-drag-over-border: none;\n  --dv-floating-group-dragging-opacity: 0.5;\n  --dv-floating-titlebar-height: 22px;\n  --dv-floating-titlebar-background-color: var(\n      --dv-tabs-and-actions-container-background-color\n  );\n  --dv-floating-titlebar-border-bottom: var(--dv-floating-border);\n  --dv-tab-group-color-grey: #5f6368;\n  --dv-tab-group-color-blue: #1a73e8;\n  --dv-tab-group-color-red: #d93025;\n  --dv-tab-group-color-yellow: #f9ab00;\n  --dv-tab-group-color-green: #188038;\n  --dv-tab-group-color-pink: #d01884;\n  --dv-tab-group-color-purple: #a142f4;\n  --dv-tab-group-color-cyan: #007b83;\n  --dv-tab-group-color-orange: #e8710a;\n  --dv-tab-group-chip-padding: 4px 8px;\n  --dv-tab-group-chip-border-radius: 6px;\n  --dv-tab-group-chip-font-size: 11px;\n  --dv-tab-group-line-height: 2px;\n  --dv-tab-group-line-opacity: 0.6;\n}\n.dockview-theme-nord .dv-drop-target-container .dv-drop-target-anchor.dv-drop-target-anchor-container-changed {\n  opacity: 0;\n  transition: none;\n}\n.dockview-theme-nord {\n  color-scheme: dark;\n  --dv-color-nord-polar-0: #2e3440;\n  --dv-color-nord-polar-1: #3b4252;\n  --dv-color-nord-polar-2: #434c5e;\n  --dv-color-nord-polar-3: #4c566a;\n  --dv-color-nord-frost: #88c0d0;\n  --dv-color-nord-frost-2: #81a1c1;\n  --dv-color-nord-snow-0: #eceff4;\n  --dv-color-nord-snow-1: #d8dee9;\n  --dv-group-view-background-color: var(--dv-color-nord-polar-0);\n  --dv-tabs-and-actions-container-background-color: var(\n      --dv-color-nord-polar-1\n  );\n  --dv-activegroup-visiblepanel-tab-background-color: var(\n      --dv-color-nord-polar-0\n  );\n  --dv-activegroup-hiddenpanel-tab-background-color: var(\n      --dv-color-nord-polar-2\n  );\n  --dv-inactivegroup-visiblepanel-tab-background-color: var(\n      --dv-color-nord-polar-1\n  );\n  --dv-inactivegroup-hiddenpanel-tab-background-color: var(\n      --dv-color-nord-polar-2\n  );\n  --dv-activegroup-visiblepanel-tab-color: var(--dv-color-nord-snow-0);\n  --dv-activegroup-hiddenpanel-tab-color: var(--dv-color-nord-snow-1);\n  --dv-inactivegroup-visiblepanel-tab-color: #8a9bbf;\n  --dv-inactivegroup-hiddenpanel-tab-color: #5e6f8e;\n  --dv-separator-border: var(--dv-color-nord-polar-3);\n  --dv-paneview-active-outline-color: var(--dv-color-nord-frost);\n  --dv-active-sash-color: var(--dv-color-nord-frost);\n  --dv-scrollbar-background-color: rgba(76, 86, 106, 0.5);\n}\n.dockview-theme-nord .dv-groupview.dv-active-group > .dv-tabs-and-actions-container .dv-tabs-container > .dv-tab.dv-active-tab {\n  position: relative;\n}\n.dockview-theme-nord .dv-groupview.dv-active-group > .dv-tabs-and-actions-container .dv-tabs-container > .dv-tab.dv-active-tab::after {\n  position: absolute;\n  left: 0px;\n  bottom: 0px;\n  content: "";\n  width: 100%;\n  height: 2px;\n  background-color: var(--dv-color-nord-frost);\n  z-index: 999;\n}\n.dockview-theme-nord .dv-groupview.dv-inactive-group > .dv-tabs-and-actions-container .dv-tabs-container > .dv-tab.dv-active-tab {\n  position: relative;\n}\n.dockview-theme-nord .dv-groupview.dv-inactive-group > .dv-tabs-and-actions-container .dv-tabs-container > .dv-tab.dv-active-tab::after {\n  position: absolute;\n  left: 0px;\n  bottom: 0px;\n  content: "";\n  width: 100%;\n  height: 2px;\n  background-color: var(--dv-color-nord-frost-2);\n  z-index: 999;\n}\n\n.dockview-theme-nord-spaced {\n  --dv-paneview-active-outline-color: dodgerblue;\n  --dv-tabs-and-actions-container-font-size: 13px;\n  --dv-tabs-and-actions-container-height: 35px;\n  --dv-drag-over-background-color: rgba(83, 89, 93, 0.5);\n  --dv-drag-over-border-color: transparent;\n  --dv-edge-dock-indicator-color: rgba(56, 139, 253, 0.9);\n  --dv-tabs-container-scrollbar-color: #888;\n  --dv-icon-hover-background-color: rgba(90, 93, 94, 0.31);\n  --dv-floating-box-shadow:\n      0 8px 32px rgba(0, 0, 0, 0.4), 0 2px 8px rgba(0, 0, 0, 0.25);\n  --dv-floating-border: 1px solid rgba(255, 255, 255, 0.1);\n  --dv-overlay-z-index: 999;\n  --dv-tab-font-size: inherit;\n  --dv-border-radius: 0px;\n  --dv-tab-margin: 0;\n  --dv-sash-color: transparent;\n  --dv-active-sash-color: transparent;\n  --dv-active-sash-transition-duration: 0.1s;\n  --dv-active-sash-transition-delay: 0.5s;\n  --dv-spacing-padding: 0px;\n  --dv-tab-border-radius: 0px;\n  --dv-sash-border-radius: 0px;\n  --dv-dropdown-border-radius: 0px;\n  --dv-tab-close-icon-size: inherit;\n  --dv-floating-group-border: none;\n  --dv-drag-over-border: none;\n  --dv-floating-group-dragging-opacity: 0.5;\n  --dv-floating-titlebar-height: 22px;\n  --dv-floating-titlebar-background-color: var(\n      --dv-tabs-and-actions-container-background-color\n  );\n  --dv-floating-titlebar-border-bottom: var(--dv-floating-border);\n  --dv-tab-group-color-grey: #5f6368;\n  --dv-tab-group-color-blue: #1a73e8;\n  --dv-tab-group-color-red: #d93025;\n  --dv-tab-group-color-yellow: #f9ab00;\n  --dv-tab-group-color-green: #188038;\n  --dv-tab-group-color-pink: #d01884;\n  --dv-tab-group-color-purple: #a142f4;\n  --dv-tab-group-color-cyan: #007b83;\n  --dv-tab-group-color-orange: #e8710a;\n  --dv-tab-group-chip-padding: 4px 8px;\n  --dv-tab-group-chip-border-radius: 6px;\n  --dv-tab-group-chip-font-size: 11px;\n  --dv-tab-group-line-height: 2px;\n  --dv-tab-group-line-opacity: 0.6;\n  --dv-spacing-padding: 10px;\n  --dv-tab-font-size: 12px;\n  --dv-border-radius: 12px;\n  --dv-tab-margin-block: 0.5rem;\n  --dv-tab-margin-inline: 0.25rem;\n  --dv-tab-margin: var(--dv-tab-margin-block) var(--dv-tab-margin-inline);\n  --dv-tabs-and-actions-container-height: 44px;\n  --dv-tab-border-radius: 8px;\n  --dv-sash-border-radius: 4px;\n  --dv-dropdown-border-radius: 8px;\n  --dv-tab-close-icon-size: 8px;\n  --dv-floating-group-border: 2px solid var(--dv-group-view-background-color);\n  --dv-floating-titlebar-background-color: var(\n      --dv-group-view-background-color\n  );\n  --dv-floating-titlebar-border-bottom: none;\n  box-sizing: border-box;\n  padding: var(--dv-spacing-padding);\n  background-color: var(--dv-group-view-background-color);\n}\n.dockview-theme-nord-spaced .dv-dockview {\n  padding: 0;\n}\n.dockview-theme-nord-spaced .dv-resize-container:has(> .dv-groupview) {\n  border-radius: 8px;\n}\n.dockview-theme-nord-spaced .dv-sash {\n  border-radius: var(--dv-sash-border-radius);\n}\n.dockview-theme-nord-spaced .dv-drop-target-anchor {\n  border-radius: calc(var(--dv-border-radius) / 4);\n}\n.dockview-theme-nord-spaced .dv-drop-target-anchor.dv-drop-target-content {\n  border-radius: var(--dv-border-radius);\n}\n.dockview-theme-nord-spaced .dv-resize-container {\n  border-radius: var(--dv-border-radius) !important;\n  border: none;\n}\n.dockview-theme-nord-spaced .dv-resize-container .dv-groupview {\n  border: var(--dv-floating-group-border);\n}\n.dockview-theme-nord-spaced .dv-resize-container > .dv-grid-view {\n  box-sizing: border-box;\n  padding: var(--dv-spacing-padding);\n}\n.dockview-theme-nord-spaced .dv-resize-container-with-titlebar > .dv-grid-view {\n  padding-top: 0;\n}\n.dockview-theme-nord-spaced .dv-resize-container-with-titlebar > .dv-floating-titlebar {\n  border-top-left-radius: var(--dv-border-radius);\n  border-top-right-radius: var(--dv-border-radius);\n}\n.dockview-theme-nord-spaced .dv-tabs-overflow-container,\n.dockview-theme-nord-spaced .dv-tabs-overflow-dropdown-default {\n  border-radius: var(--dv-dropdown-border-radius);\n  height: unset !important;\n}\n.dockview-theme-nord-spaced .dv-render-overlay {\n  border-bottom-left-radius: var(--dv-border-radius);\n  border-bottom-right-radius: var(--dv-border-radius);\n}\n.dockview-theme-nord-spaced .dv-tab {\n  border-radius: var(--dv-tab-border-radius);\n}\n.dockview-theme-nord-spaced .dv-tab .dv-svg {\n  height: var(--dv-tab-close-icon-size);\n  width: var(--dv-tab-close-icon-size);\n}\n.dockview-theme-nord-spaced .dv-tabs-container--wrap:not(.dv-tabs-container-vertical) .dv-tab {\n  height: calc(var(--dv-tabs-and-actions-container-height) - 2 * var(--dv-tab-margin-block));\n}\n.dockview-theme-nord-spaced .dv-tabs-container-vertical .dv-tab {\n  margin: var(--dv-tab-margin-inline) var(--dv-tab-margin-block);\n}\n.dockview-theme-nord-spaced .dv-tabs-container--wrap.dv-tabs-container-vertical .dv-tab {\n  width: calc(var(--dv-tabs-and-actions-container-height) - 2 * var(--dv-tab-margin-block));\n}\n.dockview-theme-nord-spaced .dv-groupview {\n  border-radius: var(--dv-border-radius);\n}\n.dockview-theme-nord-spaced .dv-groupview .dv-tabs-and-actions-container {\n  padding: 0px calc(var(--dv-border-radius) / 2);\n  border-top-left-radius: var(--dv-border-radius);\n  border-top-right-radius: var(--dv-border-radius);\n}\n.dockview-theme-nord-spaced .dv-groupview .dv-tabs-and-actions-container.dv-groupview-header-vertical {\n  padding: calc(var(--dv-border-radius) / 2) 0;\n}\n.dockview-theme-nord-spaced .dv-groupview .dv-content-container {\n  background-color: var(--dv-tabs-and-actions-container-background-color);\n  border-bottom-left-radius: var(--dv-border-radius);\n  border-bottom-right-radius: var(--dv-border-radius);\n}\n.dockview-theme-nord-spaced .dv-groupview.dv-groupview-header-bottom > .dv-tabs-and-actions-container {\n  border-radius: 0 0 var(--dv-border-radius) var(--dv-border-radius);\n}\n.dockview-theme-nord-spaced .dv-groupview.dv-groupview-header-bottom > .dv-content-container {\n  border-radius: var(--dv-border-radius) var(--dv-border-radius) 0 0;\n}\n.dockview-theme-nord-spaced .dv-groupview.dv-groupview-header-left > .dv-tabs-and-actions-container {\n  border-radius: var(--dv-border-radius) 0 0 var(--dv-border-radius);\n}\n.dockview-theme-nord-spaced .dv-groupview.dv-groupview-header-left > .dv-content-container {\n  border-radius: 0 var(--dv-border-radius) var(--dv-border-radius) 0;\n}\n.dockview-theme-nord-spaced .dv-groupview.dv-groupview-header-right > .dv-tabs-and-actions-container {\n  border-radius: 0 var(--dv-border-radius) var(--dv-border-radius) 0;\n}\n.dockview-theme-nord-spaced .dv-groupview.dv-groupview-header-right > .dv-content-container {\n  border-radius: var(--dv-border-radius) 0 0 var(--dv-border-radius);\n}\n.dockview-theme-nord-spaced .dv-groupview.dv-edge-tool-window .dv-edge-peek-header {\n  border-top-left-radius: var(--dv-border-radius);\n  border-top-right-radius: var(--dv-border-radius);\n}\n.dockview-theme-nord-spaced .dv-groupview.dv-edge-tool-window .dv-content-container {\n  border-radius: 0;\n}\n.dockview-theme-nord-spaced .dv-groupview.dv-edge-tool-window .dv-tabs-and-actions-container {\n  border-top-left-radius: 0;\n  border-top-right-radius: 0;\n  border-bottom-left-radius: var(--dv-border-radius);\n  border-bottom-right-radius: var(--dv-border-radius);\n}\n.dockview-theme-nord-spaced .dv-edge-peek {\n  border-bottom-left-radius: var(--dv-border-radius);\n  border-bottom-right-radius: var(--dv-border-radius);\n}\n.dockview-theme-nord-spaced .dv-edge-peek-clip {\n  border-bottom-left-radius: var(--dv-border-radius);\n  border-bottom-right-radius: var(--dv-border-radius);\n}\n.dockview-theme-nord-spaced .dv-edge-peek-header {\n  border-top-left-radius: var(--dv-border-radius);\n  border-top-right-radius: var(--dv-border-radius);\n}\n.dockview-theme-nord-spaced {\n  color-scheme: dark;\n  --dv-color-nord-polar-0: #2e3440;\n  --dv-color-nord-polar-1: #3b4252;\n  --dv-color-nord-polar-2: #434c5e;\n  --dv-color-nord-polar-3: #4c566a;\n  --dv-color-nord-frost: #88c0d0;\n  --dv-color-nord-frost-2: #81a1c1;\n  --dv-color-nord-snow-0: #eceff4;\n  --dv-color-nord-snow-1: #d8dee9;\n  --dv-group-view-background-color: var(--dv-color-nord-polar-0);\n  --dv-tabs-and-actions-container-background-color: var(\n      --dv-color-nord-polar-1\n  );\n  --dv-activegroup-visiblepanel-tab-background-color: var(\n      --dv-color-nord-polar-2\n  );\n  --dv-activegroup-hiddenpanel-tab-background-color: var(\n      --dv-color-nord-polar-1\n  );\n  --dv-inactivegroup-visiblepanel-tab-background-color: var(\n      --dv-color-nord-polar-2\n  );\n  --dv-inactivegroup-hiddenpanel-tab-background-color: var(\n      --dv-color-nord-polar-1\n  );\n  --dv-activegroup-visiblepanel-tab-color: var(--dv-color-nord-snow-0);\n  --dv-activegroup-hiddenpanel-tab-color: var(--dv-color-nord-snow-1);\n  --dv-inactivegroup-visiblepanel-tab-color: #8a9bbf;\n  --dv-inactivegroup-hiddenpanel-tab-color: #5e6f8e;\n  --dv-separator-border: transparent;\n  --dv-paneview-active-outline-color: var(--dv-color-nord-frost);\n  --dv-active-sash-color: var(--dv-color-nord-frost);\n  --dv-scrollbar-background-color: rgba(76, 86, 106, 0.5);\n  --dv-floating-group-border: 2px solid var(--dv-color-nord-polar-0);\n}\n\n.dockview-theme-catppuccin-mocha {\n  --dv-paneview-active-outline-color: dodgerblue;\n  --dv-tabs-and-actions-container-font-size: 13px;\n  --dv-tabs-and-actions-container-height: 35px;\n  --dv-drag-over-background-color: rgba(83, 89, 93, 0.5);\n  --dv-drag-over-border-color: transparent;\n  --dv-edge-dock-indicator-color: rgba(56, 139, 253, 0.9);\n  --dv-tabs-container-scrollbar-color: #888;\n  --dv-icon-hover-background-color: rgba(90, 93, 94, 0.31);\n  --dv-floating-box-shadow:\n      0 8px 32px rgba(0, 0, 0, 0.4), 0 2px 8px rgba(0, 0, 0, 0.25);\n  --dv-floating-border: 1px solid rgba(255, 255, 255, 0.1);\n  --dv-overlay-z-index: 999;\n  --dv-tab-font-size: inherit;\n  --dv-border-radius: 0px;\n  --dv-tab-margin: 0;\n  --dv-sash-color: transparent;\n  --dv-active-sash-color: transparent;\n  --dv-active-sash-transition-duration: 0.1s;\n  --dv-active-sash-transition-delay: 0.5s;\n  --dv-spacing-padding: 0px;\n  --dv-tab-border-radius: 0px;\n  --dv-sash-border-radius: 0px;\n  --dv-dropdown-border-radius: 0px;\n  --dv-tab-close-icon-size: inherit;\n  --dv-floating-group-border: none;\n  --dv-drag-over-border: none;\n  --dv-floating-group-dragging-opacity: 0.5;\n  --dv-floating-titlebar-height: 22px;\n  --dv-floating-titlebar-background-color: var(\n      --dv-tabs-and-actions-container-background-color\n  );\n  --dv-floating-titlebar-border-bottom: var(--dv-floating-border);\n  --dv-tab-group-color-grey: #5f6368;\n  --dv-tab-group-color-blue: #1a73e8;\n  --dv-tab-group-color-red: #d93025;\n  --dv-tab-group-color-yellow: #f9ab00;\n  --dv-tab-group-color-green: #188038;\n  --dv-tab-group-color-pink: #d01884;\n  --dv-tab-group-color-purple: #a142f4;\n  --dv-tab-group-color-cyan: #007b83;\n  --dv-tab-group-color-orange: #e8710a;\n  --dv-tab-group-chip-padding: 4px 8px;\n  --dv-tab-group-chip-border-radius: 6px;\n  --dv-tab-group-chip-font-size: 11px;\n  --dv-tab-group-line-height: 2px;\n  --dv-tab-group-line-opacity: 0.6;\n}\n.dockview-theme-catppuccin-mocha .dv-drop-target-container .dv-drop-target-anchor.dv-drop-target-anchor-container-changed {\n  opacity: 0;\n  transition: none;\n}\n.dockview-theme-catppuccin-mocha {\n  color-scheme: dark;\n  --dv-color-mocha-crust: #11111b;\n  --dv-color-mocha-mantle: #181825;\n  --dv-color-mocha-base: #1e1e2e;\n  --dv-color-mocha-surface0: #313244;\n  --dv-color-mocha-surface1: #45475a;\n  --dv-color-mocha-text: #cdd6f4;\n  --dv-color-mocha-subtext1: #bac2de;\n  --dv-color-mocha-subtext0: #a6adc8;\n  --dv-color-mocha-mauve: #cba6f7;\n  --dv-color-mocha-lavender: #b4befe;\n  --dv-group-view-background-color: var(--dv-color-mocha-base);\n  --dv-tabs-and-actions-container-background-color: var(\n      --dv-color-mocha-mantle\n  );\n  --dv-activegroup-visiblepanel-tab-background-color: var(\n      --dv-color-mocha-base\n  );\n  --dv-activegroup-hiddenpanel-tab-background-color: var(\n      --dv-color-mocha-surface0\n  );\n  --dv-inactivegroup-visiblepanel-tab-background-color: var(\n      --dv-color-mocha-mantle\n  );\n  --dv-inactivegroup-hiddenpanel-tab-background-color: var(\n      --dv-color-mocha-crust\n  );\n  --dv-activegroup-visiblepanel-tab-color: var(--dv-color-mocha-text);\n  --dv-activegroup-hiddenpanel-tab-color: var(--dv-color-mocha-subtext1);\n  --dv-inactivegroup-visiblepanel-tab-color: var(--dv-color-mocha-subtext0);\n  --dv-inactivegroup-hiddenpanel-tab-color: rgba(166, 173, 200, 0.5);\n  --dv-separator-border: var(--dv-color-mocha-surface1);\n  --dv-paneview-active-outline-color: var(--dv-color-mocha-mauve);\n  --dv-active-sash-color: var(--dv-color-mocha-mauve);\n  --dv-scrollbar-background-color: rgba(49, 50, 68, 0.8);\n}\n.dockview-theme-catppuccin-mocha .dv-groupview.dv-active-group > .dv-tabs-and-actions-container .dv-tabs-container > .dv-tab.dv-active-tab {\n  position: relative;\n}\n.dockview-theme-catppuccin-mocha .dv-groupview.dv-active-group > .dv-tabs-and-actions-container .dv-tabs-container > .dv-tab.dv-active-tab::after {\n  position: absolute;\n  left: 0px;\n  bottom: 0px;\n  content: "";\n  width: 100%;\n  height: 2px;\n  background-color: var(--dv-color-mocha-mauve);\n  z-index: 999;\n}\n.dockview-theme-catppuccin-mocha .dv-groupview.dv-inactive-group > .dv-tabs-and-actions-container .dv-tabs-container > .dv-tab.dv-active-tab {\n  position: relative;\n}\n.dockview-theme-catppuccin-mocha .dv-groupview.dv-inactive-group > .dv-tabs-and-actions-container .dv-tabs-container > .dv-tab.dv-active-tab::after {\n  position: absolute;\n  left: 0px;\n  bottom: 0px;\n  content: "";\n  width: 100%;\n  height: 2px;\n  background-color: rgba(180, 190, 254, 0.4);\n  z-index: 999;\n}\n\n.dockview-theme-catppuccin-mocha-spaced {\n  --dv-paneview-active-outline-color: dodgerblue;\n  --dv-tabs-and-actions-container-font-size: 13px;\n  --dv-tabs-and-actions-container-height: 35px;\n  --dv-drag-over-background-color: rgba(83, 89, 93, 0.5);\n  --dv-drag-over-border-color: transparent;\n  --dv-edge-dock-indicator-color: rgba(56, 139, 253, 0.9);\n  --dv-tabs-container-scrollbar-color: #888;\n  --dv-icon-hover-background-color: rgba(90, 93, 94, 0.31);\n  --dv-floating-box-shadow:\n      0 8px 32px rgba(0, 0, 0, 0.4), 0 2px 8px rgba(0, 0, 0, 0.25);\n  --dv-floating-border: 1px solid rgba(255, 255, 255, 0.1);\n  --dv-overlay-z-index: 999;\n  --dv-tab-font-size: inherit;\n  --dv-border-radius: 0px;\n  --dv-tab-margin: 0;\n  --dv-sash-color: transparent;\n  --dv-active-sash-color: transparent;\n  --dv-active-sash-transition-duration: 0.1s;\n  --dv-active-sash-transition-delay: 0.5s;\n  --dv-spacing-padding: 0px;\n  --dv-tab-border-radius: 0px;\n  --dv-sash-border-radius: 0px;\n  --dv-dropdown-border-radius: 0px;\n  --dv-tab-close-icon-size: inherit;\n  --dv-floating-group-border: none;\n  --dv-drag-over-border: none;\n  --dv-floating-group-dragging-opacity: 0.5;\n  --dv-floating-titlebar-height: 22px;\n  --dv-floating-titlebar-background-color: var(\n      --dv-tabs-and-actions-container-background-color\n  );\n  --dv-floating-titlebar-border-bottom: var(--dv-floating-border);\n  --dv-tab-group-color-grey: #5f6368;\n  --dv-tab-group-color-blue: #1a73e8;\n  --dv-tab-group-color-red: #d93025;\n  --dv-tab-group-color-yellow: #f9ab00;\n  --dv-tab-group-color-green: #188038;\n  --dv-tab-group-color-pink: #d01884;\n  --dv-tab-group-color-purple: #a142f4;\n  --dv-tab-group-color-cyan: #007b83;\n  --dv-tab-group-color-orange: #e8710a;\n  --dv-tab-group-chip-padding: 4px 8px;\n  --dv-tab-group-chip-border-radius: 6px;\n  --dv-tab-group-chip-font-size: 11px;\n  --dv-tab-group-line-height: 2px;\n  --dv-tab-group-line-opacity: 0.6;\n  --dv-spacing-padding: 10px;\n  --dv-tab-font-size: 12px;\n  --dv-border-radius: 12px;\n  --dv-tab-margin-block: 0.5rem;\n  --dv-tab-margin-inline: 0.25rem;\n  --dv-tab-margin: var(--dv-tab-margin-block) var(--dv-tab-margin-inline);\n  --dv-tabs-and-actions-container-height: 44px;\n  --dv-tab-border-radius: 8px;\n  --dv-sash-border-radius: 4px;\n  --dv-dropdown-border-radius: 8px;\n  --dv-tab-close-icon-size: 8px;\n  --dv-floating-group-border: 2px solid var(--dv-group-view-background-color);\n  --dv-floating-titlebar-background-color: var(\n      --dv-group-view-background-color\n  );\n  --dv-floating-titlebar-border-bottom: none;\n  box-sizing: border-box;\n  padding: var(--dv-spacing-padding);\n  background-color: var(--dv-group-view-background-color);\n}\n.dockview-theme-catppuccin-mocha-spaced .dv-dockview {\n  padding: 0;\n}\n.dockview-theme-catppuccin-mocha-spaced .dv-resize-container:has(> .dv-groupview) {\n  border-radius: 8px;\n}\n.dockview-theme-catppuccin-mocha-spaced .dv-sash {\n  border-radius: var(--dv-sash-border-radius);\n}\n.dockview-theme-catppuccin-mocha-spaced .dv-drop-target-anchor {\n  border-radius: calc(var(--dv-border-radius) / 4);\n}\n.dockview-theme-catppuccin-mocha-spaced .dv-drop-target-anchor.dv-drop-target-content {\n  border-radius: var(--dv-border-radius);\n}\n.dockview-theme-catppuccin-mocha-spaced .dv-resize-container {\n  border-radius: var(--dv-border-radius) !important;\n  border: none;\n}\n.dockview-theme-catppuccin-mocha-spaced .dv-resize-container .dv-groupview {\n  border: var(--dv-floating-group-border);\n}\n.dockview-theme-catppuccin-mocha-spaced .dv-resize-container > .dv-grid-view {\n  box-sizing: border-box;\n  padding: var(--dv-spacing-padding);\n}\n.dockview-theme-catppuccin-mocha-spaced .dv-resize-container-with-titlebar > .dv-grid-view {\n  padding-top: 0;\n}\n.dockview-theme-catppuccin-mocha-spaced .dv-resize-container-with-titlebar > .dv-floating-titlebar {\n  border-top-left-radius: var(--dv-border-radius);\n  border-top-right-radius: var(--dv-border-radius);\n}\n.dockview-theme-catppuccin-mocha-spaced .dv-tabs-overflow-container,\n.dockview-theme-catppuccin-mocha-spaced .dv-tabs-overflow-dropdown-default {\n  border-radius: var(--dv-dropdown-border-radius);\n  height: unset !important;\n}\n.dockview-theme-catppuccin-mocha-spaced .dv-render-overlay {\n  border-bottom-left-radius: var(--dv-border-radius);\n  border-bottom-right-radius: var(--dv-border-radius);\n}\n.dockview-theme-catppuccin-mocha-spaced .dv-tab {\n  border-radius: var(--dv-tab-border-radius);\n}\n.dockview-theme-catppuccin-mocha-spaced .dv-tab .dv-svg {\n  height: var(--dv-tab-close-icon-size);\n  width: var(--dv-tab-close-icon-size);\n}\n.dockview-theme-catppuccin-mocha-spaced .dv-tabs-container--wrap:not(.dv-tabs-container-vertical) .dv-tab {\n  height: calc(var(--dv-tabs-and-actions-container-height) - 2 * var(--dv-tab-margin-block));\n}\n.dockview-theme-catppuccin-mocha-spaced .dv-tabs-container-vertical .dv-tab {\n  margin: var(--dv-tab-margin-inline) var(--dv-tab-margin-block);\n}\n.dockview-theme-catppuccin-mocha-spaced .dv-tabs-container--wrap.dv-tabs-container-vertical .dv-tab {\n  width: calc(var(--dv-tabs-and-actions-container-height) - 2 * var(--dv-tab-margin-block));\n}\n.dockview-theme-catppuccin-mocha-spaced .dv-groupview {\n  border-radius: var(--dv-border-radius);\n}\n.dockview-theme-catppuccin-mocha-spaced .dv-groupview .dv-tabs-and-actions-container {\n  padding: 0px calc(var(--dv-border-radius) / 2);\n  border-top-left-radius: var(--dv-border-radius);\n  border-top-right-radius: var(--dv-border-radius);\n}\n.dockview-theme-catppuccin-mocha-spaced .dv-groupview .dv-tabs-and-actions-container.dv-groupview-header-vertical {\n  padding: calc(var(--dv-border-radius) / 2) 0;\n}\n.dockview-theme-catppuccin-mocha-spaced .dv-groupview .dv-content-container {\n  background-color: var(--dv-tabs-and-actions-container-background-color);\n  border-bottom-left-radius: var(--dv-border-radius);\n  border-bottom-right-radius: var(--dv-border-radius);\n}\n.dockview-theme-catppuccin-mocha-spaced .dv-groupview.dv-groupview-header-bottom > .dv-tabs-and-actions-container {\n  border-radius: 0 0 var(--dv-border-radius) var(--dv-border-radius);\n}\n.dockview-theme-catppuccin-mocha-spaced .dv-groupview.dv-groupview-header-bottom > .dv-content-container {\n  border-radius: var(--dv-border-radius) var(--dv-border-radius) 0 0;\n}\n.dockview-theme-catppuccin-mocha-spaced .dv-groupview.dv-groupview-header-left > .dv-tabs-and-actions-container {\n  border-radius: var(--dv-border-radius) 0 0 var(--dv-border-radius);\n}\n.dockview-theme-catppuccin-mocha-spaced .dv-groupview.dv-groupview-header-left > .dv-content-container {\n  border-radius: 0 var(--dv-border-radius) var(--dv-border-radius) 0;\n}\n.dockview-theme-catppuccin-mocha-spaced .dv-groupview.dv-groupview-header-right > .dv-tabs-and-actions-container {\n  border-radius: 0 var(--dv-border-radius) var(--dv-border-radius) 0;\n}\n.dockview-theme-catppuccin-mocha-spaced .dv-groupview.dv-groupview-header-right > .dv-content-container {\n  border-radius: var(--dv-border-radius) 0 0 var(--dv-border-radius);\n}\n.dockview-theme-catppuccin-mocha-spaced .dv-groupview.dv-edge-tool-window .dv-edge-peek-header {\n  border-top-left-radius: var(--dv-border-radius);\n  border-top-right-radius: var(--dv-border-radius);\n}\n.dockview-theme-catppuccin-mocha-spaced .dv-groupview.dv-edge-tool-window .dv-content-container {\n  border-radius: 0;\n}\n.dockview-theme-catppuccin-mocha-spaced .dv-groupview.dv-edge-tool-window .dv-tabs-and-actions-container {\n  border-top-left-radius: 0;\n  border-top-right-radius: 0;\n  border-bottom-left-radius: var(--dv-border-radius);\n  border-bottom-right-radius: var(--dv-border-radius);\n}\n.dockview-theme-catppuccin-mocha-spaced .dv-edge-peek {\n  border-bottom-left-radius: var(--dv-border-radius);\n  border-bottom-right-radius: var(--dv-border-radius);\n}\n.dockview-theme-catppuccin-mocha-spaced .dv-edge-peek-clip {\n  border-bottom-left-radius: var(--dv-border-radius);\n  border-bottom-right-radius: var(--dv-border-radius);\n}\n.dockview-theme-catppuccin-mocha-spaced .dv-edge-peek-header {\n  border-top-left-radius: var(--dv-border-radius);\n  border-top-right-radius: var(--dv-border-radius);\n}\n.dockview-theme-catppuccin-mocha-spaced {\n  color-scheme: dark;\n  --dv-color-mocha-crust: #11111b;\n  --dv-color-mocha-mantle: #181825;\n  --dv-color-mocha-base: #1e1e2e;\n  --dv-color-mocha-surface0: #313244;\n  --dv-color-mocha-surface1: #45475a;\n  --dv-color-mocha-text: #cdd6f4;\n  --dv-color-mocha-subtext1: #bac2de;\n  --dv-color-mocha-subtext0: #a6adc8;\n  --dv-color-mocha-mauve: #cba6f7;\n  --dv-color-mocha-lavender: #b4befe;\n  --dv-group-view-background-color: var(--dv-color-mocha-crust);\n  --dv-tabs-and-actions-container-background-color: var(\n      --dv-color-mocha-mantle\n  );\n  --dv-activegroup-visiblepanel-tab-background-color: var(\n      --dv-color-mocha-surface0\n  );\n  --dv-activegroup-hiddenpanel-tab-background-color: var(\n      --dv-color-mocha-mantle\n  );\n  --dv-inactivegroup-visiblepanel-tab-background-color: var(\n      --dv-color-mocha-surface0\n  );\n  --dv-inactivegroup-hiddenpanel-tab-background-color: var(\n      --dv-color-mocha-mantle\n  );\n  --dv-activegroup-visiblepanel-tab-color: var(--dv-color-mocha-text);\n  --dv-activegroup-hiddenpanel-tab-color: var(--dv-color-mocha-subtext1);\n  --dv-inactivegroup-visiblepanel-tab-color: var(--dv-color-mocha-subtext0);\n  --dv-inactivegroup-hiddenpanel-tab-color: rgba(166, 173, 200, 0.5);\n  --dv-separator-border: transparent;\n  --dv-paneview-active-outline-color: var(--dv-color-mocha-mauve);\n  --dv-active-sash-color: var(--dv-color-mocha-mauve);\n  --dv-scrollbar-background-color: rgba(49, 50, 68, 0.8);\n  --dv-floating-group-border: 2px solid var(--dv-color-mocha-crust);\n}\n\n.dockview-theme-monokai {\n  --dv-paneview-active-outline-color: dodgerblue;\n  --dv-tabs-and-actions-container-font-size: 13px;\n  --dv-tabs-and-actions-container-height: 35px;\n  --dv-drag-over-background-color: rgba(83, 89, 93, 0.5);\n  --dv-drag-over-border-color: transparent;\n  --dv-edge-dock-indicator-color: rgba(56, 139, 253, 0.9);\n  --dv-tabs-container-scrollbar-color: #888;\n  --dv-icon-hover-background-color: rgba(90, 93, 94, 0.31);\n  --dv-floating-box-shadow:\n      0 8px 32px rgba(0, 0, 0, 0.4), 0 2px 8px rgba(0, 0, 0, 0.25);\n  --dv-floating-border: 1px solid rgba(255, 255, 255, 0.1);\n  --dv-overlay-z-index: 999;\n  --dv-tab-font-size: inherit;\n  --dv-border-radius: 0px;\n  --dv-tab-margin: 0;\n  --dv-sash-color: transparent;\n  --dv-active-sash-color: transparent;\n  --dv-active-sash-transition-duration: 0.1s;\n  --dv-active-sash-transition-delay: 0.5s;\n  --dv-spacing-padding: 0px;\n  --dv-tab-border-radius: 0px;\n  --dv-sash-border-radius: 0px;\n  --dv-dropdown-border-radius: 0px;\n  --dv-tab-close-icon-size: inherit;\n  --dv-floating-group-border: none;\n  --dv-drag-over-border: none;\n  --dv-floating-group-dragging-opacity: 0.5;\n  --dv-floating-titlebar-height: 22px;\n  --dv-floating-titlebar-background-color: var(\n      --dv-tabs-and-actions-container-background-color\n  );\n  --dv-floating-titlebar-border-bottom: var(--dv-floating-border);\n  --dv-tab-group-color-grey: #5f6368;\n  --dv-tab-group-color-blue: #1a73e8;\n  --dv-tab-group-color-red: #d93025;\n  --dv-tab-group-color-yellow: #f9ab00;\n  --dv-tab-group-color-green: #188038;\n  --dv-tab-group-color-pink: #d01884;\n  --dv-tab-group-color-purple: #a142f4;\n  --dv-tab-group-color-cyan: #007b83;\n  --dv-tab-group-color-orange: #e8710a;\n  --dv-tab-group-chip-padding: 4px 8px;\n  --dv-tab-group-chip-border-radius: 6px;\n  --dv-tab-group-chip-font-size: 11px;\n  --dv-tab-group-line-height: 2px;\n  --dv-tab-group-line-opacity: 0.6;\n}\n.dockview-theme-monokai .dv-drop-target-container .dv-drop-target-anchor.dv-drop-target-anchor-container-changed {\n  opacity: 0;\n  transition: none;\n}\n.dockview-theme-monokai {\n  color-scheme: dark;\n  --dv-color-monokai-bg: #272822;\n  --dv-color-monokai-bg-light: #3e3d32;\n  --dv-color-monokai-comment: #75715e;\n  --dv-color-monokai-fg: #f8f8f2;\n  --dv-color-monokai-green: #a6e22e;\n  --dv-group-view-background-color: var(--dv-color-monokai-bg);\n  --dv-tabs-and-actions-container-background-color: var(\n      --dv-color-monokai-bg-light\n  );\n  --dv-activegroup-visiblepanel-tab-background-color: var(\n      --dv-color-monokai-bg\n  );\n  --dv-activegroup-hiddenpanel-tab-background-color: #2d2c25;\n  --dv-inactivegroup-visiblepanel-tab-background-color: var(\n      --dv-color-monokai-bg\n  );\n  --dv-inactivegroup-hiddenpanel-tab-background-color: #2d2c25;\n  --dv-activegroup-visiblepanel-tab-color: var(--dv-color-monokai-fg);\n  --dv-activegroup-hiddenpanel-tab-color: var(--dv-color-monokai-comment);\n  --dv-inactivegroup-visiblepanel-tab-color: rgba(248, 248, 242, 0.5);\n  --dv-inactivegroup-hiddenpanel-tab-color: rgba(117, 113, 94, 0.5);\n  --dv-separator-border: var(--dv-color-monokai-bg-light);\n  --dv-paneview-active-outline-color: var(--dv-color-monokai-green);\n  --dv-active-sash-color: var(--dv-color-monokai-green);\n  --dv-scrollbar-background-color: rgba(117, 113, 94, 0.5);\n}\n.dockview-theme-monokai .dv-groupview.dv-active-group > .dv-tabs-and-actions-container .dv-tabs-container > .dv-tab.dv-active-tab {\n  position: relative;\n}\n.dockview-theme-monokai .dv-groupview.dv-active-group > .dv-tabs-and-actions-container .dv-tabs-container > .dv-tab.dv-active-tab::after {\n  position: absolute;\n  left: 0px;\n  bottom: 0px;\n  content: "";\n  width: 100%;\n  height: 2px;\n  background-color: var(--dv-color-monokai-green);\n  z-index: 999;\n}\n.dockview-theme-monokai .dv-groupview.dv-inactive-group > .dv-tabs-and-actions-container .dv-tabs-container > .dv-tab.dv-active-tab {\n  position: relative;\n}\n.dockview-theme-monokai .dv-groupview.dv-inactive-group > .dv-tabs-and-actions-container .dv-tabs-container > .dv-tab.dv-active-tab::after {\n  position: absolute;\n  left: 0px;\n  bottom: 0px;\n  content: "";\n  width: 100%;\n  height: 2px;\n  background-color: rgba(166, 226, 46, 0.35);\n  z-index: 999;\n}\n\n.dockview-theme-solarized-light {\n  --dv-paneview-active-outline-color: dodgerblue;\n  --dv-tabs-and-actions-container-font-size: 13px;\n  --dv-tabs-and-actions-container-height: 35px;\n  --dv-drag-over-background-color: rgba(83, 89, 93, 0.5);\n  --dv-drag-over-border-color: transparent;\n  --dv-edge-dock-indicator-color: rgba(56, 139, 253, 0.9);\n  --dv-tabs-container-scrollbar-color: #888;\n  --dv-icon-hover-background-color: rgba(90, 93, 94, 0.31);\n  --dv-floating-box-shadow:\n      0 8px 32px rgba(0, 0, 0, 0.4), 0 2px 8px rgba(0, 0, 0, 0.25);\n  --dv-floating-border: 1px solid rgba(255, 255, 255, 0.1);\n  --dv-overlay-z-index: 999;\n  --dv-tab-font-size: inherit;\n  --dv-border-radius: 0px;\n  --dv-tab-margin: 0;\n  --dv-sash-color: transparent;\n  --dv-active-sash-color: transparent;\n  --dv-active-sash-transition-duration: 0.1s;\n  --dv-active-sash-transition-delay: 0.5s;\n  --dv-spacing-padding: 0px;\n  --dv-tab-border-radius: 0px;\n  --dv-sash-border-radius: 0px;\n  --dv-dropdown-border-radius: 0px;\n  --dv-tab-close-icon-size: inherit;\n  --dv-floating-group-border: none;\n  --dv-drag-over-border: none;\n  --dv-floating-group-dragging-opacity: 0.5;\n  --dv-floating-titlebar-height: 22px;\n  --dv-floating-titlebar-background-color: var(\n      --dv-tabs-and-actions-container-background-color\n  );\n  --dv-floating-titlebar-border-bottom: var(--dv-floating-border);\n  --dv-tab-group-color-grey: #5f6368;\n  --dv-tab-group-color-blue: #1a73e8;\n  --dv-tab-group-color-red: #d93025;\n  --dv-tab-group-color-yellow: #f9ab00;\n  --dv-tab-group-color-green: #188038;\n  --dv-tab-group-color-pink: #d01884;\n  --dv-tab-group-color-purple: #a142f4;\n  --dv-tab-group-color-cyan: #007b83;\n  --dv-tab-group-color-orange: #e8710a;\n  --dv-tab-group-chip-padding: 4px 8px;\n  --dv-tab-group-chip-border-radius: 6px;\n  --dv-tab-group-chip-font-size: 11px;\n  --dv-tab-group-line-height: 2px;\n  --dv-tab-group-line-opacity: 0.6;\n}\n.dockview-theme-solarized-light .dv-drop-target-container .dv-drop-target-anchor.dv-drop-target-anchor-container-changed {\n  opacity: 0;\n  transition: none;\n}\n.dockview-theme-solarized-light {\n  color-scheme: light;\n  --dv-color-sol-base3: #fdf6e3;\n  --dv-color-sol-base2: #eee8d5;\n  --dv-color-sol-base1: #93a1a1;\n  --dv-color-sol-base00: #657b83;\n  --dv-color-sol-base01: #586e75;\n  --dv-color-sol-blue: #268bd2;\n  --dv-group-view-background-color: var(--dv-color-sol-base3);\n  --dv-tabs-and-actions-container-background-color: var(--dv-color-sol-base2);\n  --dv-activegroup-visiblepanel-tab-background-color: var(\n      --dv-color-sol-base3\n  );\n  --dv-activegroup-hiddenpanel-tab-background-color: #e8e2d0;\n  --dv-inactivegroup-visiblepanel-tab-background-color: var(\n      --dv-color-sol-base3\n  );\n  --dv-inactivegroup-hiddenpanel-tab-background-color: #e8e2d0;\n  --dv-activegroup-visiblepanel-tab-color: var(--dv-color-sol-base01);\n  --dv-activegroup-hiddenpanel-tab-color: var(--dv-color-sol-base00);\n  --dv-inactivegroup-visiblepanel-tab-color: var(--dv-color-sol-base1);\n  --dv-inactivegroup-hiddenpanel-tab-color: rgba(147, 161, 161, 0.6);\n  --dv-separator-border: var(--dv-color-sol-base2);\n  --dv-paneview-active-outline-color: var(--dv-color-sol-blue);\n  --dv-active-sash-color: var(--dv-color-sol-blue);\n  --dv-scrollbar-background-color: rgba(101, 123, 131, 0.25);\n  --dv-drag-over-background-color: rgba(38, 139, 210, 0.15);\n  --dv-floating-box-shadow:\n      0 8px 32px rgba(0, 0, 0, 0.12), 0 2px 8px rgba(0, 0, 0, 0.08);\n  --dv-floating-border: 1px solid rgba(0, 0, 0, 0.1);\n}\n\n.dockview-theme-solarized-light-spaced {\n  --dv-paneview-active-outline-color: dodgerblue;\n  --dv-tabs-and-actions-container-font-size: 13px;\n  --dv-tabs-and-actions-container-height: 35px;\n  --dv-drag-over-background-color: rgba(83, 89, 93, 0.5);\n  --dv-drag-over-border-color: transparent;\n  --dv-edge-dock-indicator-color: rgba(56, 139, 253, 0.9);\n  --dv-tabs-container-scrollbar-color: #888;\n  --dv-icon-hover-background-color: rgba(90, 93, 94, 0.31);\n  --dv-floating-box-shadow:\n      0 8px 32px rgba(0, 0, 0, 0.4), 0 2px 8px rgba(0, 0, 0, 0.25);\n  --dv-floating-border: 1px solid rgba(255, 255, 255, 0.1);\n  --dv-overlay-z-index: 999;\n  --dv-tab-font-size: inherit;\n  --dv-border-radius: 0px;\n  --dv-tab-margin: 0;\n  --dv-sash-color: transparent;\n  --dv-active-sash-color: transparent;\n  --dv-active-sash-transition-duration: 0.1s;\n  --dv-active-sash-transition-delay: 0.5s;\n  --dv-spacing-padding: 0px;\n  --dv-tab-border-radius: 0px;\n  --dv-sash-border-radius: 0px;\n  --dv-dropdown-border-radius: 0px;\n  --dv-tab-close-icon-size: inherit;\n  --dv-floating-group-border: none;\n  --dv-drag-over-border: none;\n  --dv-floating-group-dragging-opacity: 0.5;\n  --dv-floating-titlebar-height: 22px;\n  --dv-floating-titlebar-background-color: var(\n      --dv-tabs-and-actions-container-background-color\n  );\n  --dv-floating-titlebar-border-bottom: var(--dv-floating-border);\n  --dv-tab-group-color-grey: #5f6368;\n  --dv-tab-group-color-blue: #1a73e8;\n  --dv-tab-group-color-red: #d93025;\n  --dv-tab-group-color-yellow: #f9ab00;\n  --dv-tab-group-color-green: #188038;\n  --dv-tab-group-color-pink: #d01884;\n  --dv-tab-group-color-purple: #a142f4;\n  --dv-tab-group-color-cyan: #007b83;\n  --dv-tab-group-color-orange: #e8710a;\n  --dv-tab-group-chip-padding: 4px 8px;\n  --dv-tab-group-chip-border-radius: 6px;\n  --dv-tab-group-chip-font-size: 11px;\n  --dv-tab-group-line-height: 2px;\n  --dv-tab-group-line-opacity: 0.6;\n  --dv-spacing-padding: 10px;\n  --dv-tab-font-size: 12px;\n  --dv-border-radius: 12px;\n  --dv-tab-margin-block: 0.5rem;\n  --dv-tab-margin-inline: 0.25rem;\n  --dv-tab-margin: var(--dv-tab-margin-block) var(--dv-tab-margin-inline);\n  --dv-tabs-and-actions-container-height: 44px;\n  --dv-tab-border-radius: 8px;\n  --dv-sash-border-radius: 4px;\n  --dv-dropdown-border-radius: 8px;\n  --dv-tab-close-icon-size: 8px;\n  --dv-floating-group-border: 2px solid var(--dv-group-view-background-color);\n  --dv-floating-titlebar-background-color: var(\n      --dv-group-view-background-color\n  );\n  --dv-floating-titlebar-border-bottom: none;\n  box-sizing: border-box;\n  padding: var(--dv-spacing-padding);\n  background-color: var(--dv-group-view-background-color);\n}\n.dockview-theme-solarized-light-spaced .dv-dockview {\n  padding: 0;\n}\n.dockview-theme-solarized-light-spaced .dv-resize-container:has(> .dv-groupview) {\n  border-radius: 8px;\n}\n.dockview-theme-solarized-light-spaced .dv-sash {\n  border-radius: var(--dv-sash-border-radius);\n}\n.dockview-theme-solarized-light-spaced .dv-drop-target-anchor {\n  border-radius: calc(var(--dv-border-radius) / 4);\n}\n.dockview-theme-solarized-light-spaced .dv-drop-target-anchor.dv-drop-target-content {\n  border-radius: var(--dv-border-radius);\n}\n.dockview-theme-solarized-light-spaced .dv-resize-container {\n  border-radius: var(--dv-border-radius) !important;\n  border: none;\n}\n.dockview-theme-solarized-light-spaced .dv-resize-container .dv-groupview {\n  border: var(--dv-floating-group-border);\n}\n.dockview-theme-solarized-light-spaced .dv-resize-container > .dv-grid-view {\n  box-sizing: border-box;\n  padding: var(--dv-spacing-padding);\n}\n.dockview-theme-solarized-light-spaced .dv-resize-container-with-titlebar > .dv-grid-view {\n  padding-top: 0;\n}\n.dockview-theme-solarized-light-spaced .dv-resize-container-with-titlebar > .dv-floating-titlebar {\n  border-top-left-radius: var(--dv-border-radius);\n  border-top-right-radius: var(--dv-border-radius);\n}\n.dockview-theme-solarized-light-spaced .dv-tabs-overflow-container,\n.dockview-theme-solarized-light-spaced .dv-tabs-overflow-dropdown-default {\n  border-radius: var(--dv-dropdown-border-radius);\n  height: unset !important;\n}\n.dockview-theme-solarized-light-spaced .dv-render-overlay {\n  border-bottom-left-radius: var(--dv-border-radius);\n  border-bottom-right-radius: var(--dv-border-radius);\n}\n.dockview-theme-solarized-light-spaced .dv-tab {\n  border-radius: var(--dv-tab-border-radius);\n}\n.dockview-theme-solarized-light-spaced .dv-tab .dv-svg {\n  height: var(--dv-tab-close-icon-size);\n  width: var(--dv-tab-close-icon-size);\n}\n.dockview-theme-solarized-light-spaced .dv-tabs-container--wrap:not(.dv-tabs-container-vertical) .dv-tab {\n  height: calc(var(--dv-tabs-and-actions-container-height) - 2 * var(--dv-tab-margin-block));\n}\n.dockview-theme-solarized-light-spaced .dv-tabs-container-vertical .dv-tab {\n  margin: var(--dv-tab-margin-inline) var(--dv-tab-margin-block);\n}\n.dockview-theme-solarized-light-spaced .dv-tabs-container--wrap.dv-tabs-container-vertical .dv-tab {\n  width: calc(var(--dv-tabs-and-actions-container-height) - 2 * var(--dv-tab-margin-block));\n}\n.dockview-theme-solarized-light-spaced .dv-groupview {\n  border-radius: var(--dv-border-radius);\n}\n.dockview-theme-solarized-light-spaced .dv-groupview .dv-tabs-and-actions-container {\n  padding: 0px calc(var(--dv-border-radius) / 2);\n  border-top-left-radius: var(--dv-border-radius);\n  border-top-right-radius: var(--dv-border-radius);\n}\n.dockview-theme-solarized-light-spaced .dv-groupview .dv-tabs-and-actions-container.dv-groupview-header-vertical {\n  padding: calc(var(--dv-border-radius) / 2) 0;\n}\n.dockview-theme-solarized-light-spaced .dv-groupview .dv-content-container {\n  background-color: var(--dv-tabs-and-actions-container-background-color);\n  border-bottom-left-radius: var(--dv-border-radius);\n  border-bottom-right-radius: var(--dv-border-radius);\n}\n.dockview-theme-solarized-light-spaced .dv-groupview.dv-groupview-header-bottom > .dv-tabs-and-actions-container {\n  border-radius: 0 0 var(--dv-border-radius) var(--dv-border-radius);\n}\n.dockview-theme-solarized-light-spaced .dv-groupview.dv-groupview-header-bottom > .dv-content-container {\n  border-radius: var(--dv-border-radius) var(--dv-border-radius) 0 0;\n}\n.dockview-theme-solarized-light-spaced .dv-groupview.dv-groupview-header-left > .dv-tabs-and-actions-container {\n  border-radius: var(--dv-border-radius) 0 0 var(--dv-border-radius);\n}\n.dockview-theme-solarized-light-spaced .dv-groupview.dv-groupview-header-left > .dv-content-container {\n  border-radius: 0 var(--dv-border-radius) var(--dv-border-radius) 0;\n}\n.dockview-theme-solarized-light-spaced .dv-groupview.dv-groupview-header-right > .dv-tabs-and-actions-container {\n  border-radius: 0 var(--dv-border-radius) var(--dv-border-radius) 0;\n}\n.dockview-theme-solarized-light-spaced .dv-groupview.dv-groupview-header-right > .dv-content-container {\n  border-radius: var(--dv-border-radius) 0 0 var(--dv-border-radius);\n}\n.dockview-theme-solarized-light-spaced .dv-groupview.dv-edge-tool-window .dv-edge-peek-header {\n  border-top-left-radius: var(--dv-border-radius);\n  border-top-right-radius: var(--dv-border-radius);\n}\n.dockview-theme-solarized-light-spaced .dv-groupview.dv-edge-tool-window .dv-content-container {\n  border-radius: 0;\n}\n.dockview-theme-solarized-light-spaced .dv-groupview.dv-edge-tool-window .dv-tabs-and-actions-container {\n  border-top-left-radius: 0;\n  border-top-right-radius: 0;\n  border-bottom-left-radius: var(--dv-border-radius);\n  border-bottom-right-radius: var(--dv-border-radius);\n}\n.dockview-theme-solarized-light-spaced .dv-edge-peek {\n  border-bottom-left-radius: var(--dv-border-radius);\n  border-bottom-right-radius: var(--dv-border-radius);\n}\n.dockview-theme-solarized-light-spaced .dv-edge-peek-clip {\n  border-bottom-left-radius: var(--dv-border-radius);\n  border-bottom-right-radius: var(--dv-border-radius);\n}\n.dockview-theme-solarized-light-spaced .dv-edge-peek-header {\n  border-top-left-radius: var(--dv-border-radius);\n  border-top-right-radius: var(--dv-border-radius);\n}\n.dockview-theme-solarized-light-spaced {\n  color-scheme: light;\n  --dv-color-sol-base3: #fdf6e3;\n  --dv-color-sol-base2: #eee8d5;\n  --dv-color-sol-base1: #93a1a1;\n  --dv-color-sol-base00: #657b83;\n  --dv-color-sol-base01: #586e75;\n  --dv-color-sol-blue: #268bd2;\n  --dv-drag-over-background-color: rgba(38, 139, 210, 0.1);\n  --dv-group-view-background-color: var(--dv-color-sol-base2);\n  --dv-tabs-and-actions-container-background-color: var(--dv-color-sol-base3);\n  --dv-activegroup-visiblepanel-tab-background-color: #e8e2d0;\n  --dv-activegroup-hiddenpanel-tab-background-color: var(\n      --dv-color-sol-base3\n  );\n  --dv-inactivegroup-visiblepanel-tab-background-color: #e8e2d0;\n  --dv-inactivegroup-hiddenpanel-tab-background-color: var(\n      --dv-color-sol-base3\n  );\n  --dv-activegroup-visiblepanel-tab-color: var(--dv-color-sol-base01);\n  --dv-activegroup-hiddenpanel-tab-color: var(--dv-color-sol-base00);\n  --dv-inactivegroup-visiblepanel-tab-color: var(--dv-color-sol-base1);\n  --dv-inactivegroup-hiddenpanel-tab-color: rgba(147, 161, 161, 0.6);\n  --dv-separator-border: transparent;\n  --dv-paneview-active-outline-color: var(--dv-color-sol-blue);\n  --dv-active-sash-color: var(--dv-color-sol-blue);\n  --dv-floating-box-shadow:\n      0 8px 32px rgba(0, 0, 0, 0.12), 0 2px 8px rgba(0, 0, 0, 0.08);\n  --dv-floating-border: 1px solid rgba(0, 0, 0, 0.1);\n  --dv-scrollbar-background-color: rgba(101, 123, 131, 0.25);\n  --dv-floating-group-border: 2px solid rgba(238, 232, 213, 0.5);\n}\n\n.dockview-theme-github-dark {\n  --dv-paneview-active-outline-color: dodgerblue;\n  --dv-tabs-and-actions-container-font-size: 13px;\n  --dv-tabs-and-actions-container-height: 35px;\n  --dv-drag-over-background-color: rgba(83, 89, 93, 0.5);\n  --dv-drag-over-border-color: transparent;\n  --dv-edge-dock-indicator-color: rgba(56, 139, 253, 0.9);\n  --dv-tabs-container-scrollbar-color: #888;\n  --dv-icon-hover-background-color: rgba(90, 93, 94, 0.31);\n  --dv-floating-box-shadow:\n      0 8px 32px rgba(0, 0, 0, 0.4), 0 2px 8px rgba(0, 0, 0, 0.25);\n  --dv-floating-border: 1px solid rgba(255, 255, 255, 0.1);\n  --dv-overlay-z-index: 999;\n  --dv-tab-font-size: inherit;\n  --dv-border-radius: 0px;\n  --dv-tab-margin: 0;\n  --dv-sash-color: transparent;\n  --dv-active-sash-color: transparent;\n  --dv-active-sash-transition-duration: 0.1s;\n  --dv-active-sash-transition-delay: 0.5s;\n  --dv-spacing-padding: 0px;\n  --dv-tab-border-radius: 0px;\n  --dv-sash-border-radius: 0px;\n  --dv-dropdown-border-radius: 0px;\n  --dv-tab-close-icon-size: inherit;\n  --dv-floating-group-border: none;\n  --dv-drag-over-border: none;\n  --dv-floating-group-dragging-opacity: 0.5;\n  --dv-floating-titlebar-height: 22px;\n  --dv-floating-titlebar-background-color: var(\n      --dv-tabs-and-actions-container-background-color\n  );\n  --dv-floating-titlebar-border-bottom: var(--dv-floating-border);\n  --dv-tab-group-color-grey: #5f6368;\n  --dv-tab-group-color-blue: #1a73e8;\n  --dv-tab-group-color-red: #d93025;\n  --dv-tab-group-color-yellow: #f9ab00;\n  --dv-tab-group-color-green: #188038;\n  --dv-tab-group-color-pink: #d01884;\n  --dv-tab-group-color-purple: #a142f4;\n  --dv-tab-group-color-cyan: #007b83;\n  --dv-tab-group-color-orange: #e8710a;\n  --dv-tab-group-chip-padding: 4px 8px;\n  --dv-tab-group-chip-border-radius: 6px;\n  --dv-tab-group-chip-font-size: 11px;\n  --dv-tab-group-line-height: 2px;\n  --dv-tab-group-line-opacity: 0.6;\n}\n.dockview-theme-github-dark .dv-drop-target-container .dv-drop-target-anchor.dv-drop-target-anchor-container-changed {\n  opacity: 0;\n  transition: none;\n}\n.dockview-theme-github-dark {\n  color-scheme: dark;\n  --dv-color-gh-canvas-default: #0d1117;\n  --dv-color-gh-canvas-subtle: #161b22;\n  --dv-color-gh-canvas-inset: #010409;\n  --dv-color-gh-border: #30363d;\n  --dv-color-gh-border-muted: #21262d;\n  --dv-color-gh-fg-default: #e6edf3;\n  --dv-color-gh-fg-muted: #8b949e;\n  --dv-color-gh-fg-subtle: #6e7681;\n  --dv-color-gh-accent: #58a6ff;\n  --dv-group-view-background-color: var(--dv-color-gh-canvas-default);\n  --dv-tabs-and-actions-container-background-color: var(\n      --dv-color-gh-canvas-subtle\n  );\n  --dv-activegroup-visiblepanel-tab-background-color: var(\n      --dv-color-gh-canvas-default\n  );\n  --dv-activegroup-hiddenpanel-tab-background-color: var(\n      --dv-color-gh-canvas-subtle\n  );\n  --dv-inactivegroup-visiblepanel-tab-background-color: var(\n      --dv-color-gh-canvas-default\n  );\n  --dv-inactivegroup-hiddenpanel-tab-background-color: var(\n      --dv-color-gh-canvas-subtle\n  );\n  --dv-activegroup-visiblepanel-tab-color: var(--dv-color-gh-fg-default);\n  --dv-activegroup-hiddenpanel-tab-color: var(--dv-color-gh-fg-muted);\n  --dv-inactivegroup-visiblepanel-tab-color: var(--dv-color-gh-fg-subtle);\n  --dv-inactivegroup-hiddenpanel-tab-color: rgba(110, 118, 129, 0.5);\n  --dv-separator-border: var(--dv-color-gh-border);\n  --dv-paneview-active-outline-color: var(--dv-color-gh-accent);\n  --dv-active-sash-color: var(--dv-color-gh-accent);\n  --dv-scrollbar-background-color: rgba(48, 54, 61, 0.7);\n  --dv-drag-over-background-color: rgba(88, 166, 255, 0.15);\n}\n\n.dockview-theme-github-dark-spaced {\n  --dv-paneview-active-outline-color: dodgerblue;\n  --dv-tabs-and-actions-container-font-size: 13px;\n  --dv-tabs-and-actions-container-height: 35px;\n  --dv-drag-over-background-color: rgba(83, 89, 93, 0.5);\n  --dv-drag-over-border-color: transparent;\n  --dv-edge-dock-indicator-color: rgba(56, 139, 253, 0.9);\n  --dv-tabs-container-scrollbar-color: #888;\n  --dv-icon-hover-background-color: rgba(90, 93, 94, 0.31);\n  --dv-floating-box-shadow:\n      0 8px 32px rgba(0, 0, 0, 0.4), 0 2px 8px rgba(0, 0, 0, 0.25);\n  --dv-floating-border: 1px solid rgba(255, 255, 255, 0.1);\n  --dv-overlay-z-index: 999;\n  --dv-tab-font-size: inherit;\n  --dv-border-radius: 0px;\n  --dv-tab-margin: 0;\n  --dv-sash-color: transparent;\n  --dv-active-sash-color: transparent;\n  --dv-active-sash-transition-duration: 0.1s;\n  --dv-active-sash-transition-delay: 0.5s;\n  --dv-spacing-padding: 0px;\n  --dv-tab-border-radius: 0px;\n  --dv-sash-border-radius: 0px;\n  --dv-dropdown-border-radius: 0px;\n  --dv-tab-close-icon-size: inherit;\n  --dv-floating-group-border: none;\n  --dv-drag-over-border: none;\n  --dv-floating-group-dragging-opacity: 0.5;\n  --dv-floating-titlebar-height: 22px;\n  --dv-floating-titlebar-background-color: var(\n      --dv-tabs-and-actions-container-background-color\n  );\n  --dv-floating-titlebar-border-bottom: var(--dv-floating-border);\n  --dv-tab-group-color-grey: #5f6368;\n  --dv-tab-group-color-blue: #1a73e8;\n  --dv-tab-group-color-red: #d93025;\n  --dv-tab-group-color-yellow: #f9ab00;\n  --dv-tab-group-color-green: #188038;\n  --dv-tab-group-color-pink: #d01884;\n  --dv-tab-group-color-purple: #a142f4;\n  --dv-tab-group-color-cyan: #007b83;\n  --dv-tab-group-color-orange: #e8710a;\n  --dv-tab-group-chip-padding: 4px 8px;\n  --dv-tab-group-chip-border-radius: 6px;\n  --dv-tab-group-chip-font-size: 11px;\n  --dv-tab-group-line-height: 2px;\n  --dv-tab-group-line-opacity: 0.6;\n  --dv-spacing-padding: 10px;\n  --dv-tab-font-size: 12px;\n  --dv-border-radius: 12px;\n  --dv-tab-margin-block: 0.5rem;\n  --dv-tab-margin-inline: 0.25rem;\n  --dv-tab-margin: var(--dv-tab-margin-block) var(--dv-tab-margin-inline);\n  --dv-tabs-and-actions-container-height: 44px;\n  --dv-tab-border-radius: 8px;\n  --dv-sash-border-radius: 4px;\n  --dv-dropdown-border-radius: 8px;\n  --dv-tab-close-icon-size: 8px;\n  --dv-floating-group-border: 2px solid var(--dv-group-view-background-color);\n  --dv-floating-titlebar-background-color: var(\n      --dv-group-view-background-color\n  );\n  --dv-floating-titlebar-border-bottom: none;\n  box-sizing: border-box;\n  padding: var(--dv-spacing-padding);\n  background-color: var(--dv-group-view-background-color);\n}\n.dockview-theme-github-dark-spaced .dv-dockview {\n  padding: 0;\n}\n.dockview-theme-github-dark-spaced .dv-resize-container:has(> .dv-groupview) {\n  border-radius: 8px;\n}\n.dockview-theme-github-dark-spaced .dv-sash {\n  border-radius: var(--dv-sash-border-radius);\n}\n.dockview-theme-github-dark-spaced .dv-drop-target-anchor {\n  border-radius: calc(var(--dv-border-radius) / 4);\n}\n.dockview-theme-github-dark-spaced .dv-drop-target-anchor.dv-drop-target-content {\n  border-radius: var(--dv-border-radius);\n}\n.dockview-theme-github-dark-spaced .dv-resize-container {\n  border-radius: var(--dv-border-radius) !important;\n  border: none;\n}\n.dockview-theme-github-dark-spaced .dv-resize-container .dv-groupview {\n  border: var(--dv-floating-group-border);\n}\n.dockview-theme-github-dark-spaced .dv-resize-container > .dv-grid-view {\n  box-sizing: border-box;\n  padding: var(--dv-spacing-padding);\n}\n.dockview-theme-github-dark-spaced .dv-resize-container-with-titlebar > .dv-grid-view {\n  padding-top: 0;\n}\n.dockview-theme-github-dark-spaced .dv-resize-container-with-titlebar > .dv-floating-titlebar {\n  border-top-left-radius: var(--dv-border-radius);\n  border-top-right-radius: var(--dv-border-radius);\n}\n.dockview-theme-github-dark-spaced .dv-tabs-overflow-container,\n.dockview-theme-github-dark-spaced .dv-tabs-overflow-dropdown-default {\n  border-radius: var(--dv-dropdown-border-radius);\n  height: unset !important;\n}\n.dockview-theme-github-dark-spaced .dv-render-overlay {\n  border-bottom-left-radius: var(--dv-border-radius);\n  border-bottom-right-radius: var(--dv-border-radius);\n}\n.dockview-theme-github-dark-spaced .dv-tab {\n  border-radius: var(--dv-tab-border-radius);\n}\n.dockview-theme-github-dark-spaced .dv-tab .dv-svg {\n  height: var(--dv-tab-close-icon-size);\n  width: var(--dv-tab-close-icon-size);\n}\n.dockview-theme-github-dark-spaced .dv-tabs-container--wrap:not(.dv-tabs-container-vertical) .dv-tab {\n  height: calc(var(--dv-tabs-and-actions-container-height) - 2 * var(--dv-tab-margin-block));\n}\n.dockview-theme-github-dark-spaced .dv-tabs-container-vertical .dv-tab {\n  margin: var(--dv-tab-margin-inline) var(--dv-tab-margin-block);\n}\n.dockview-theme-github-dark-spaced .dv-tabs-container--wrap.dv-tabs-container-vertical .dv-tab {\n  width: calc(var(--dv-tabs-and-actions-container-height) - 2 * var(--dv-tab-margin-block));\n}\n.dockview-theme-github-dark-spaced .dv-groupview {\n  border-radius: var(--dv-border-radius);\n}\n.dockview-theme-github-dark-spaced .dv-groupview .dv-tabs-and-actions-container {\n  padding: 0px calc(var(--dv-border-radius) / 2);\n  border-top-left-radius: var(--dv-border-radius);\n  border-top-right-radius: var(--dv-border-radius);\n}\n.dockview-theme-github-dark-spaced .dv-groupview .dv-tabs-and-actions-container.dv-groupview-header-vertical {\n  padding: calc(var(--dv-border-radius) / 2) 0;\n}\n.dockview-theme-github-dark-spaced .dv-groupview .dv-content-container {\n  background-color: var(--dv-tabs-and-actions-container-background-color);\n  border-bottom-left-radius: var(--dv-border-radius);\n  border-bottom-right-radius: var(--dv-border-radius);\n}\n.dockview-theme-github-dark-spaced .dv-groupview.dv-groupview-header-bottom > .dv-tabs-and-actions-container {\n  border-radius: 0 0 var(--dv-border-radius) var(--dv-border-radius);\n}\n.dockview-theme-github-dark-spaced .dv-groupview.dv-groupview-header-bottom > .dv-content-container {\n  border-radius: var(--dv-border-radius) var(--dv-border-radius) 0 0;\n}\n.dockview-theme-github-dark-spaced .dv-groupview.dv-groupview-header-left > .dv-tabs-and-actions-container {\n  border-radius: var(--dv-border-radius) 0 0 var(--dv-border-radius);\n}\n.dockview-theme-github-dark-spaced .dv-groupview.dv-groupview-header-left > .dv-content-container {\n  border-radius: 0 var(--dv-border-radius) var(--dv-border-radius) 0;\n}\n.dockview-theme-github-dark-spaced .dv-groupview.dv-groupview-header-right > .dv-tabs-and-actions-container {\n  border-radius: 0 var(--dv-border-radius) var(--dv-border-radius) 0;\n}\n.dockview-theme-github-dark-spaced .dv-groupview.dv-groupview-header-right > .dv-content-container {\n  border-radius: var(--dv-border-radius) 0 0 var(--dv-border-radius);\n}\n.dockview-theme-github-dark-spaced .dv-groupview.dv-edge-tool-window .dv-edge-peek-header {\n  border-top-left-radius: var(--dv-border-radius);\n  border-top-right-radius: var(--dv-border-radius);\n}\n.dockview-theme-github-dark-spaced .dv-groupview.dv-edge-tool-window .dv-content-container {\n  border-radius: 0;\n}\n.dockview-theme-github-dark-spaced .dv-groupview.dv-edge-tool-window .dv-tabs-and-actions-container {\n  border-top-left-radius: 0;\n  border-top-right-radius: 0;\n  border-bottom-left-radius: var(--dv-border-radius);\n  border-bottom-right-radius: var(--dv-border-radius);\n}\n.dockview-theme-github-dark-spaced .dv-edge-peek {\n  border-bottom-left-radius: var(--dv-border-radius);\n  border-bottom-right-radius: var(--dv-border-radius);\n}\n.dockview-theme-github-dark-spaced .dv-edge-peek-clip {\n  border-bottom-left-radius: var(--dv-border-radius);\n  border-bottom-right-radius: var(--dv-border-radius);\n}\n.dockview-theme-github-dark-spaced .dv-edge-peek-header {\n  border-top-left-radius: var(--dv-border-radius);\n  border-top-right-radius: var(--dv-border-radius);\n}\n.dockview-theme-github-dark-spaced {\n  color-scheme: dark;\n  --dv-color-gh-canvas-default: #0d1117;\n  --dv-color-gh-canvas-subtle: #161b22;\n  --dv-color-gh-canvas-inset: #010409;\n  --dv-color-gh-border: #30363d;\n  --dv-color-gh-border-muted: #21262d;\n  --dv-color-gh-fg-default: #e6edf3;\n  --dv-color-gh-fg-muted: #8b949e;\n  --dv-color-gh-fg-subtle: #6e7681;\n  --dv-color-gh-accent: #58a6ff;\n  --dv-drag-over-background-color: rgba(88, 166, 255, 0.1);\n  --dv-group-view-background-color: var(--dv-color-gh-canvas-inset);\n  --dv-tabs-and-actions-container-background-color: var(\n      --dv-color-gh-canvas-subtle\n  );\n  --dv-activegroup-visiblepanel-tab-background-color: var(\n      --dv-color-gh-border\n  );\n  --dv-activegroup-hiddenpanel-tab-background-color: var(\n      --dv-color-gh-canvas-subtle\n  );\n  --dv-inactivegroup-visiblepanel-tab-background-color: var(\n      --dv-color-gh-border\n  );\n  --dv-inactivegroup-hiddenpanel-tab-background-color: var(\n      --dv-color-gh-canvas-subtle\n  );\n  --dv-activegroup-visiblepanel-tab-color: var(--dv-color-gh-fg-default);\n  --dv-activegroup-hiddenpanel-tab-color: var(--dv-color-gh-fg-muted);\n  --dv-inactivegroup-visiblepanel-tab-color: var(--dv-color-gh-fg-subtle);\n  --dv-inactivegroup-hiddenpanel-tab-color: rgba(110, 118, 129, 0.5);\n  --dv-separator-border: transparent;\n  --dv-paneview-active-outline-color: var(--dv-color-gh-accent);\n  --dv-active-sash-color: var(--dv-color-gh-accent);\n  --dv-scrollbar-background-color: rgba(48, 54, 61, 0.7);\n  --dv-floating-group-border: 2px solid var(--dv-color-gh-canvas-inset);\n}\n\n.dockview-theme-github-light {\n  --dv-paneview-active-outline-color: dodgerblue;\n  --dv-tabs-and-actions-container-font-size: 13px;\n  --dv-tabs-and-actions-container-height: 35px;\n  --dv-drag-over-background-color: rgba(83, 89, 93, 0.5);\n  --dv-drag-over-border-color: transparent;\n  --dv-edge-dock-indicator-color: rgba(56, 139, 253, 0.9);\n  --dv-tabs-container-scrollbar-color: #888;\n  --dv-icon-hover-background-color: rgba(90, 93, 94, 0.31);\n  --dv-floating-box-shadow:\n      0 8px 32px rgba(0, 0, 0, 0.4), 0 2px 8px rgba(0, 0, 0, 0.25);\n  --dv-floating-border: 1px solid rgba(255, 255, 255, 0.1);\n  --dv-overlay-z-index: 999;\n  --dv-tab-font-size: inherit;\n  --dv-border-radius: 0px;\n  --dv-tab-margin: 0;\n  --dv-sash-color: transparent;\n  --dv-active-sash-color: transparent;\n  --dv-active-sash-transition-duration: 0.1s;\n  --dv-active-sash-transition-delay: 0.5s;\n  --dv-spacing-padding: 0px;\n  --dv-tab-border-radius: 0px;\n  --dv-sash-border-radius: 0px;\n  --dv-dropdown-border-radius: 0px;\n  --dv-tab-close-icon-size: inherit;\n  --dv-floating-group-border: none;\n  --dv-drag-over-border: none;\n  --dv-floating-group-dragging-opacity: 0.5;\n  --dv-floating-titlebar-height: 22px;\n  --dv-floating-titlebar-background-color: var(\n      --dv-tabs-and-actions-container-background-color\n  );\n  --dv-floating-titlebar-border-bottom: var(--dv-floating-border);\n  --dv-tab-group-color-grey: #5f6368;\n  --dv-tab-group-color-blue: #1a73e8;\n  --dv-tab-group-color-red: #d93025;\n  --dv-tab-group-color-yellow: #f9ab00;\n  --dv-tab-group-color-green: #188038;\n  --dv-tab-group-color-pink: #d01884;\n  --dv-tab-group-color-purple: #a142f4;\n  --dv-tab-group-color-cyan: #007b83;\n  --dv-tab-group-color-orange: #e8710a;\n  --dv-tab-group-chip-padding: 4px 8px;\n  --dv-tab-group-chip-border-radius: 6px;\n  --dv-tab-group-chip-font-size: 11px;\n  --dv-tab-group-line-height: 2px;\n  --dv-tab-group-line-opacity: 0.6;\n}\n.dockview-theme-github-light .dv-drop-target-container .dv-drop-target-anchor.dv-drop-target-anchor-container-changed {\n  opacity: 0;\n  transition: none;\n}\n.dockview-theme-github-light {\n  color-scheme: light;\n  --dv-color-gh-light-canvas-default: #ffffff;\n  --dv-color-gh-light-canvas-subtle: #f6f8fa;\n  --dv-color-gh-light-canvas-inset: #f0f6ff;\n  --dv-color-gh-light-border: #d0d7de;\n  --dv-color-gh-light-fg-default: #1f2328;\n  --dv-color-gh-light-fg-muted: #656d76;\n  --dv-color-gh-light-fg-subtle: #6e7781;\n  --dv-color-gh-light-accent: #0969da;\n  --dv-group-view-background-color: var(--dv-color-gh-light-canvas-default);\n  --dv-tabs-and-actions-container-background-color: var(\n      --dv-color-gh-light-canvas-subtle\n  );\n  --dv-activegroup-visiblepanel-tab-background-color: var(\n      --dv-color-gh-light-canvas-default\n  );\n  --dv-activegroup-hiddenpanel-tab-background-color: var(\n      --dv-color-gh-light-canvas-subtle\n  );\n  --dv-inactivegroup-visiblepanel-tab-background-color: var(\n      --dv-color-gh-light-canvas-default\n  );\n  --dv-inactivegroup-hiddenpanel-tab-background-color: var(\n      --dv-color-gh-light-canvas-subtle\n  );\n  --dv-activegroup-visiblepanel-tab-color: var(\n      --dv-color-gh-light-fg-default\n  );\n  --dv-activegroup-hiddenpanel-tab-color: var(--dv-color-gh-light-fg-muted);\n  --dv-inactivegroup-visiblepanel-tab-color: var(\n      --dv-color-gh-light-fg-subtle\n  );\n  --dv-inactivegroup-hiddenpanel-tab-color: rgba(110, 118, 129, 0.4);\n  --dv-separator-border: var(--dv-color-gh-light-border);\n  --dv-paneview-active-outline-color: var(--dv-color-gh-light-accent);\n  --dv-active-sash-color: var(--dv-color-gh-light-accent);\n  --dv-scrollbar-background-color: rgba(208, 215, 222, 0.5);\n  --dv-drag-over-background-color: rgba(9, 105, 218, 0.1);\n  --dv-floating-box-shadow:\n      0 8px 32px rgba(0, 0, 0, 0.12), 0 2px 8px rgba(0, 0, 0, 0.08);\n  --dv-floating-border: 1px solid rgba(0, 0, 0, 0.1);\n}\n\n.dockview-theme-github-light-spaced {\n  --dv-paneview-active-outline-color: dodgerblue;\n  --dv-tabs-and-actions-container-font-size: 13px;\n  --dv-tabs-and-actions-container-height: 35px;\n  --dv-drag-over-background-color: rgba(83, 89, 93, 0.5);\n  --dv-drag-over-border-color: transparent;\n  --dv-edge-dock-indicator-color: rgba(56, 139, 253, 0.9);\n  --dv-tabs-container-scrollbar-color: #888;\n  --dv-icon-hover-background-color: rgba(90, 93, 94, 0.31);\n  --dv-floating-box-shadow:\n      0 8px 32px rgba(0, 0, 0, 0.4), 0 2px 8px rgba(0, 0, 0, 0.25);\n  --dv-floating-border: 1px solid rgba(255, 255, 255, 0.1);\n  --dv-overlay-z-index: 999;\n  --dv-tab-font-size: inherit;\n  --dv-border-radius: 0px;\n  --dv-tab-margin: 0;\n  --dv-sash-color: transparent;\n  --dv-active-sash-color: transparent;\n  --dv-active-sash-transition-duration: 0.1s;\n  --dv-active-sash-transition-delay: 0.5s;\n  --dv-spacing-padding: 0px;\n  --dv-tab-border-radius: 0px;\n  --dv-sash-border-radius: 0px;\n  --dv-dropdown-border-radius: 0px;\n  --dv-tab-close-icon-size: inherit;\n  --dv-floating-group-border: none;\n  --dv-drag-over-border: none;\n  --dv-floating-group-dragging-opacity: 0.5;\n  --dv-floating-titlebar-height: 22px;\n  --dv-floating-titlebar-background-color: var(\n      --dv-tabs-and-actions-container-background-color\n  );\n  --dv-floating-titlebar-border-bottom: var(--dv-floating-border);\n  --dv-tab-group-color-grey: #5f6368;\n  --dv-tab-group-color-blue: #1a73e8;\n  --dv-tab-group-color-red: #d93025;\n  --dv-tab-group-color-yellow: #f9ab00;\n  --dv-tab-group-color-green: #188038;\n  --dv-tab-group-color-pink: #d01884;\n  --dv-tab-group-color-purple: #a142f4;\n  --dv-tab-group-color-cyan: #007b83;\n  --dv-tab-group-color-orange: #e8710a;\n  --dv-tab-group-chip-padding: 4px 8px;\n  --dv-tab-group-chip-border-radius: 6px;\n  --dv-tab-group-chip-font-size: 11px;\n  --dv-tab-group-line-height: 2px;\n  --dv-tab-group-line-opacity: 0.6;\n  --dv-spacing-padding: 10px;\n  --dv-tab-font-size: 12px;\n  --dv-border-radius: 12px;\n  --dv-tab-margin-block: 0.5rem;\n  --dv-tab-margin-inline: 0.25rem;\n  --dv-tab-margin: var(--dv-tab-margin-block) var(--dv-tab-margin-inline);\n  --dv-tabs-and-actions-container-height: 44px;\n  --dv-tab-border-radius: 8px;\n  --dv-sash-border-radius: 4px;\n  --dv-dropdown-border-radius: 8px;\n  --dv-tab-close-icon-size: 8px;\n  --dv-floating-group-border: 2px solid var(--dv-group-view-background-color);\n  --dv-floating-titlebar-background-color: var(\n      --dv-group-view-background-color\n  );\n  --dv-floating-titlebar-border-bottom: none;\n  box-sizing: border-box;\n  padding: var(--dv-spacing-padding);\n  background-color: var(--dv-group-view-background-color);\n}\n.dockview-theme-github-light-spaced .dv-dockview {\n  padding: 0;\n}\n.dockview-theme-github-light-spaced .dv-resize-container:has(> .dv-groupview) {\n  border-radius: 8px;\n}\n.dockview-theme-github-light-spaced .dv-sash {\n  border-radius: var(--dv-sash-border-radius);\n}\n.dockview-theme-github-light-spaced .dv-drop-target-anchor {\n  border-radius: calc(var(--dv-border-radius) / 4);\n}\n.dockview-theme-github-light-spaced .dv-drop-target-anchor.dv-drop-target-content {\n  border-radius: var(--dv-border-radius);\n}\n.dockview-theme-github-light-spaced .dv-resize-container {\n  border-radius: var(--dv-border-radius) !important;\n  border: none;\n}\n.dockview-theme-github-light-spaced .dv-resize-container .dv-groupview {\n  border: var(--dv-floating-group-border);\n}\n.dockview-theme-github-light-spaced .dv-resize-container > .dv-grid-view {\n  box-sizing: border-box;\n  padding: var(--dv-spacing-padding);\n}\n.dockview-theme-github-light-spaced .dv-resize-container-with-titlebar > .dv-grid-view {\n  padding-top: 0;\n}\n.dockview-theme-github-light-spaced .dv-resize-container-with-titlebar > .dv-floating-titlebar {\n  border-top-left-radius: var(--dv-border-radius);\n  border-top-right-radius: var(--dv-border-radius);\n}\n.dockview-theme-github-light-spaced .dv-tabs-overflow-container,\n.dockview-theme-github-light-spaced .dv-tabs-overflow-dropdown-default {\n  border-radius: var(--dv-dropdown-border-radius);\n  height: unset !important;\n}\n.dockview-theme-github-light-spaced .dv-render-overlay {\n  border-bottom-left-radius: var(--dv-border-radius);\n  border-bottom-right-radius: var(--dv-border-radius);\n}\n.dockview-theme-github-light-spaced .dv-tab {\n  border-radius: var(--dv-tab-border-radius);\n}\n.dockview-theme-github-light-spaced .dv-tab .dv-svg {\n  height: var(--dv-tab-close-icon-size);\n  width: var(--dv-tab-close-icon-size);\n}\n.dockview-theme-github-light-spaced .dv-tabs-container--wrap:not(.dv-tabs-container-vertical) .dv-tab {\n  height: calc(var(--dv-tabs-and-actions-container-height) - 2 * var(--dv-tab-margin-block));\n}\n.dockview-theme-github-light-spaced .dv-tabs-container-vertical .dv-tab {\n  margin: var(--dv-tab-margin-inline) var(--dv-tab-margin-block);\n}\n.dockview-theme-github-light-spaced .dv-tabs-container--wrap.dv-tabs-container-vertical .dv-tab {\n  width: calc(var(--dv-tabs-and-actions-container-height) - 2 * var(--dv-tab-margin-block));\n}\n.dockview-theme-github-light-spaced .dv-groupview {\n  border-radius: var(--dv-border-radius);\n}\n.dockview-theme-github-light-spaced .dv-groupview .dv-tabs-and-actions-container {\n  padding: 0px calc(var(--dv-border-radius) / 2);\n  border-top-left-radius: var(--dv-border-radius);\n  border-top-right-radius: var(--dv-border-radius);\n}\n.dockview-theme-github-light-spaced .dv-groupview .dv-tabs-and-actions-container.dv-groupview-header-vertical {\n  padding: calc(var(--dv-border-radius) / 2) 0;\n}\n.dockview-theme-github-light-spaced .dv-groupview .dv-content-container {\n  background-color: var(--dv-tabs-and-actions-container-background-color);\n  border-bottom-left-radius: var(--dv-border-radius);\n  border-bottom-right-radius: var(--dv-border-radius);\n}\n.dockview-theme-github-light-spaced .dv-groupview.dv-groupview-header-bottom > .dv-tabs-and-actions-container {\n  border-radius: 0 0 var(--dv-border-radius) var(--dv-border-radius);\n}\n.dockview-theme-github-light-spaced .dv-groupview.dv-groupview-header-bottom > .dv-content-container {\n  border-radius: var(--dv-border-radius) var(--dv-border-radius) 0 0;\n}\n.dockview-theme-github-light-spaced .dv-groupview.dv-groupview-header-left > .dv-tabs-and-actions-container {\n  border-radius: var(--dv-border-radius) 0 0 var(--dv-border-radius);\n}\n.dockview-theme-github-light-spaced .dv-groupview.dv-groupview-header-left > .dv-content-container {\n  border-radius: 0 var(--dv-border-radius) var(--dv-border-radius) 0;\n}\n.dockview-theme-github-light-spaced .dv-groupview.dv-groupview-header-right > .dv-tabs-and-actions-container {\n  border-radius: 0 var(--dv-border-radius) var(--dv-border-radius) 0;\n}\n.dockview-theme-github-light-spaced .dv-groupview.dv-groupview-header-right > .dv-content-container {\n  border-radius: var(--dv-border-radius) 0 0 var(--dv-border-radius);\n}\n.dockview-theme-github-light-spaced .dv-groupview.dv-edge-tool-window .dv-edge-peek-header {\n  border-top-left-radius: var(--dv-border-radius);\n  border-top-right-radius: var(--dv-border-radius);\n}\n.dockview-theme-github-light-spaced .dv-groupview.dv-edge-tool-window .dv-content-container {\n  border-radius: 0;\n}\n.dockview-theme-github-light-spaced .dv-groupview.dv-edge-tool-window .dv-tabs-and-actions-container {\n  border-top-left-radius: 0;\n  border-top-right-radius: 0;\n  border-bottom-left-radius: var(--dv-border-radius);\n  border-bottom-right-radius: var(--dv-border-radius);\n}\n.dockview-theme-github-light-spaced .dv-edge-peek {\n  border-bottom-left-radius: var(--dv-border-radius);\n  border-bottom-right-radius: var(--dv-border-radius);\n}\n.dockview-theme-github-light-spaced .dv-edge-peek-clip {\n  border-bottom-left-radius: var(--dv-border-radius);\n  border-bottom-right-radius: var(--dv-border-radius);\n}\n.dockview-theme-github-light-spaced .dv-edge-peek-header {\n  border-top-left-radius: var(--dv-border-radius);\n  border-top-right-radius: var(--dv-border-radius);\n}\n.dockview-theme-github-light-spaced {\n  color-scheme: light;\n  --dv-color-gh-light-canvas-default: #ffffff;\n  --dv-color-gh-light-canvas-subtle: #f6f8fa;\n  --dv-color-gh-light-border: #d0d7de;\n  --dv-color-gh-light-fg-default: #1f2328;\n  --dv-color-gh-light-fg-muted: #656d76;\n  --dv-color-gh-light-fg-subtle: #6e7781;\n  --dv-color-gh-light-accent: #0969da;\n  --dv-drag-over-background-color: rgba(9, 105, 218, 0.08);\n  --dv-group-view-background-color: var(--dv-color-gh-light-canvas-subtle);\n  --dv-tabs-and-actions-container-background-color: var(\n      --dv-color-gh-light-canvas-default\n  );\n  --dv-activegroup-visiblepanel-tab-background-color: var(\n      --dv-color-gh-light-border\n  );\n  --dv-activegroup-hiddenpanel-tab-background-color: var(\n      --dv-color-gh-light-canvas-default\n  );\n  --dv-inactivegroup-visiblepanel-tab-background-color: var(\n      --dv-color-gh-light-border\n  );\n  --dv-inactivegroup-hiddenpanel-tab-background-color: var(\n      --dv-color-gh-light-canvas-default\n  );\n  --dv-activegroup-visiblepanel-tab-color: var(\n      --dv-color-gh-light-fg-default\n  );\n  --dv-activegroup-hiddenpanel-tab-color: var(--dv-color-gh-light-fg-muted);\n  --dv-inactivegroup-visiblepanel-tab-color: var(\n      --dv-color-gh-light-fg-subtle\n  );\n  --dv-inactivegroup-hiddenpanel-tab-color: rgba(110, 118, 129, 0.4);\n  --dv-separator-border: transparent;\n  --dv-paneview-active-outline-color: var(--dv-color-gh-light-accent);\n  --dv-active-sash-color: var(--dv-color-gh-light-accent);\n  --dv-floating-box-shadow:\n      0 8px 32px rgba(0, 0, 0, 0.12), 0 2px 8px rgba(0, 0, 0, 0.08);\n  --dv-floating-border: 1px solid rgba(0, 0, 0, 0.1);\n  --dv-scrollbar-background-color: rgba(208, 215, 222, 0.5);\n  --dv-floating-group-border: 2px solid rgba(208, 215, 222, 0.5);\n}\n\n.dockview-theme-abyss-spaced {\n  --dv-paneview-active-outline-color: dodgerblue;\n  --dv-tabs-and-actions-container-font-size: 13px;\n  --dv-tabs-and-actions-container-height: 35px;\n  --dv-drag-over-background-color: rgba(83, 89, 93, 0.5);\n  --dv-drag-over-border-color: transparent;\n  --dv-edge-dock-indicator-color: rgba(56, 139, 253, 0.9);\n  --dv-tabs-container-scrollbar-color: #888;\n  --dv-icon-hover-background-color: rgba(90, 93, 94, 0.31);\n  --dv-floating-box-shadow:\n      0 8px 32px rgba(0, 0, 0, 0.4), 0 2px 8px rgba(0, 0, 0, 0.25);\n  --dv-floating-border: 1px solid rgba(255, 255, 255, 0.1);\n  --dv-overlay-z-index: 999;\n  --dv-tab-font-size: inherit;\n  --dv-border-radius: 0px;\n  --dv-tab-margin: 0;\n  --dv-sash-color: transparent;\n  --dv-active-sash-color: transparent;\n  --dv-active-sash-transition-duration: 0.1s;\n  --dv-active-sash-transition-delay: 0.5s;\n  --dv-spacing-padding: 0px;\n  --dv-tab-border-radius: 0px;\n  --dv-sash-border-radius: 0px;\n  --dv-dropdown-border-radius: 0px;\n  --dv-tab-close-icon-size: inherit;\n  --dv-floating-group-border: none;\n  --dv-drag-over-border: none;\n  --dv-floating-group-dragging-opacity: 0.5;\n  --dv-floating-titlebar-height: 22px;\n  --dv-floating-titlebar-background-color: var(\n      --dv-tabs-and-actions-container-background-color\n  );\n  --dv-floating-titlebar-border-bottom: var(--dv-floating-border);\n  --dv-tab-group-color-grey: #5f6368;\n  --dv-tab-group-color-blue: #1a73e8;\n  --dv-tab-group-color-red: #d93025;\n  --dv-tab-group-color-yellow: #f9ab00;\n  --dv-tab-group-color-green: #188038;\n  --dv-tab-group-color-pink: #d01884;\n  --dv-tab-group-color-purple: #a142f4;\n  --dv-tab-group-color-cyan: #007b83;\n  --dv-tab-group-color-orange: #e8710a;\n  --dv-tab-group-chip-padding: 4px 8px;\n  --dv-tab-group-chip-border-radius: 6px;\n  --dv-tab-group-chip-font-size: 11px;\n  --dv-tab-group-line-height: 2px;\n  --dv-tab-group-line-opacity: 0.6;\n  --dv-spacing-padding: 10px;\n  --dv-tab-font-size: 12px;\n  --dv-border-radius: 12px;\n  --dv-tab-margin-block: 0.5rem;\n  --dv-tab-margin-inline: 0.25rem;\n  --dv-tab-margin: var(--dv-tab-margin-block) var(--dv-tab-margin-inline);\n  --dv-tabs-and-actions-container-height: 44px;\n  --dv-tab-border-radius: 8px;\n  --dv-sash-border-radius: 4px;\n  --dv-dropdown-border-radius: 8px;\n  --dv-tab-close-icon-size: 8px;\n  --dv-floating-group-border: 2px solid var(--dv-group-view-background-color);\n  --dv-floating-titlebar-background-color: var(\n      --dv-group-view-background-color\n  );\n  --dv-floating-titlebar-border-bottom: none;\n  box-sizing: border-box;\n  padding: var(--dv-spacing-padding);\n  background-color: var(--dv-group-view-background-color);\n}\n.dockview-theme-abyss-spaced .dv-dockview {\n  padding: 0;\n}\n.dockview-theme-abyss-spaced .dv-resize-container:has(> .dv-groupview) {\n  border-radius: 8px;\n}\n.dockview-theme-abyss-spaced .dv-sash {\n  border-radius: var(--dv-sash-border-radius);\n}\n.dockview-theme-abyss-spaced .dv-drop-target-anchor {\n  border-radius: calc(var(--dv-border-radius) / 4);\n}\n.dockview-theme-abyss-spaced .dv-drop-target-anchor.dv-drop-target-content {\n  border-radius: var(--dv-border-radius);\n}\n.dockview-theme-abyss-spaced .dv-resize-container {\n  border-radius: var(--dv-border-radius) !important;\n  border: none;\n}\n.dockview-theme-abyss-spaced .dv-resize-container .dv-groupview {\n  border: var(--dv-floating-group-border);\n}\n.dockview-theme-abyss-spaced .dv-resize-container > .dv-grid-view {\n  box-sizing: border-box;\n  padding: var(--dv-spacing-padding);\n}\n.dockview-theme-abyss-spaced .dv-resize-container-with-titlebar > .dv-grid-view {\n  padding-top: 0;\n}\n.dockview-theme-abyss-spaced .dv-resize-container-with-titlebar > .dv-floating-titlebar {\n  border-top-left-radius: var(--dv-border-radius);\n  border-top-right-radius: var(--dv-border-radius);\n}\n.dockview-theme-abyss-spaced .dv-tabs-overflow-container,\n.dockview-theme-abyss-spaced .dv-tabs-overflow-dropdown-default {\n  border-radius: var(--dv-dropdown-border-radius);\n  height: unset !important;\n}\n.dockview-theme-abyss-spaced .dv-render-overlay {\n  border-bottom-left-radius: var(--dv-border-radius);\n  border-bottom-right-radius: var(--dv-border-radius);\n}\n.dockview-theme-abyss-spaced .dv-tab {\n  border-radius: var(--dv-tab-border-radius);\n}\n.dockview-theme-abyss-spaced .dv-tab .dv-svg {\n  height: var(--dv-tab-close-icon-size);\n  width: var(--dv-tab-close-icon-size);\n}\n.dockview-theme-abyss-spaced .dv-tabs-container--wrap:not(.dv-tabs-container-vertical) .dv-tab {\n  height: calc(var(--dv-tabs-and-actions-container-height) - 2 * var(--dv-tab-margin-block));\n}\n.dockview-theme-abyss-spaced .dv-tabs-container-vertical .dv-tab {\n  margin: var(--dv-tab-margin-inline) var(--dv-tab-margin-block);\n}\n.dockview-theme-abyss-spaced .dv-tabs-container--wrap.dv-tabs-container-vertical .dv-tab {\n  width: calc(var(--dv-tabs-and-actions-container-height) - 2 * var(--dv-tab-margin-block));\n}\n.dockview-theme-abyss-spaced .dv-groupview {\n  border-radius: var(--dv-border-radius);\n}\n.dockview-theme-abyss-spaced .dv-groupview .dv-tabs-and-actions-container {\n  padding: 0px calc(var(--dv-border-radius) / 2);\n  border-top-left-radius: var(--dv-border-radius);\n  border-top-right-radius: var(--dv-border-radius);\n}\n.dockview-theme-abyss-spaced .dv-groupview .dv-tabs-and-actions-container.dv-groupview-header-vertical {\n  padding: calc(var(--dv-border-radius) / 2) 0;\n}\n.dockview-theme-abyss-spaced .dv-groupview .dv-content-container {\n  background-color: var(--dv-tabs-and-actions-container-background-color);\n  border-bottom-left-radius: var(--dv-border-radius);\n  border-bottom-right-radius: var(--dv-border-radius);\n}\n.dockview-theme-abyss-spaced .dv-groupview.dv-groupview-header-bottom > .dv-tabs-and-actions-container {\n  border-radius: 0 0 var(--dv-border-radius) var(--dv-border-radius);\n}\n.dockview-theme-abyss-spaced .dv-groupview.dv-groupview-header-bottom > .dv-content-container {\n  border-radius: var(--dv-border-radius) var(--dv-border-radius) 0 0;\n}\n.dockview-theme-abyss-spaced .dv-groupview.dv-groupview-header-left > .dv-tabs-and-actions-container {\n  border-radius: var(--dv-border-radius) 0 0 var(--dv-border-radius);\n}\n.dockview-theme-abyss-spaced .dv-groupview.dv-groupview-header-left > .dv-content-container {\n  border-radius: 0 var(--dv-border-radius) var(--dv-border-radius) 0;\n}\n.dockview-theme-abyss-spaced .dv-groupview.dv-groupview-header-right > .dv-tabs-and-actions-container {\n  border-radius: 0 var(--dv-border-radius) var(--dv-border-radius) 0;\n}\n.dockview-theme-abyss-spaced .dv-groupview.dv-groupview-header-right > .dv-content-container {\n  border-radius: var(--dv-border-radius) 0 0 var(--dv-border-radius);\n}\n.dockview-theme-abyss-spaced .dv-groupview.dv-edge-tool-window .dv-edge-peek-header {\n  border-top-left-radius: var(--dv-border-radius);\n  border-top-right-radius: var(--dv-border-radius);\n}\n.dockview-theme-abyss-spaced .dv-groupview.dv-edge-tool-window .dv-content-container {\n  border-radius: 0;\n}\n.dockview-theme-abyss-spaced .dv-groupview.dv-edge-tool-window .dv-tabs-and-actions-container {\n  border-top-left-radius: 0;\n  border-top-right-radius: 0;\n  border-bottom-left-radius: var(--dv-border-radius);\n  border-bottom-right-radius: var(--dv-border-radius);\n}\n.dockview-theme-abyss-spaced .dv-edge-peek {\n  border-bottom-left-radius: var(--dv-border-radius);\n  border-bottom-right-radius: var(--dv-border-radius);\n}\n.dockview-theme-abyss-spaced .dv-edge-peek-clip {\n  border-bottom-left-radius: var(--dv-border-radius);\n  border-bottom-right-radius: var(--dv-border-radius);\n}\n.dockview-theme-abyss-spaced .dv-edge-peek-header {\n  border-top-left-radius: var(--dv-border-radius);\n  border-top-right-radius: var(--dv-border-radius);\n}\n.dockview-theme-abyss-spaced {\n  color-scheme: dark;\n  --dv-color-abyss-dark: rgb(11, 6, 17);\n  --dv-color-abyss: #16121f;\n  --dv-color-abyss-light: #201d2b;\n  --dv-color-abyss-lighter: #2a2837;\n  --dv-color-abyss-accent: rgb(91, 30, 207);\n  --dv-color-abyss-primary-text: white;\n  --dv-color-abyss-secondary-text: rgb(148, 151, 169);\n  --dv-drag-over-background-color: \'\';\n  --dv-group-view-background-color: var(--dv-color-abyss-dark);\n  --dv-tabs-and-actions-container-background-color: var(--dv-color-abyss);\n  --dv-activegroup-visiblepanel-tab-background-color: var(\n      --dv-color-abyss-lighter\n  );\n  --dv-activegroup-hiddenpanel-tab-background-color: var(\n      --dv-color-abyss-light\n  );\n  --dv-inactivegroup-visiblepanel-tab-background-color: var(\n      --dv-color-abyss-lighter\n  );\n  --dv-inactivegroup-hiddenpanel-tab-background-color: var(\n      --dv-color-abyss-light\n  );\n  --dv-tab-divider-color: transparent;\n  --dv-activegroup-visiblepanel-tab-color: var(--dv-color-abyss-primary-text);\n  --dv-activegroup-hiddenpanel-tab-color: var(\n      --dv-color-abyss-secondary-text\n  );\n  --dv-inactivegroup-visiblepanel-tab-color: var(\n      --dv-color-abyss-primary-text\n  );\n  --dv-inactivegroup-hiddenpanel-tab-color: var(\n      --dv-color-abyss-secondary-text\n  );\n  --dv-separator-border: transparent;\n  --dv-paneview-header-border-color: rgb(51, 51, 51);\n  --dv-active-sash-color: var(--dv-color-abyss-accent);\n  --dv-floating-group-border: 2px solid var(--dv-color-abyss-dark);\n}\n\n.dockview-theme-light-spaced {\n  --dv-paneview-active-outline-color: dodgerblue;\n  --dv-tabs-and-actions-container-font-size: 13px;\n  --dv-tabs-and-actions-container-height: 35px;\n  --dv-drag-over-background-color: rgba(83, 89, 93, 0.5);\n  --dv-drag-over-border-color: transparent;\n  --dv-edge-dock-indicator-color: rgba(56, 139, 253, 0.9);\n  --dv-tabs-container-scrollbar-color: #888;\n  --dv-icon-hover-background-color: rgba(90, 93, 94, 0.31);\n  --dv-floating-box-shadow:\n      0 8px 32px rgba(0, 0, 0, 0.4), 0 2px 8px rgba(0, 0, 0, 0.25);\n  --dv-floating-border: 1px solid rgba(255, 255, 255, 0.1);\n  --dv-overlay-z-index: 999;\n  --dv-tab-font-size: inherit;\n  --dv-border-radius: 0px;\n  --dv-tab-margin: 0;\n  --dv-sash-color: transparent;\n  --dv-active-sash-color: transparent;\n  --dv-active-sash-transition-duration: 0.1s;\n  --dv-active-sash-transition-delay: 0.5s;\n  --dv-spacing-padding: 0px;\n  --dv-tab-border-radius: 0px;\n  --dv-sash-border-radius: 0px;\n  --dv-dropdown-border-radius: 0px;\n  --dv-tab-close-icon-size: inherit;\n  --dv-floating-group-border: none;\n  --dv-drag-over-border: none;\n  --dv-floating-group-dragging-opacity: 0.5;\n  --dv-floating-titlebar-height: 22px;\n  --dv-floating-titlebar-background-color: var(\n      --dv-tabs-and-actions-container-background-color\n  );\n  --dv-floating-titlebar-border-bottom: var(--dv-floating-border);\n  --dv-tab-group-color-grey: #5f6368;\n  --dv-tab-group-color-blue: #1a73e8;\n  --dv-tab-group-color-red: #d93025;\n  --dv-tab-group-color-yellow: #f9ab00;\n  --dv-tab-group-color-green: #188038;\n  --dv-tab-group-color-pink: #d01884;\n  --dv-tab-group-color-purple: #a142f4;\n  --dv-tab-group-color-cyan: #007b83;\n  --dv-tab-group-color-orange: #e8710a;\n  --dv-tab-group-chip-padding: 4px 8px;\n  --dv-tab-group-chip-border-radius: 6px;\n  --dv-tab-group-chip-font-size: 11px;\n  --dv-tab-group-line-height: 2px;\n  --dv-tab-group-line-opacity: 0.6;\n  --dv-spacing-padding: 10px;\n  --dv-tab-font-size: 12px;\n  --dv-border-radius: 12px;\n  --dv-tab-margin-block: 0.5rem;\n  --dv-tab-margin-inline: 0.25rem;\n  --dv-tab-margin: var(--dv-tab-margin-block) var(--dv-tab-margin-inline);\n  --dv-tabs-and-actions-container-height: 44px;\n  --dv-tab-border-radius: 8px;\n  --dv-sash-border-radius: 4px;\n  --dv-dropdown-border-radius: 8px;\n  --dv-tab-close-icon-size: 8px;\n  --dv-floating-group-border: 2px solid var(--dv-group-view-background-color);\n  --dv-floating-titlebar-background-color: var(\n      --dv-group-view-background-color\n  );\n  --dv-floating-titlebar-border-bottom: none;\n  box-sizing: border-box;\n  padding: var(--dv-spacing-padding);\n  background-color: var(--dv-group-view-background-color);\n}\n.dockview-theme-light-spaced .dv-dockview {\n  padding: 0;\n}\n.dockview-theme-light-spaced .dv-resize-container:has(> .dv-groupview) {\n  border-radius: 8px;\n}\n.dockview-theme-light-spaced .dv-sash {\n  border-radius: var(--dv-sash-border-radius);\n}\n.dockview-theme-light-spaced .dv-drop-target-anchor {\n  border-radius: calc(var(--dv-border-radius) / 4);\n}\n.dockview-theme-light-spaced .dv-drop-target-anchor.dv-drop-target-content {\n  border-radius: var(--dv-border-radius);\n}\n.dockview-theme-light-spaced .dv-resize-container {\n  border-radius: var(--dv-border-radius) !important;\n  border: none;\n}\n.dockview-theme-light-spaced .dv-resize-container .dv-groupview {\n  border: var(--dv-floating-group-border);\n}\n.dockview-theme-light-spaced .dv-resize-container > .dv-grid-view {\n  box-sizing: border-box;\n  padding: var(--dv-spacing-padding);\n}\n.dockview-theme-light-spaced .dv-resize-container-with-titlebar > .dv-grid-view {\n  padding-top: 0;\n}\n.dockview-theme-light-spaced .dv-resize-container-with-titlebar > .dv-floating-titlebar {\n  border-top-left-radius: var(--dv-border-radius);\n  border-top-right-radius: var(--dv-border-radius);\n}\n.dockview-theme-light-spaced .dv-tabs-overflow-container,\n.dockview-theme-light-spaced .dv-tabs-overflow-dropdown-default {\n  border-radius: var(--dv-dropdown-border-radius);\n  height: unset !important;\n}\n.dockview-theme-light-spaced .dv-render-overlay {\n  border-bottom-left-radius: var(--dv-border-radius);\n  border-bottom-right-radius: var(--dv-border-radius);\n}\n.dockview-theme-light-spaced .dv-tab {\n  border-radius: var(--dv-tab-border-radius);\n}\n.dockview-theme-light-spaced .dv-tab .dv-svg {\n  height: var(--dv-tab-close-icon-size);\n  width: var(--dv-tab-close-icon-size);\n}\n.dockview-theme-light-spaced .dv-tabs-container--wrap:not(.dv-tabs-container-vertical) .dv-tab {\n  height: calc(var(--dv-tabs-and-actions-container-height) - 2 * var(--dv-tab-margin-block));\n}\n.dockview-theme-light-spaced .dv-tabs-container-vertical .dv-tab {\n  margin: var(--dv-tab-margin-inline) var(--dv-tab-margin-block);\n}\n.dockview-theme-light-spaced .dv-tabs-container--wrap.dv-tabs-container-vertical .dv-tab {\n  width: calc(var(--dv-tabs-and-actions-container-height) - 2 * var(--dv-tab-margin-block));\n}\n.dockview-theme-light-spaced .dv-groupview {\n  border-radius: var(--dv-border-radius);\n}\n.dockview-theme-light-spaced .dv-groupview .dv-tabs-and-actions-container {\n  padding: 0px calc(var(--dv-border-radius) / 2);\n  border-top-left-radius: var(--dv-border-radius);\n  border-top-right-radius: var(--dv-border-radius);\n}\n.dockview-theme-light-spaced .dv-groupview .dv-tabs-and-actions-container.dv-groupview-header-vertical {\n  padding: calc(var(--dv-border-radius) / 2) 0;\n}\n.dockview-theme-light-spaced .dv-groupview .dv-content-container {\n  background-color: var(--dv-tabs-and-actions-container-background-color);\n  border-bottom-left-radius: var(--dv-border-radius);\n  border-bottom-right-radius: var(--dv-border-radius);\n}\n.dockview-theme-light-spaced .dv-groupview.dv-groupview-header-bottom > .dv-tabs-and-actions-container {\n  border-radius: 0 0 var(--dv-border-radius) var(--dv-border-radius);\n}\n.dockview-theme-light-spaced .dv-groupview.dv-groupview-header-bottom > .dv-content-container {\n  border-radius: var(--dv-border-radius) var(--dv-border-radius) 0 0;\n}\n.dockview-theme-light-spaced .dv-groupview.dv-groupview-header-left > .dv-tabs-and-actions-container {\n  border-radius: var(--dv-border-radius) 0 0 var(--dv-border-radius);\n}\n.dockview-theme-light-spaced .dv-groupview.dv-groupview-header-left > .dv-content-container {\n  border-radius: 0 var(--dv-border-radius) var(--dv-border-radius) 0;\n}\n.dockview-theme-light-spaced .dv-groupview.dv-groupview-header-right > .dv-tabs-and-actions-container {\n  border-radius: 0 var(--dv-border-radius) var(--dv-border-radius) 0;\n}\n.dockview-theme-light-spaced .dv-groupview.dv-groupview-header-right > .dv-content-container {\n  border-radius: var(--dv-border-radius) 0 0 var(--dv-border-radius);\n}\n.dockview-theme-light-spaced .dv-groupview.dv-edge-tool-window .dv-edge-peek-header {\n  border-top-left-radius: var(--dv-border-radius);\n  border-top-right-radius: var(--dv-border-radius);\n}\n.dockview-theme-light-spaced .dv-groupview.dv-edge-tool-window .dv-content-container {\n  border-radius: 0;\n}\n.dockview-theme-light-spaced .dv-groupview.dv-edge-tool-window .dv-tabs-and-actions-container {\n  border-top-left-radius: 0;\n  border-top-right-radius: 0;\n  border-bottom-left-radius: var(--dv-border-radius);\n  border-bottom-right-radius: var(--dv-border-radius);\n}\n.dockview-theme-light-spaced .dv-edge-peek {\n  border-bottom-left-radius: var(--dv-border-radius);\n  border-bottom-right-radius: var(--dv-border-radius);\n}\n.dockview-theme-light-spaced .dv-edge-peek-clip {\n  border-bottom-left-radius: var(--dv-border-radius);\n  border-bottom-right-radius: var(--dv-border-radius);\n}\n.dockview-theme-light-spaced .dv-edge-peek-header {\n  border-top-left-radius: var(--dv-border-radius);\n  border-top-right-radius: var(--dv-border-radius);\n}\n.dockview-theme-light-spaced {\n  color-scheme: light;\n  --dv-drag-over-background-color: \'\';\n  --dv-group-view-background-color: #f6f5f9;\n  --dv-tabs-and-actions-container-background-color: white;\n  --dv-activegroup-visiblepanel-tab-background-color: #ededf0;\n  --dv-activegroup-hiddenpanel-tab-background-color: #f9f9fa;\n  --dv-inactivegroup-visiblepanel-tab-background-color: #ededf0;\n  --dv-inactivegroup-hiddenpanel-tab-background-color: #f9f9fa;\n  --dv-tab-divider-color: transparent;\n  --dv-activegroup-visiblepanel-tab-color: rgb(104, 107, 130);\n  --dv-activegroup-hiddenpanel-tab-color: rgb(148, 151, 169);\n  --dv-inactivegroup-visiblepanel-tab-color: rgb(104, 107, 130);\n  --dv-inactivegroup-hiddenpanel-tab-color: rgb(148, 151, 169);\n  --dv-separator-border: transparent;\n  --dv-paneview-header-border-color: rgb(51, 51, 51);\n  --dv-active-sash-color: rgb(91, 30, 207);\n  --dv-floating-box-shadow:\n      0 8px 32px rgba(0, 0, 0, 0.12), 0 2px 8px rgba(0, 0, 0, 0.08);\n  --dv-floating-border: 1px solid rgba(0, 0, 0, 0.1);\n  --dv-scrollbar-background-color: rgba(0, 0, 0, 0.25);\n  --dv-floating-group-border: 2px solid rgba(255, 255, 255, 0.1);\n}\n\n.dockview-spaced {\n  --dv-spacing-padding: 10px;\n  --dv-tab-font-size: 12px;\n  --dv-border-radius: 12px;\n  --dv-tab-margin-block: 0.5rem;\n  --dv-tab-margin-inline: 0.25rem;\n  --dv-tab-margin: var(--dv-tab-margin-block) var(--dv-tab-margin-inline);\n  --dv-tabs-and-actions-container-height: 44px;\n  --dv-tab-border-radius: 8px;\n  --dv-sash-border-radius: 4px;\n  --dv-dropdown-border-radius: 8px;\n  --dv-tab-close-icon-size: 8px;\n  --dv-floating-group-border: 2px solid var(--dv-group-view-background-color);\n  --dv-floating-titlebar-background-color: var(\n      --dv-group-view-background-color\n  );\n  --dv-floating-titlebar-border-bottom: none;\n  box-sizing: border-box;\n  padding: var(--dv-spacing-padding);\n  background-color: var(--dv-group-view-background-color);\n}\n.dockview-spaced .dv-dockview {\n  padding: 0;\n}\n.dockview-spaced .dv-resize-container:has(> .dv-groupview) {\n  border-radius: 8px;\n}\n.dockview-spaced .dv-sash {\n  border-radius: var(--dv-sash-border-radius);\n}\n.dockview-spaced .dv-drop-target-anchor {\n  border-radius: calc(var(--dv-border-radius) / 4);\n}\n.dockview-spaced .dv-drop-target-anchor.dv-drop-target-content {\n  border-radius: var(--dv-border-radius);\n}\n.dockview-spaced .dv-resize-container {\n  border-radius: var(--dv-border-radius) !important;\n  border: none;\n}\n.dockview-spaced .dv-resize-container .dv-groupview {\n  border: var(--dv-floating-group-border);\n}\n.dockview-spaced .dv-resize-container > .dv-grid-view {\n  box-sizing: border-box;\n  padding: var(--dv-spacing-padding);\n}\n.dockview-spaced .dv-resize-container-with-titlebar > .dv-grid-view {\n  padding-top: 0;\n}\n.dockview-spaced .dv-resize-container-with-titlebar > .dv-floating-titlebar {\n  border-top-left-radius: var(--dv-border-radius);\n  border-top-right-radius: var(--dv-border-radius);\n}\n.dockview-spaced .dv-tabs-overflow-container,\n.dockview-spaced .dv-tabs-overflow-dropdown-default {\n  border-radius: var(--dv-dropdown-border-radius);\n  height: unset !important;\n}\n.dockview-spaced .dv-render-overlay {\n  border-bottom-left-radius: var(--dv-border-radius);\n  border-bottom-right-radius: var(--dv-border-radius);\n}\n.dockview-spaced .dv-tab {\n  border-radius: var(--dv-tab-border-radius);\n}\n.dockview-spaced .dv-tab .dv-svg {\n  height: var(--dv-tab-close-icon-size);\n  width: var(--dv-tab-close-icon-size);\n}\n.dockview-spaced .dv-tabs-container--wrap:not(.dv-tabs-container-vertical) .dv-tab {\n  height: calc(var(--dv-tabs-and-actions-container-height) - 2 * var(--dv-tab-margin-block));\n}\n.dockview-spaced .dv-tabs-container-vertical .dv-tab {\n  margin: var(--dv-tab-margin-inline) var(--dv-tab-margin-block);\n}\n.dockview-spaced .dv-tabs-container--wrap.dv-tabs-container-vertical .dv-tab {\n  width: calc(var(--dv-tabs-and-actions-container-height) - 2 * var(--dv-tab-margin-block));\n}\n.dockview-spaced .dv-groupview {\n  border-radius: var(--dv-border-radius);\n}\n.dockview-spaced .dv-groupview .dv-tabs-and-actions-container {\n  padding: 0px calc(var(--dv-border-radius) / 2);\n  border-top-left-radius: var(--dv-border-radius);\n  border-top-right-radius: var(--dv-border-radius);\n}\n.dockview-spaced .dv-groupview .dv-tabs-and-actions-container.dv-groupview-header-vertical {\n  padding: calc(var(--dv-border-radius) / 2) 0;\n}\n.dockview-spaced .dv-groupview .dv-content-container {\n  background-color: var(--dv-tabs-and-actions-container-background-color);\n  border-bottom-left-radius: var(--dv-border-radius);\n  border-bottom-right-radius: var(--dv-border-radius);\n}\n.dockview-spaced .dv-groupview.dv-groupview-header-bottom > .dv-tabs-and-actions-container {\n  border-radius: 0 0 var(--dv-border-radius) var(--dv-border-radius);\n}\n.dockview-spaced .dv-groupview.dv-groupview-header-bottom > .dv-content-container {\n  border-radius: var(--dv-border-radius) var(--dv-border-radius) 0 0;\n}\n.dockview-spaced .dv-groupview.dv-groupview-header-left > .dv-tabs-and-actions-container {\n  border-radius: var(--dv-border-radius) 0 0 var(--dv-border-radius);\n}\n.dockview-spaced .dv-groupview.dv-groupview-header-left > .dv-content-container {\n  border-radius: 0 var(--dv-border-radius) var(--dv-border-radius) 0;\n}\n.dockview-spaced .dv-groupview.dv-groupview-header-right > .dv-tabs-and-actions-container {\n  border-radius: 0 var(--dv-border-radius) var(--dv-border-radius) 0;\n}\n.dockview-spaced .dv-groupview.dv-groupview-header-right > .dv-content-container {\n  border-radius: var(--dv-border-radius) 0 0 var(--dv-border-radius);\n}\n.dockview-spaced .dv-groupview.dv-edge-tool-window .dv-edge-peek-header {\n  border-top-left-radius: var(--dv-border-radius);\n  border-top-right-radius: var(--dv-border-radius);\n}\n.dockview-spaced .dv-groupview.dv-edge-tool-window .dv-content-container {\n  border-radius: 0;\n}\n.dockview-spaced .dv-groupview.dv-edge-tool-window .dv-tabs-and-actions-container {\n  border-top-left-radius: 0;\n  border-top-right-radius: 0;\n  border-bottom-left-radius: var(--dv-border-radius);\n  border-bottom-right-radius: var(--dv-border-radius);\n}\n.dockview-spaced .dv-edge-peek {\n  border-bottom-left-radius: var(--dv-border-radius);\n  border-bottom-right-radius: var(--dv-border-radius);\n}\n.dockview-spaced .dv-edge-peek-clip {\n  border-bottom-left-radius: var(--dv-border-radius);\n  border-bottom-right-radius: var(--dv-border-radius);\n}\n.dockview-spaced .dv-edge-peek-header {\n  border-top-left-radius: var(--dv-border-radius);\n  border-top-right-radius: var(--dv-border-radius);\n}\n\n.dv-context-menu {\n  min-width: 160px;\n  overflow: hidden;\n  background: var(--dv-context-menu-background-color, var(--dv-activegroup-hiddenpanel-tab-background-color));\n  color: var(--dv-context-menu-color, var(--dv-activegroup-hiddenpanel-tab-color));\n  border: 1px solid var(--dv-tab-divider-color);\n  border-radius: var(--dv-border-radius);\n  box-shadow: var(--dv-floating-box-shadow);\n  padding: 4px 0;\n}\n\n.dv-context-menu-item {\n  height: 25px;\n  padding: 0 12px;\n  display: flex;\n  align-items: center;\n  cursor: pointer;\n  font-size: var(--dv-tabs-and-actions-container-font-size);\n  white-space: nowrap;\n  user-select: none;\n}\n.dv-context-menu-item:hover {\n  background: var(--dv-icon-hover-background-color);\n}\n.dv-context-menu-item.dv-context-menu-item--disabled {\n  opacity: 0.4;\n  cursor: default;\n  pointer-events: none;\n}\n\n.dv-context-menu-separator {\n  height: 1px;\n  background: var(--dv-tab-divider-color);\n  margin: 4px 0;\n}\n\n.dv-context-menu-rename {\n  padding: 8px 12px 4px;\n}\n\n.dv-context-menu-rename-input {\n  width: 100%;\n  box-sizing: border-box;\n  padding: 8px 10px;\n  border: 1px solid var(--dv-tab-divider-color);\n  border-radius: var(--dv-border-radius);\n  background: inherit;\n  color: var(--dv-activegroup-visiblepanel-tab-color);\n  font-size: var(--dv-tabs-and-actions-container-font-size);\n  outline: none;\n}\n.dv-context-menu-rename-input:focus {\n  border-color: var(--dv-activegroup-visiblepanel-tab-color);\n}\n.dv-context-menu-rename-input::placeholder {\n  color: var(--dv-activegroup-hiddenpanel-tab-color);\n}\n\n.dv-context-menu-color-picker {\n  display: flex;\n  flex-direction: row;\n  gap: 6px;\n  padding: 8px 12px;\n  align-items: center;\n}\n\n.dv-context-menu-color-swatch {\n  width: 20px;\n  height: 20px;\n  border-radius: 50%;\n  cursor: pointer;\n  border: 2px solid transparent;\n  flex-shrink: 0;\n  background-color: var(--dv-tab-group-color);\n}\n.dv-context-menu-color-swatch:hover {\n  opacity: 0.85;\n}\n.dv-context-menu-color-swatch.dv-context-menu-color-swatch--selected {\n  outline: 2px solid var(--dv-tab-divider-color);\n  outline-offset: 2px;\n}\n\n.dv-tab-group-indicator-none .dv-groupview-header-bottom .dv-tab-group-underline {\n  top: auto;\n  bottom: 0;\n}\n\n.dv-groupview.dv-groupview-header-bottom.dv-active-group > .dv-tabs-and-actions-container .dv-tabs-container > .dv-tab.dv-active-tab::after, .dv-groupview.dv-groupview-header-bottom.dv-inactive-group > .dv-tabs-and-actions-container .dv-tabs-container > .dv-tab.dv-active-tab::after {\n  top: 0px;\n  bottom: auto;\n}';
@@ -4499,10 +4592,10 @@ function SavingsColumn({
 }
 
 // client/src/panel/MainChat.tsx
-var import_react11 = require("react");
+var import_react12 = require("react");
 
 // client/src/panel/MsgList.tsx
-var import_react7 = require("react");
+var import_react8 = require("react");
 
 // client/src/panel/changes-card.tsx
 var import_react6 = require("react");
@@ -4894,8 +4987,128 @@ function ChangesCard({
   ] });
 }
 
-// client/src/panel/MsgList.tsx
+// client/src/panel/message-images.tsx
+var import_react7 = require("react");
+var import_react_dom2 = require("react-dom");
 var import_jsx_runtime6 = require("react/jsx-runtime");
+function ImageTile({ sessionId, image, compact, onOpen }) {
+  const [url, setUrl] = (0, import_react7.useState)(null);
+  const [failed, setFailed] = (0, import_react7.useState)(false);
+  const [loaded, setLoaded] = (0, import_react7.useState)(false);
+  const [attempt, setAttempt] = (0, import_react7.useState)(0);
+  const label = image.name || "\u56FE\u7247";
+  (0, import_react7.useEffect)(() => {
+    let live = true;
+    setUrl(null);
+    setFailed(false);
+    setLoaded(false);
+    resolveSessionImageUrl(sessionId, image).then(
+      (next) => {
+        if (live && next) setUrl(next);
+      },
+      () => {
+        if (live) setFailed(true);
+      }
+    );
+    return () => {
+      live = false;
+    };
+  }, [sessionId, image.attachmentId, attempt]);
+  if (failed) {
+    return /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
+      "button",
+      {
+        type: "button",
+        className: `ts-msg-image is-failed${compact ? " is-tile" : ""}`,
+        title: `${label} \u52A0\u8F7D\u5931\u8D25\uFF0C\u70B9\u51FB\u91CD\u8BD5`,
+        "aria-label": `${label} \u52A0\u8F7D\u5931\u8D25\uFF0C\u70B9\u51FB\u91CD\u8BD5`,
+        onClick: () => setAttempt((n) => n + 1),
+        children: "\u26A0"
+      }
+    );
+  }
+  if (!url) {
+    return /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
+      "span",
+      {
+        className: `ts-msg-image is-loading${compact ? " is-tile" : ""}`,
+        "aria-label": `${label} \u8F7D\u5165\u4E2D`,
+        title: `${label} \u8F7D\u5165\u4E2D`
+      }
+    );
+  }
+  return /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
+    "button",
+    {
+      type: "button",
+      className: `ts-msg-image${compact ? " is-tile" : ""}${loaded ? "" : " is-loading"}`,
+      title: `${label}\uFF08\u70B9\u51FB\u67E5\u770B\u539F\u56FE\uFF09`,
+      "aria-label": `\u67E5\u770B\u56FE\u7247\uFF1A${label}`,
+      onClick: () => onOpen({ url, name: image.name }),
+      children: /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("img", { src: url, alt: label, loading: "eager", decoding: "async", onLoad: () => setLoaded(true), onError: () => setFailed(true) })
+    }
+  );
+}
+function Lightbox({ state, onClose }) {
+  const closeRef = (0, import_react7.useRef)(null);
+  (0, import_react7.useEffect)(() => {
+    closeRef.current?.focus();
+    const onKey = (e) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+  return /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)(
+    "div",
+    {
+      className: "ts-img-lightbox",
+      role: "dialog",
+      "aria-modal": "true",
+      "aria-label": state.name || "\u67E5\u770B\u56FE\u7247",
+      onClick: onClose,
+      children: [
+        /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
+          "button",
+          {
+            ref: closeRef,
+            type: "button",
+            className: "ts-img-lightbox-close",
+            title: "\u5173\u95ED\uFF08Esc\uFF09",
+            "aria-label": "\u5173\u95ED\u56FE\u7247\u9884\u89C8",
+            onClick: onClose,
+            children: "\u2715"
+          }
+        ),
+        /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("img", { src: state.url, alt: state.name || "\u56FE\u7247", onClick: (e) => e.stopPropagation() })
+      ]
+    }
+  );
+}
+function MessageImages({ sessionId, images, align = "start" }) {
+  const [lightbox, setLightbox] = (0, import_react7.useState)(null);
+  if (!sessionId || images.length === 0) return null;
+  const compact = images.length > 1;
+  return /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)(import_jsx_runtime6.Fragment, { children: [
+    /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("div", { className: `ts-msg-images${align === "end" ? " is-end" : ""}`, children: images.map((image, index) => /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
+      ImageTile,
+      {
+        sessionId,
+        image,
+        compact,
+        onOpen: setLightbox
+      },
+      `${image.attachmentId}:${index}`
+    )) }),
+    lightbox && (0, import_react_dom2.createPortal)(
+      /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(Lightbox, { state: lightbox, onClose: () => setLightbox(null) }),
+      document.body
+    )
+  ] });
+}
+
+// client/src/panel/MsgList.tsx
+var import_jsx_runtime7 = require("react/jsx-runtime");
 var MAX_TURNS = 40;
 var TURNS_PER_PAGE = 20;
 var TOP_LOAD_THRESHOLD = 32;
@@ -4952,9 +5165,9 @@ function fallbackCopyText(text) {
   }
 }
 function CopyButton({ text }) {
-  const [copied, setCopied] = (0, import_react7.useState)(false);
-  const timer = (0, import_react7.useRef)(null);
-  (0, import_react7.useEffect)(() => () => {
+  const [copied, setCopied] = (0, import_react8.useState)(false);
+  const timer = (0, import_react8.useRef)(null);
+  (0, import_react8.useEffect)(() => () => {
     if (timer.current) window.clearTimeout(timer.current);
   }, []);
   const handleCopy = (e) => {
@@ -4972,7 +5185,7 @@ function CopyButton({ text }) {
       markDone();
     }
   };
-  return /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
+  return /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(
     "button",
     {
       type: "button",
@@ -4980,9 +5193,9 @@ function CopyButton({ text }) {
       onClick: handleCopy,
       title: copied ? "\u5DF2\u590D\u5236" : "\u590D\u5236\u5185\u5BB9",
       "aria-label": "\u590D\u5236\u5185\u5BB9",
-      children: copied ? "\u2713" : /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)("svg", { width: "12", height: "12", viewBox: "0 0 16 16", fill: "none", "aria-hidden": "true", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("rect", { x: "5.75", y: "5.75", width: "8.5", height: "8.5", rx: "1.5", stroke: "currentColor", strokeWidth: "1.6" }),
-        /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("path", { d: "M10.25 5.75V4A1.75 1.75 0 0 0 8.5 2.25H4A1.75 1.75 0 0 0 2.25 4v4.5A1.75 1.75 0 0 0 4 10.25h1.75", stroke: "currentColor", strokeWidth: "1.6" })
+      children: copied ? "\u2713" : /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("svg", { width: "12", height: "12", viewBox: "0 0 16 16", fill: "none", "aria-hidden": "true", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("rect", { x: "5.75", y: "5.75", width: "8.5", height: "8.5", rx: "1.5", stroke: "currentColor", strokeWidth: "1.6" }),
+        /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("path", { d: "M10.25 5.75V4A1.75 1.75 0 0 0 8.5 2.25H4A1.75 1.75 0 0 0 2.25 4v4.5A1.75 1.75 0 0 0 4 10.25h1.75", stroke: "currentColor", strokeWidth: "1.6" })
       ] })
     }
   );
@@ -4991,7 +5204,7 @@ function MsgTime({ time, className, copyContent }) {
   const hasTime = typeof time === "number" && Number.isFinite(time) && time > 0;
   if (!hasTime) {
     if (!copyContent) return null;
-    return /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("span", { className: className ? `ts-msg-time ${className}` : "ts-msg-time", children: /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(CopyButton, { text: copyContent }) });
+    return /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("span", { className: className ? `ts-msg-time ${className}` : "ts-msg-time", children: /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(CopyButton, { text: copyContent }) });
   }
   const d = new Date(time);
   const now = /* @__PURE__ */ new Date();
@@ -4999,19 +5212,19 @@ function MsgTime({ time, className, copyContent }) {
   const hm = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
   const sameDay = d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
   const text = sameDay ? hm : d.getFullYear() === now.getFullYear() ? `${d.getMonth() + 1}\u6708${d.getDate()}\u65E5 ${hm}` : `${d.getFullYear()}\u5E74${d.getMonth() + 1}\u6708${d.getDate()}\u65E5 ${hm}`;
-  return /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)("span", { className: className ? `ts-msg-time ${className}` : "ts-msg-time", title: d.toLocaleString("zh-CN"), children: [
-    /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("span", { className: "ts-msg-time-text", children: text }),
-    copyContent && /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(CopyButton, { text: copyContent })
+  return /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("span", { className: className ? `ts-msg-time ${className}` : "ts-msg-time", title: d.toLocaleString("zh-CN"), children: [
+    /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("span", { className: "ts-msg-time-text", children: text }),
+    copyContent && /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(CopyButton, { text: copyContent })
   ] });
 }
 function ProcItem({ msg }) {
-  const [open, setOpen] = (0, import_react7.useState)(false);
+  const [open, setOpen] = (0, import_react8.useState)(false);
   const isThink = msg.kind === "reasoning";
-  return /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)("div", { className: `ts-proc-item${isThink ? " ts-proc-think" : ""}`, children: [
-    /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)("div", { className: "ts-proc-item-head", children: [
-      /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("span", { className: "ts-proc-role", children: isThink ? "\u601D\u8003" : ROLE_LABELS[msg.role] || msg.role }),
-      /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(MsgTime, { time: msg.time, className: "ts-proc-time", copyContent: msg.content }),
-      /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
+  return /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("div", { className: `ts-proc-item${isThink ? " ts-proc-think" : ""}`, children: [
+    /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("div", { className: "ts-proc-item-head", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("span", { className: "ts-proc-role", children: isThink ? "\u601D\u8003" : ROLE_LABELS[msg.role] || msg.role }),
+      /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(MsgTime, { time: msg.time, className: "ts-proc-time", copyContent: msg.content }),
+      /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(
         "button",
         {
           className: "ts-icon-btn ts-msg-toggle",
@@ -5021,73 +5234,75 @@ function ProcItem({ msg }) {
         }
       )
     ] }),
-    open ? /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("div", { className: "ts-msg-full", children: /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(RichText, { text: msg.content }) }) : /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("div", { className: "ts-msg-preview", children: oneLine(msg.content) })
+    open ? /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("div", { className: "ts-msg-full", children: /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(RichText, { text: msg.content }) }) : /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("div", { className: "ts-msg-preview", children: oneLine(msg.content) })
   ] });
 }
 function InjectionRow({ items }) {
-  const [open, setOpen] = (0, import_react7.useState)(false);
+  const [open, setOpen] = (0, import_react8.useState)(false);
   if (items.length === 0) return null;
   const label = (m) => INJECT_LABELS[m.injectKind ?? ""] ?? "\u4E0A\u4E0B\u6587\u6CE8\u5165";
-  return /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)("div", { className: "ts-inject", children: [
-    /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)(
+  return /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("div", { className: "ts-inject", children: [
+    /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)(
       "button",
       {
         className: "ts-proc-head",
         title: `\u4E0A\u4E0B\u6587\u6CE8\u5165 ${items.length} \u6761\uFF08${items.map(label).join("\u3001")}\uFF09\uFF0C\u70B9\u5F00\u67E5\u770B\u6B63\u6587`,
         onClick: () => setOpen((v) => !v),
         children: [
-          /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("span", { className: "ts-proc-caret", children: open ? "\u25BE" : "\u25B8" }),
-          /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)("span", { className: "ts-proc-lead", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("span", { className: "ts-proc-caret", children: open ? "\u25BE" : "\u25B8" }),
+          /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("span", { className: "ts-proc-lead", children: [
             "\u4E0A\u4E0B\u6587\u6CE8\u5165 ",
             items.length,
             " \u6761"
           ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("span", { className: "ts-dim", children: items.map(label).join("\u3001") })
+          /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("span", { className: "ts-dim", children: items.map(label).join("\u3001") })
         ]
       }
     ),
-    open && /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("div", { className: "ts-proc-body", onClick: collapseOnBodyClick(() => setOpen(false)), children: items.map((m, i) => /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)("div", { className: "ts-proc-item ts-inject-item", children: [
-      /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)("div", { className: "ts-proc-item-head", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("span", { className: "ts-proc-role", children: label(m) }),
-        /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(MsgTime, { time: m.time, className: "ts-proc-time", copyContent: m.content })
+    open && /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("div", { className: "ts-proc-body", onClick: collapseOnBodyClick(() => setOpen(false)), children: items.map((m, i) => /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("div", { className: "ts-proc-item ts-inject-item", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("div", { className: "ts-proc-item-head", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("span", { className: "ts-proc-role", children: label(m) }),
+        /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(MsgTime, { time: m.time, className: "ts-proc-time", copyContent: m.content })
       ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("div", { className: "ts-msg-full", children: /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(RichText, { text: m.content }) })
+      /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("div", { className: "ts-msg-full", children: /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(RichText, { text: m.content }) })
     ] }, i)) })
   ] });
 }
-function ProcessGroup({ items }) {
-  const [open, setOpen] = (0, import_react7.useState)(false);
+function ProcessGroup({ items, sessionId }) {
+  const [open, setOpen] = (0, import_react8.useState)(false);
   const tools = items.filter((m) => m.role === "tool").length;
   const thinks = items.filter((m) => m.kind === "reasoning").length;
-  return /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)("div", { className: "ts-proc", children: [
-    /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)(
+  const withImages = items.filter((m) => (m.images?.length ?? 0) > 0);
+  return /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("div", { className: "ts-proc", children: [
+    /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)(
       "button",
       {
         className: "ts-proc-head",
         title: `\u8FC7\u7A0B ${items.length} \u6B65${thinks > 0 ? ` \xB7 \u601D\u8003 ${thinks} \u6BB5` : ""}${tools > 0 ? ` \xB7 \u5DE5\u5177 ${tools} \u6B21` : ""}`,
         onClick: () => setOpen((v) => !v),
         children: [
-          /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("span", { className: "ts-proc-caret", children: open ? "\u25BE" : "\u25B8" }),
-          /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)("span", { className: "ts-proc-lead", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("span", { className: "ts-proc-caret", children: open ? "\u25BE" : "\u25B8" }),
+          /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("span", { className: "ts-proc-lead", children: [
             "\u8FC7\u7A0B ",
             items.length,
             " \u6B65"
           ] }),
-          thinks > 0 && /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)("span", { className: "ts-dim", children: [
+          thinks > 0 && /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("span", { className: "ts-dim", children: [
             "\u601D\u8003 ",
             thinks,
             " \u6BB5"
           ] }),
-          tools > 0 && /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)("span", { className: "ts-dim", children: [
+          tools > 0 && /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("span", { className: "ts-dim", children: [
             "\u5DE5\u5177 ",
             tools,
             " \u6B21"
           ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(MsgTime, { time: items[items.length - 1]?.time, className: "ts-proc-time" })
+          /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(MsgTime, { time: items[items.length - 1]?.time, className: "ts-proc-time" })
         ]
       }
     ),
-    open && /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("div", { className: "ts-proc-body", onClick: collapseOnBodyClick(() => setOpen(false)), children: items.map((m, i) => /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(ProcItem, { msg: m }, i)) })
+    withImages.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("div", { className: "ts-proc-images", children: withImages.map((m, i) => /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(MessageImages, { sessionId, images: m.images, align: "start" }, `img${i}`)) }),
+    open && /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("div", { className: "ts-proc-body", onClick: collapseOnBodyClick(() => setOpen(false)), children: items.map((m, i) => /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(ProcItem, { msg: m }, i)) })
   ] });
 }
 function splitTurn(turn) {
@@ -5122,7 +5337,7 @@ function splitTurn(turn) {
   let answer = null;
   for (let i = rest.length - 1; i >= 0; i--) {
     const m = rest[i];
-    if (m.role === "assistant" && m.kind !== "reasoning" && m.content.trim()) {
+    if (m.role === "assistant" && m.kind !== "reasoning" && (m.content.trim() || (m.images?.length ?? 0) > 0)) {
       answer = m;
       break;
     }
@@ -5131,15 +5346,15 @@ function splitTurn(turn) {
   return { users, injects, proc, answer, notice, queued, edits, changesSeq };
 }
 function TurnNoticeRow({ notice }) {
-  const [open, setOpen] = (0, import_react7.useState)(false);
+  const [open, setOpen] = (0, import_react8.useState)(false);
   const fatal = notice.kind === "error" || notice.kind === "blocked";
   const label = notice.kind === "max-tokens" ? "\u8F93\u51FA\u88AB\u622A\u65AD" : notice.kind === "aborted" ? "\u672C\u8F6E\u5DF2\u4E2D\u6B62" : notice.kind === "interrupted" ? "\u672C\u8F6E\u5DF2\u4E2D\u65AD" : notice.kind === "blocked" ? "\u672C\u8F6E\u88AB\u963B\u65AD" : "\u672C\u8F6E\u8FD0\u884C\u5931\u8D25";
-  return /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)("div", { className: `ts-turn-notice${fatal ? " ts-turn-notice-fatal" : ""}`, children: [
-    /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)("div", { className: "ts-turn-notice-head", children: [
-      /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("span", { className: "ts-turn-notice-icon", "aria-hidden": "true", children: fatal ? "\u26D4" : "\u26A0\uFE0F" }),
-      /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("span", { className: "ts-turn-notice-label", children: label }),
-      notice.code && /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("span", { className: "ts-turn-notice-code", children: notice.code }),
-      /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
+  return /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("div", { className: `ts-turn-notice${fatal ? " ts-turn-notice-fatal" : ""}`, children: [
+    /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("div", { className: "ts-turn-notice-head", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("span", { className: "ts-turn-notice-icon", "aria-hidden": "true", children: fatal ? "\u26D4" : "\u26A0\uFE0F" }),
+      /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("span", { className: "ts-turn-notice-label", children: label }),
+      notice.code && /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("span", { className: "ts-turn-notice-code", children: notice.code }),
+      /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(
         "button",
         {
           className: "ts-icon-btn ts-msg-toggle",
@@ -5149,7 +5364,7 @@ function TurnNoticeRow({ notice }) {
         }
       )
     ] }),
-    open ? /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("div", { className: "ts-turn-notice-body", children: /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(RichText, { text: notice.message }) }) : /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("div", { className: "ts-turn-notice-preview", children: oneLine(notice.message) })
+    open ? /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("div", { className: "ts-turn-notice-body", children: /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(RichText, { text: notice.message }) }) : /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("div", { className: "ts-turn-notice-preview", children: oneLine(notice.message) })
   ] });
 }
 function MsgList({
@@ -5163,19 +5378,19 @@ function MsgList({
   sessionId = "",
   view = "all"
 }) {
-  (0, import_react7.useEffect)(() => {
+  (0, import_react8.useEffect)(() => {
     injectProjectCenterStyles();
   }, []);
-  const ref = (0, import_react7.useRef)(null);
-  const [windowTurns, setWindowTurns] = (0, import_react7.useState)(MAX_TURNS);
-  const pinnedRef = (0, import_react7.useRef)(true);
-  const [pinned, setPinned] = (0, import_react7.useState)(true);
-  const anchorRef = (0, import_react7.useRef)(null);
-  const anchorRafRef = (0, import_react7.useRef)(0);
-  const restoredAtRef = (0, import_react7.useRef)(0);
+  const ref = (0, import_react8.useRef)(null);
+  const [windowTurns, setWindowTurns] = (0, import_react8.useState)(MAX_TURNS);
+  const pinnedRef = (0, import_react8.useRef)(true);
+  const [pinned, setPinned] = (0, import_react8.useState)(true);
+  const anchorRef = (0, import_react8.useRef)(null);
+  const anchorRafRef = (0, import_react8.useRef)(0);
+  const restoredAtRef = (0, import_react8.useRef)(0);
   const NEAR_BOTTOM = 24;
   const JUMP_SHOW_MS = 5e3;
-  const rememberScroll = (0, import_react7.useCallback)(() => {
+  const rememberScroll = (0, import_react8.useCallback)(() => {
     const el = ref.current;
     if (!el || !followKey) return;
     const bottom = pinnedRef.current;
@@ -5185,13 +5400,13 @@ function MsgList({
       if (oldest !== void 0) SCROLL_MEMO.delete(oldest);
     }
   }, [followKey]);
-  (0, import_react7.useEffect)(() => rememberScroll, [rememberScroll]);
-  (0, import_react7.useEffect)(() => () => {
+  (0, import_react8.useEffect)(() => rememberScroll, [rememberScroll]);
+  (0, import_react8.useEffect)(() => () => {
     if (jumpTimerRef.current !== null) window.clearTimeout(jumpTimerRef.current);
   }, []);
-  const pendingRestoreRef = (0, import_react7.useRef)(null);
-  const memoKeyRef = (0, import_react7.useRef)(followKey);
-  (0, import_react7.useLayoutEffect)(() => {
+  const pendingRestoreRef = (0, import_react8.useRef)(null);
+  const memoKeyRef = (0, import_react8.useRef)(followKey);
+  (0, import_react8.useLayoutEffect)(() => {
     const el = ref.current;
     if (!el) return;
     const sameSession = memoKeyRef.current === followKey;
@@ -5213,7 +5428,7 @@ function MsgList({
     pendingRestoreRef.current = null;
     el.scrollTop = el.scrollHeight;
   }, [followKey]);
-  (0, import_react7.useLayoutEffect)(() => {
+  (0, import_react8.useLayoutEffect)(() => {
     const p = pendingRestoreRef.current;
     const el = ref.current;
     if (!p || !el) return;
@@ -5222,7 +5437,7 @@ function MsgList({
     el.scrollTop = Math.min(p.top, Math.max(0, el.scrollHeight - el.clientHeight));
     restoredAtRef.current = Date.now();
   });
-  const turns = (0, import_react7.useMemo)(() => {
+  const turns = (0, import_react8.useMemo)(() => {
     const out = [];
     for (const m of messages) {
       if (m.role === "user" && !m.injected && !m.queued || out.length === 0) out.push([]);
@@ -5232,8 +5447,8 @@ function MsgList({
   }, [messages]);
   const shownTurns = turns.length > windowTurns ? turns.slice(-windowTurns) : turns;
   const hiddenTurns = turns.length - shownTurns.length;
-  const parsed = (0, import_react7.useMemo)(() => shownTurns.map(splitTurn), [shownTurns]);
-  const visible = (0, import_react7.useMemo)(
+  const parsed = (0, import_react8.useMemo)(() => shownTurns.map(splitTurn), [shownTurns]);
+  const visible = (0, import_react8.useMemo)(
     () => parsed.map((t) => ({
       users: view === "agent" ? [] : t.users,
       queued: view === "agent" ? [] : t.queued,
@@ -5250,7 +5465,7 @@ function MsgList({
     })).filter((t) => t.users.length > 0 || t.injects.length > 0 || t.proc.length > 0 || !!t.answer || !!t.notice || t.queued.length > 0),
     [parsed, view]
   );
-  const visibleKeys = (0, import_react7.useMemo)(
+  const visibleKeys = (0, import_react8.useMemo)(
     () => visible.map((t) => {
       const last = t.answer ?? t.proc[t.proc.length - 1] ?? t.injects[t.injects.length - 1] ?? t.users[t.users.length - 1];
       if (!last) return "e";
@@ -5263,7 +5478,7 @@ function MsgList({
   );
   const hasHiddenInDom = hiddenTurns > 0;
   const canLoadOlder = hasHiddenInDom || hasMore && !!onLoadOlder;
-  const startOlderAnchor = (0, import_react7.useCallback)(() => {
+  const startOlderAnchor = (0, import_react8.useCallback)(() => {
     const el = ref.current;
     if (!el) return;
     const r = el.getBoundingClientRect();
@@ -5310,7 +5525,7 @@ function MsgList({
     };
     anchorRafRef.current = requestAnimationFrame(step);
   }, []);
-  const requestOlder = (0, import_react7.useCallback)(() => {
+  const requestOlder = (0, import_react8.useCallback)(() => {
     const el = ref.current;
     if (!el) return;
     if (Date.now() - restoredAtRef.current < 150) return;
@@ -5323,29 +5538,29 @@ function MsgList({
     startOlderAnchor();
     void onLoadOlder();
   }, [hasHiddenInDom, hasMore, loadingOlder, onLoadOlder]);
-  const userIntentAtRef = (0, import_react7.useRef)(0);
-  const lastTopRef = (0, import_react7.useRef)(null);
-  const upwardRef = (0, import_react7.useRef)(false);
-  const downPxRef = (0, import_react7.useRef)(0);
-  const settleUntilRef = (0, import_react7.useRef)(0);
-  const settleRafRef = (0, import_react7.useRef)(0);
-  const suspendFollow = (0, import_react7.useCallback)(() => {
+  const userIntentAtRef = (0, import_react8.useRef)(0);
+  const lastTopRef = (0, import_react8.useRef)(null);
+  const upwardRef = (0, import_react8.useRef)(false);
+  const downPxRef = (0, import_react8.useRef)(0);
+  const settleUntilRef = (0, import_react8.useRef)(0);
+  const settleRafRef = (0, import_react8.useRef)(0);
+  const suspendFollow = (0, import_react8.useCallback)(() => {
     if (pinnedRef.current) {
       pinnedRef.current = false;
       setPinned(false);
     }
     settleUntilRef.current = 0;
   }, []);
-  const [jumpVisible, setJumpVisible] = (0, import_react7.useState)(false);
-  const jumpTimerRef = (0, import_react7.useRef)(null);
-  const hideJump = (0, import_react7.useCallback)(() => {
+  const [jumpVisible, setJumpVisible] = (0, import_react8.useState)(false);
+  const jumpTimerRef = (0, import_react8.useRef)(null);
+  const hideJump = (0, import_react8.useCallback)(() => {
     if (jumpTimerRef.current !== null) {
       window.clearTimeout(jumpTimerRef.current);
       jumpTimerRef.current = null;
     }
     setJumpVisible(false);
   }, []);
-  const revealJump = (0, import_react7.useCallback)(() => {
+  const revealJump = (0, import_react8.useCallback)(() => {
     const el = ref.current;
     if (!el) return;
     if (el.scrollHeight - el.clientHeight <= NEAR_BOTTOM) {
@@ -5361,7 +5576,7 @@ function MsgList({
       return true;
     });
   }, [NEAR_BOTTOM, JUMP_SHOW_MS, hideJump]);
-  (0, import_react7.useEffect)(() => {
+  (0, import_react8.useEffect)(() => {
     const el = ref.current;
     if (!el) return;
     const mark = () => {
@@ -5403,7 +5618,7 @@ function MsgList({
       for (const t of types) el.removeEventListener(t, mark, opts);
     };
   }, [suspendFollow]);
-  const forceBottom = (0, import_react7.useCallback)(() => {
+  const forceBottom = (0, import_react8.useCallback)(() => {
     const node = ref.current;
     if (!node) return false;
     const target = node.scrollHeight - node.clientHeight;
@@ -5411,7 +5626,7 @@ function MsgList({
     node.scrollTop = target;
     return true;
   }, []);
-  const scrollToBottom = (0, import_react7.useCallback)(() => {
+  const scrollToBottom = (0, import_react8.useCallback)(() => {
     upwardRef.current = false;
     downPxRef.current = 0;
     forceBottom();
@@ -5419,7 +5634,7 @@ function MsgList({
     setPinned(true);
     hideJump();
   }, [forceBottom, hideJump]);
-  const runSettle = (0, import_react7.useCallback)(() => {
+  const runSettle = (0, import_react8.useCallback)(() => {
     settleRafRef.current = 0;
     if (performance.now() >= settleUntilRef.current) return;
     if (!pinnedRef.current) {
@@ -5429,11 +5644,11 @@ function MsgList({
     forceBottom();
     settleRafRef.current = requestAnimationFrame(runSettle);
   }, [forceBottom]);
-  const scheduleSettle = (0, import_react7.useCallback)(() => {
+  const scheduleSettle = (0, import_react8.useCallback)(() => {
     settleUntilRef.current = performance.now() + 1500;
     if (!settleRafRef.current) settleRafRef.current = requestAnimationFrame(runSettle);
   }, [runSettle]);
-  (0, import_react7.useEffect)(() => () => {
+  (0, import_react8.useEffect)(() => () => {
     if (settleRafRef.current) cancelAnimationFrame(settleRafRef.current);
     if (anchorRafRef.current) cancelAnimationFrame(anchorRafRef.current);
   }, []);
@@ -5483,48 +5698,53 @@ function MsgList({
     scrollToBottom();
     rememberScroll();
   };
-  (0, import_react7.useLayoutEffect)(() => {
+  (0, import_react8.useLayoutEffect)(() => {
     if (!pinnedRef.current) return;
     forceBottom();
     scheduleSettle();
   });
-  (0, import_react7.useEffect)(() => {
+  (0, import_react8.useEffect)(() => {
     setWindowTurns(MAX_TURNS);
   }, [followKey]);
-  return /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)("div", { className: "ts-chat-wrap", children: [
-    (canLoadOlder || loadingOlder) && /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)("div", { className: "ts-msgs-topbar", children: [
-      loadingOlder ? /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("span", { className: "ts-dim", children: "\u8F7D\u5165\u66F4\u65E9\u7684\u5386\u53F2\u2026" }) : /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("button", { className: "ts-btn ts-btn-sm", onClick: requestOlder, title: "\u5411\u56DE\u52A0\u8F7D\u66F4\u65E9\u7684\u804A\u5929\u8BB0\u5F55", children: "\u52A0\u8F7D\u66F4\u65E9" }),
-      hasHiddenInDom && /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)("span", { className: "ts-dim", children: [
+  return /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("div", { className: "ts-chat-wrap", children: [
+    (canLoadOlder || loadingOlder) && /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("div", { className: "ts-msgs-topbar", children: [
+      loadingOlder ? /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("span", { className: "ts-dim", children: "\u8F7D\u5165\u66F4\u65E9\u7684\u5386\u53F2\u2026" }) : /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("button", { className: "ts-btn ts-btn-sm", onClick: requestOlder, title: "\u5411\u56DE\u52A0\u8F7D\u66F4\u65E9\u7684\u804A\u5929\u8BB0\u5F55", children: "\u52A0\u8F7D\u66F4\u65E9" }),
+      hasHiddenInDom && /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("span", { className: "ts-dim", children: [
         "\u5DF2\u6298\u53E0\u66F4\u65E9 ",
         hiddenTurns,
         " \u8F6E"
       ] })
     ] }),
-    /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)("div", { className: "ts-chat-msgs", ref, onScroll: onScroll3, children: [
-      messages.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("div", { className: "ts-hint", children: emptyText ?? "\u7B49\u5F85\u4F1A\u8BDD\u6D88\u606F\u2026" }),
-      messages.length > 0 && visible.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("div", { className: "ts-hint", children: VIEW_EMPTY[view] }),
-      visible.map((t, ti) => /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)("div", { className: "ts-turn", "data-turn-key": visibleKeys[ti], children: [
-        t.users.map((m, i) => /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)("div", { className: "ts-msg-block ts-msg-block-user", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("div", { className: "ts-msg-user", children: m.content }),
-          /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(MsgTime, { time: m.time, copyContent: m.content })
+    /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("div", { className: "ts-chat-msgs", ref, onScroll: onScroll3, children: [
+      messages.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("div", { className: "ts-hint", children: emptyText ?? "\u7B49\u5F85\u4F1A\u8BDD\u6D88\u606F\u2026" }),
+      messages.length > 0 && visible.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("div", { className: "ts-hint", children: VIEW_EMPTY[view] }),
+      visible.map((t, ti) => /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("div", { className: "ts-turn", "data-turn-key": visibleKeys[ti], children: [
+        t.users.map((m, i) => /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("div", { className: "ts-msg-block ts-msg-block-user", children: [
+          m.content ? /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("div", { className: "ts-msg-user", children: m.content }) : null,
+          m.images?.length ? /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(MessageImages, { sessionId, images: m.images, align: "end" }) : null,
+          /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(MsgTime, { time: m.time, copyContent: m.content })
         ] }, `u${i}`)),
-        /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(InjectionRow, { items: t.injects }),
-        t.proc.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(ProcessGroup, { items: t.proc }),
-        t.answer && /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)("div", { className: "ts-msg-block ts-msg-block-assistant", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("div", { className: "ts-msg-assistant", children: /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(RichText, { text: t.answer.content }) }),
-          /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(MsgTime, { time: t.answer.time, copyContent: t.answer.content })
-        ] }),
-        (t.changesSeq !== null || t.edits.length > 0) && /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(ChangesCard, { sessionId, seq: t.changesSeq, fallbackFiles: t.edits }),
-        t.notice && /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(TurnNoticeRow, { notice: t.notice.notice }),
-        t.queued.map((m, i) => /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)("div", { className: "ts-msg-block ts-msg-block-user", "data-turn-queued": "", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)("div", { className: "ts-msg-user ts-msg-queued", children: [
-            m.content,
-            /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("span", { className: "ts-queued-tag", title: "\u4F1A\u8BDD\u6B63\u5FD9\uFF1A\u8FD9\u6761\u6D88\u606F\u5728\u5BBF\u4E3B\u6536\u4EF6\u7BB1\u961F\u5217\u91CC\uFF0C\u4E0B\u4E00\u8F6E\u5F00\u59CB\u65F6\u9001\u8FBE\u6A21\u578B\uFF08\u4E0E\u539F\u751F\u5BF9\u8BDD\u7684\u961F\u5217\u9762\u677F\u540C\u6E90\uFF09", children: "\u6392\u961F\u4E2D" })
+        /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(InjectionRow, { items: t.injects }),
+        t.proc.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(ProcessGroup, { items: t.proc, sessionId }),
+        t.answer && /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("div", { className: "ts-msg-block ts-msg-block-assistant", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("div", { className: "ts-msg-assistant", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(RichText, { text: t.answer.content }),
+            t.answer.images?.length ? /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(MessageImages, { sessionId, images: t.answer.images, align: "start" }) : null
           ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(MsgTime, { time: m.time, copyContent: m.content })
+          /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(MsgTime, { time: t.answer.time, copyContent: t.answer.content })
+        ] }),
+        (t.changesSeq !== null || t.edits.length > 0) && /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(ChangesCard, { sessionId, seq: t.changesSeq, fallbackFiles: t.edits }),
+        t.notice && /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(TurnNoticeRow, { notice: t.notice.notice }),
+        t.queued.map((m, i) => /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("div", { className: "ts-msg-block ts-msg-block-user", "data-turn-queued": "", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("div", { className: "ts-msg-user ts-msg-queued", children: [
+            m.content,
+            /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("span", { className: "ts-queued-tag", title: "\u4F1A\u8BDD\u6B63\u5FD9\uFF1A\u8FD9\u6761\u6D88\u606F\u5728\u5BBF\u4E3B\u6536\u4EF6\u7BB1\u961F\u5217\u91CC\uFF0C\u4E0B\u4E00\u8F6E\u5F00\u59CB\u65F6\u9001\u8FBE\u6A21\u578B\uFF08\u4E0E\u539F\u751F\u5BF9\u8BDD\u7684\u961F\u5217\u9762\u677F\u540C\u6E90\uFF09", children: "\u6392\u961F\u4E2D" })
+          ] }),
+          m.images?.length ? /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(MessageImages, { sessionId, images: m.images, align: "end" }) : null,
+          /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(MsgTime, { time: m.time, copyContent: m.content })
         ] }, `q${i}`))
       ] }, visibleKeys[ti] ?? ti)),
-      messages.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
+      messages.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(
         "button",
         {
           className: "ts-jump-latest",
@@ -5541,8 +5761,8 @@ function MsgList({
 }
 
 // client/src/panel/agent-preset-chip.tsx
-var import_react8 = require("react");
-var import_react_dom2 = require("react-dom");
+var import_react9 = require("react");
+var import_react_dom3 = require("react-dom");
 
 // client/src/panel/agent-preset.ts
 var BUILT_IN_LABELS = {
@@ -5616,24 +5836,24 @@ async function probeAgentPresets() {
 }
 
 // client/src/panel/agent-preset-chip.tsx
-var import_jsx_runtime7 = require("react/jsx-runtime");
+var import_jsx_runtime8 = require("react/jsx-runtime");
 var MENU_W = 260;
 var MENU_MAX_H = 320;
 var ROSTER_TIMEOUT_MS = 1500;
 function presetIcon() {
-  return /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("svg", { width: "13", height: "13", viewBox: "0 0 14 14", "aria-hidden": "true", focusable: "false", children: [
-    /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("circle", { cx: "7", cy: "4", r: "2.4", fill: "none", stroke: "currentColor", strokeWidth: "1.2" }),
-    /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("path", { d: "M2.6 12c0-2.4 2-4.2 4.4-4.2s4.4 1.8 4.4 4.2", fill: "none", stroke: "currentColor", strokeWidth: "1.2", strokeLinecap: "round" })
+  return /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("svg", { width: "13", height: "13", viewBox: "0 0 14 14", "aria-hidden": "true", focusable: "false", children: [
+    /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("circle", { cx: "7", cy: "4", r: "2.4", fill: "none", stroke: "currentColor", strokeWidth: "1.2" }),
+    /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("path", { d: "M2.6 12c0-2.4 2-4.2 4.4-4.2s4.4 1.8 4.4 4.2", fill: "none", stroke: "currentColor", strokeWidth: "1.2", strokeLinecap: "round" })
   ] });
 }
 function AgentPresetChip({ sessionId, editable }) {
-  const [rows, setRows] = (0, import_react8.useState)(null);
-  const [current2, setCurrent] = (0, import_react8.useState)("");
-  const [open, setOpen] = (0, import_react8.useState)(false);
-  const [notice, setNotice] = (0, import_react8.useState)(null);
-  const [pos, setPos] = (0, import_react8.useState)(null);
-  const anchorRef = (0, import_react8.useRef)(null);
-  (0, import_react8.useEffect)(() => {
+  const [rows, setRows] = (0, import_react9.useState)(null);
+  const [current2, setCurrent] = (0, import_react9.useState)("");
+  const [open, setOpen] = (0, import_react9.useState)(false);
+  const [notice, setNotice] = (0, import_react9.useState)(null);
+  const [pos, setPos] = (0, import_react9.useState)(null);
+  const anchorRef = (0, import_react9.useRef)(null);
+  (0, import_react9.useEffect)(() => {
     let alive = true;
     let settled = false;
     const finish = (rows2) => {
@@ -5650,7 +5870,7 @@ function AgentPresetChip({ sessionId, editable }) {
       window.clearTimeout(timer);
     };
   }, [sessionId]);
-  const placeMenu = (0, import_react8.useCallback)(() => {
+  const placeMenu = (0, import_react9.useCallback)(() => {
     const el = anchorRef.current;
     if (!el) return;
     const r = el.getBoundingClientRect();
@@ -5667,7 +5887,7 @@ function AgentPresetChip({ sessionId, editable }) {
     setOpen((v) => !v);
     setNotice(null);
   };
-  (0, import_react8.useEffect)(() => {
+  (0, import_react9.useEffect)(() => {
     if (!open) return;
     const onScroll3 = () => placeMenu();
     const onKey = (e) => {
@@ -5703,11 +5923,11 @@ function AgentPresetChip({ sessionId, editable }) {
       }
     });
   };
-  const chosen = (0, import_react8.useMemo)(() => rows?.find((r) => r.id === current2), [rows, current2]);
+  const chosen = (0, import_react9.useMemo)(() => rows?.find((r) => r.id === current2), [rows, current2]);
   const label = chosen ? presetLabel(chosen) : rows === null ? "\u6A21\u5F0F\u52A0\u8F7D\u4E2D\u2026" : "\u672A\u914D\u7F6E\u6A21\u5F0F";
   if (rows !== null && rows.length === 0) return null;
-  return /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)(import_jsx_runtime7.Fragment, { children: [
-    /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)(
+  return /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)(import_jsx_runtime8.Fragment, { children: [
+    /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)(
       "button",
       {
         ref: anchorRef,
@@ -5720,21 +5940,21 @@ function AgentPresetChip({ sessionId, editable }) {
         title: editable ? "\u9009\u62E9\u672C\u8F6E\u4F1A\u8BDD\u7684 Agent \u6A21\u5F0F\uFF08\u6807\u51C6 / PTC / \u6781\u7B80 / \u521B\u9020\uFF09" : "\u6A21\u5F0F\u5728\u4F1A\u8BDD\u5F00\u59CB\u540E\u56FA\u5B9A\uFF1A\u5386\u53F2\u662F\u5728\u8BE5\u6A21\u5F0F\u7684\u5DE5\u5177\u4E0E\u63D0\u793A\u8BCD\u4E0B\u4EA7\u751F\u7684\uFF0C\u5207\u6362\u4F1A\u81EA\u76F8\u77DB\u76FE",
         children: [
           presetIcon(),
-          /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("span", { className: "ts-preset-label", children: label }),
-          editable && /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("span", { className: "ts-preset-caret", "aria-hidden": "true", children: "\u25BE" })
+          /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("span", { className: "ts-preset-label", children: label }),
+          editable && /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("span", { className: "ts-preset-caret", "aria-hidden": "true", children: "\u25BE" })
         ]
       }
     ),
-    notice && /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("span", { className: "ts-preset-notice", role: "status", children: notice }),
-    open && pos && rows && (0, import_react_dom2.createPortal)(
-      /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(
+    notice && /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("span", { className: "ts-preset-notice", role: "status", children: notice }),
+    open && pos && rows && (0, import_react_dom3.createPortal)(
+      /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(
         "div",
         {
           className: "ts-preset-menu",
           "data-ts-preset-menu": "",
           role: "menu",
           style: { left: pos.left, top: pos.top, width: pos.width, maxHeight: pos.maxHeight },
-          children: rows.map((r) => /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)(
+          children: rows.map((r) => /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)(
             "button",
             {
               type: "button",
@@ -5743,8 +5963,8 @@ function AgentPresetChip({ sessionId, editable }) {
               className: `ts-preset-item${r.id === current2 ? " is-current" : ""}`,
               onClick: () => pick(r.id),
               children: [
-                /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("span", { className: "ts-preset-item-name", children: presetLabel(r) }),
-                /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("span", { className: "ts-preset-item-desc", children: presetDescription(r) })
+                /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("span", { className: "ts-preset-item-name", children: presetLabel(r) }),
+                /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("span", { className: "ts-preset-item-desc", children: presetDescription(r) })
               ]
             },
             r.id
@@ -5757,7 +5977,7 @@ function AgentPresetChip({ sessionId, editable }) {
 }
 
 // client/src/panel/chat-view.ts
-var import_react9 = require("react");
+var import_react10 = require("react");
 var CHAT_VIEWS = [
   { id: "all", label: "\u5168\u90E8", desc: "\u6211\u53D1\u7684 + \u6A21\u578B\u56DE\u590D\uFF08\u5DE5\u5177\u8FC7\u7A0B\u3001\u4E0A\u4E0B\u6587\u6CE8\u5165\u4ECD\u6298\u53E0\u6210\u4E00\u884C\uFF09" },
   { id: "user", label: "\u6211\u7684", desc: "\u53EA\u770B\u6211\u53D1\u7684\u6D88\u606F\uFF08\u9690\u85CF\u6A21\u578B\u56DE\u590D\u4E0E\u5DE5\u5177\u8FC7\u7A0B\uFF09" },
@@ -5806,8 +6026,8 @@ function subscribe(fn) {
 }
 function useChatView(scope) {
   const k = scope || "";
-  const [v, setV] = (0, import_react9.useState)(() => getChatView(k));
-  (0, import_react9.useEffect)(() => {
+  const [v, setV] = (0, import_react10.useState)(() => getChatView(k));
+  (0, import_react10.useEffect)(() => {
     setV(getChatView(k));
     return subscribe(() => setV(getChatView(k)));
   }, [k]);
@@ -5815,8 +6035,8 @@ function useChatView(scope) {
 }
 
 // client/src/panel/composer-status.tsx
-var import_react10 = require("react");
-var import_jsx_runtime8 = require("react/jsx-runtime");
+var import_react11 = require("react");
+var import_jsx_runtime9 = require("react/jsx-runtime");
 function turnStartMsOf(messages) {
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i];
@@ -5832,8 +6052,8 @@ function formatElapsed(sec) {
   return `${m}\u5206${String(r).padStart(2, "0")}\u79D2`;
 }
 function useRunning(sessionId) {
-  const [running, setRunning] = (0, import_react10.useState)(false);
-  (0, import_react10.useEffect)(() => {
+  const [running, setRunning] = (0, import_react11.useState)(false);
+  (0, import_react11.useEffect)(() => {
     if (!sessionId) {
       setRunning(false);
       return;
@@ -5866,22 +6086,22 @@ function useRunning(sessionId) {
 function ComposerRunBadge({ sessionId, messages }) {
   const running = useRunning(sessionId);
   const startMs = readTurnStartMs(sessionId) ?? turnStartMsOf(messages);
-  const [, tick] = (0, import_react10.useState)(0);
-  (0, import_react10.useEffect)(() => {
+  const [, tick] = (0, import_react11.useState)(0);
+  (0, import_react11.useEffect)(() => {
     if (!running) return;
     const t = window.setInterval(() => tick((n) => n + 1), 1e3);
     return () => window.clearInterval(t);
   }, [running]);
   if (!running || startMs == null) return null;
   const sec = Math.max(0, Math.round((Date.now() - startMs) / 1e3));
-  return /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)(
+  return /* @__PURE__ */ (0, import_jsx_runtime9.jsxs)(
     "div",
     {
       className: "ts-run-badge",
       role: "status",
       title: "\u8FD9\u8F6E\u5BF9\u8BDD\u4ECE\u672C\u8F6E turn/start \u8D77\u8BA1\u65F6\uFF08\u4E0E\u539F\u751F\u5BF9\u8BDD tab \u540C\u53E3\u5F84\uFF09",
       children: [
-        /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("span", { className: "ts-run-dot", "aria-hidden": "true" }),
+        /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("span", { className: "ts-run-dot", "aria-hidden": "true" }),
         "\u6DF1\u5EA6\u6C42\u7D22\u4E2D\uFF0C\u7528\u65F6",
         formatElapsed(sec),
         "\u2026"
@@ -5891,7 +6111,7 @@ function ComposerRunBadge({ sessionId, messages }) {
 }
 
 // client/src/panel/MainChat.tsx
-var import_jsx_runtime9 = require("react/jsx-runtime");
+var import_jsx_runtime10 = require("react/jsx-runtime");
 var WIDTH_PREF_KEY = "dsh.conversation.contentWidth";
 var CONTENT_MIN = 640;
 var CONTENT_EDGE_BUDGET = 176;
@@ -5933,8 +6153,8 @@ function WidthHandles() {
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
   };
-  return /* @__PURE__ */ (0, import_jsx_runtime9.jsxs)(import_jsx_runtime9.Fragment, { children: [
-    /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(
+  return /* @__PURE__ */ (0, import_jsx_runtime10.jsxs)(import_jsx_runtime10.Fragment, { children: [
+    /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(
       "div",
       {
         className: "ts-chat-w ts-chat-w--left",
@@ -5943,7 +6163,7 @@ function WidthHandles() {
         onPointerDown: drag2(-1)
       }
     ),
-    /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(
+    /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(
       "div",
       {
         className: "ts-chat-w ts-chat-w--right",
@@ -5955,14 +6175,14 @@ function WidthHandles() {
   ] });
 }
 function MainChat({ sessionId, actions }) {
-  const [messages, setMessages] = (0, import_react11.useState)([]);
+  const [messages, setMessages] = (0, import_react12.useState)([]);
   const [view, setView] = useChatView(sessionId);
   const blank = !messages.some((m) => m.role === "user" && !m.injected && !m.queued);
-  const [history, setHistory] = (0, import_react11.useState)({
+  const [history, setHistory] = (0, import_react12.useState)({
     hasMore: false,
     loadingOlder: false
   });
-  (0, import_react11.useEffect)(() => {
+  (0, import_react12.useEffect)(() => {
     if (!sessionId) {
       setMessages([]);
       return;
@@ -5970,7 +6190,7 @@ function MainChat({ sessionId, actions }) {
     const un = subscribeSession(sessionId, (list) => setMessages(list));
     return () => un();
   }, [sessionId]);
-  (0, import_react11.useEffect)(() => {
+  (0, import_react12.useEffect)(() => {
     if (!sessionId) {
       setHistory({ hasMore: false, loadingOlder: false });
       return;
@@ -5981,7 +6201,7 @@ function MainChat({ sessionId, actions }) {
       );
     });
   }, [sessionId]);
-  const stat = (0, import_react11.useMemo)(() => {
+  const stat = (0, import_react12.useMemo)(() => {
     let user = 0;
     let agent = 0;
     for (const m of messages) {
@@ -5995,11 +6215,11 @@ function MainChat({ sessionId, actions }) {
   }, [messages]);
   const shown = view === "user" ? stat.user : view === "agent" ? stat.agent : stat.total;
   const unit = CHAT_VIEW_UNIT[view];
-  const loadOlder = (0, import_react11.useCallback)(async () => {
+  const loadOlder = (0, import_react12.useCallback)(async () => {
     if (!sessionId) return;
     await loadOlderHistory(sessionId);
   }, [sessionId]);
-  const scrollHideRef = (0, import_react11.useRef)(null);
+  const scrollHideRef = (0, import_react12.useRef)(null);
   const onScrollArea = (e) => {
     const el = e.currentTarget;
     el.setAttribute("data-scrolling", "1");
@@ -6009,27 +6229,27 @@ function MainChat({ sessionId, actions }) {
       el.removeAttribute("data-scrolling");
     }, 900);
   };
-  (0, import_react11.useEffect)(() => {
+  (0, import_react12.useEffect)(() => {
     applyContentWidth(readContentWidth());
   }, []);
-  return /* @__PURE__ */ (0, import_jsx_runtime9.jsxs)("div", { className: "ts-mainchat", children: [
-    /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(WidthHandles, {}),
-    /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(ComposerRunBadge, { sessionId, messages }),
-    /* @__PURE__ */ (0, import_jsx_runtime9.jsxs)("div", { className: "ts-mainchat-head", children: [
-      /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("span", { className: "ts-head-title", children: "DSH \u4E3B\u5BF9\u8BDD" }),
-      /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("span", { className: "ts-head-preset", children: /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(AgentPresetChip, { sessionId, editable: blank }) }),
-      /* @__PURE__ */ (0, import_jsx_runtime9.jsxs)(
+  return /* @__PURE__ */ (0, import_jsx_runtime10.jsxs)("div", { className: "ts-mainchat", children: [
+    /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(WidthHandles, {}),
+    /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(ComposerRunBadge, { sessionId, messages }),
+    /* @__PURE__ */ (0, import_jsx_runtime10.jsxs)("div", { className: "ts-mainchat-head", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime10.jsx)("span", { className: "ts-head-title", children: "DSH \u4E3B\u5BF9\u8BDD" }),
+      /* @__PURE__ */ (0, import_jsx_runtime10.jsx)("span", { className: "ts-head-preset", children: /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(AgentPresetChip, { sessionId, editable: blank }) }),
+      /* @__PURE__ */ (0, import_jsx_runtime10.jsxs)(
         "span",
         {
           className: "ts-head-mid ts-mainchat-mid",
           title: `\u5F53\u524D\u89C6\u56FE\u300C${CHAT_VIEWS.find((v) => v.id === view)?.label}\u300D\xB7 \u663E\u793A ${shown} ${unit}\uFF08\u4F1A\u8BDD\u5171 ${stat.total} \u884C \xB7 \u6211\u53D1\u7684 ${stat.user} \xB7 \u6A21\u578B\u56DE\u590D ${stat.agent}\uFF09
 ` + CHAT_VIEWS.map((v) => `${v.label}\uFF1A${v.desc}`).join("\n"),
           children: [
-            /* @__PURE__ */ (0, import_jsx_runtime9.jsxs)("span", { className: "ts-msgstat", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("span", { className: "ts-msgstat-k", children: CHAT_VIEW_STAT[view] }),
+            /* @__PURE__ */ (0, import_jsx_runtime10.jsxs)("span", { className: "ts-msgstat", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime10.jsx)("span", { className: "ts-msgstat-k", children: CHAT_VIEW_STAT[view] }),
               shown
             ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("span", { className: "ts-view-tabs", role: "group", "aria-label": "\u9605\u8BFB\u89C6\u56FE", children: CHAT_VIEWS.map((v) => /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(
+            /* @__PURE__ */ (0, import_jsx_runtime10.jsx)("span", { className: "ts-view-tabs", role: "group", "aria-label": "\u9605\u8BFB\u89C6\u56FE", children: CHAT_VIEWS.map((v) => /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(
               "button",
               {
                 className: `ts-view-tab${v.id === view ? " is-on" : ""}`,
@@ -6046,7 +6266,7 @@ function MainChat({ sessionId, actions }) {
       ),
       actions
     ] }),
-    /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(
+    /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(
       MsgList,
       {
         messages,
@@ -6064,7 +6284,7 @@ function MainChat({ sessionId, actions }) {
 }
 
 // client/src/panel/PreviewPanel.tsx
-var import_jsx_runtime10 = require("react/jsx-runtime");
+var import_jsx_runtime11 = require("react/jsx-runtime");
 function isLoopbackHost(host) {
   const h = String(host || "").toLowerCase();
   return h === "127.0.0.1" || h === "localhost" || h === "::1" || h === "[::1]" || h.startsWith("127.");
@@ -6107,13 +6327,13 @@ function PreviewPanel({
       console.warn("[tokensave] \u65B0\u7A97\u53E3\u6253\u5F00\u5931\u8D25", e);
     }
   };
-  return /* @__PURE__ */ (0, import_jsx_runtime10.jsxs)("section", { className: "ts-preview-panel", children: [
-    /* @__PURE__ */ (0, import_jsx_runtime10.jsxs)("div", { className: "ts-preview-bar", children: [
-      /* @__PURE__ */ (0, import_jsx_runtime10.jsx)("span", { className: "ts-preview-title", children: "\u9879\u76EE\u9884\u89C8" }),
-      /* @__PURE__ */ (0, import_jsx_runtime10.jsx)("span", { className: "ts-preview-url", title: url, children: url }),
-      devRunning && /* @__PURE__ */ (0, import_jsx_runtime10.jsx)("span", { className: "ts-tag ts-tag-live", children: "\u25CF \u5DF2\u542F\u52A8" }),
-      /* @__PURE__ */ (0, import_jsx_runtime10.jsxs)("span", { className: "ts-preview-ops", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(
+  return /* @__PURE__ */ (0, import_jsx_runtime11.jsxs)("section", { className: "ts-preview-panel", children: [
+    /* @__PURE__ */ (0, import_jsx_runtime11.jsxs)("div", { className: "ts-preview-bar", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime11.jsx)("span", { className: "ts-preview-title", children: "\u9879\u76EE\u9884\u89C8" }),
+      /* @__PURE__ */ (0, import_jsx_runtime11.jsx)("span", { className: "ts-preview-url", title: url, children: url }),
+      devRunning && /* @__PURE__ */ (0, import_jsx_runtime11.jsx)("span", { className: "ts-tag ts-tag-live", children: "\u25CF \u5DF2\u542F\u52A8" }),
+      /* @__PURE__ */ (0, import_jsx_runtime11.jsxs)("span", { className: "ts-preview-ops", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime11.jsx)(
           "button",
           {
             type: "button",
@@ -6124,7 +6344,7 @@ function PreviewPanel({
             children: "\u5237\u65B0"
           }
         ),
-        /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(
+        /* @__PURE__ */ (0, import_jsx_runtime11.jsx)(
           "button",
           {
             type: "button",
@@ -6138,7 +6358,7 @@ function PreviewPanel({
       ] }),
       actions
     ] }),
-    url ? /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(
+    url ? /* @__PURE__ */ (0, import_jsx_runtime11.jsx)(
       "iframe",
       {
         className: "ts-preview-frame",
@@ -6146,13 +6366,13 @@ function PreviewPanel({
         title: `${project.name} \u9884\u89C8`
       },
       reloadKey
-    ) : /* @__PURE__ */ (0, import_jsx_runtime10.jsx)("div", { className: "ts-preview-empty", children: devKnown ? "\u9884\u89C8\u672A\u5C31\u7EEA\uFF1Adev server \u8FD8\u6CA1\u8FD0\u884C\u3002" : "\u6B63\u5728\u63A2\u6D4B dev server \u5730\u5740\u2026" })
+    ) : /* @__PURE__ */ (0, import_jsx_runtime11.jsx)("div", { className: "ts-preview-empty", children: devKnown ? "\u9884\u89C8\u672A\u5C31\u7EEA\uFF1Adev server \u8FD8\u6CA1\u8FD0\u884C\u3002" : "\u6B63\u5728\u63A2\u6D4B dev server \u5730\u5740\u2026" })
   ] });
 }
 
 // client/src/panel/ExplorerWindow.tsx
-var import_react12 = __toESM(require("react"), 1);
-var import_jsx_runtime11 = require("react/jsx-runtime");
+var import_react13 = __toESM(require("react"), 1);
+var import_jsx_runtime12 = require("react/jsx-runtime");
 function ExplorerWindow({
   session,
   label,
@@ -6164,11 +6384,11 @@ function ExplorerWindow({
   onExitOverlay,
   onHide
 }) {
-  const [messages, setMessages] = import_react12.default.useState([]);
-  const localRef = (0, import_react12.useRef)(null);
+  const [messages, setMessages] = import_react13.default.useState([]);
+  const localRef = (0, import_react13.useRef)(null);
   const ref = overlay ? overlayRef ?? localRef : localRef;
   const running = session.state === "running";
-  (0, import_react12.useEffect)(() => {
+  (0, import_react13.useEffect)(() => {
     const un = subscribeSession(session.id, (list) => setMessages(list));
     return () => un();
   }, [session.id]);
@@ -6181,21 +6401,21 @@ function ExplorerWindow({
       });
     }
   };
-  return /* @__PURE__ */ (0, import_jsx_runtime11.jsxs)(
+  return /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)(
     "div",
     {
       className: `ts-win${collapsed && !overlay ? " collapsed" : ""}${overlay ? " ts-win-overlay" : ""}`,
       ref,
       children: [
-        /* @__PURE__ */ (0, import_jsx_runtime11.jsxs)("div", { className: "ts-win-head", onDoubleClick: handleHeadDoubleClick, title: "\u53CC\u51FB\u5168\u5C4F", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime11.jsx)("span", { className: `ts-win-dot${running ? "" : " idle"}` }),
-          /* @__PURE__ */ (0, import_jsx_runtime11.jsx)("span", { className: "ts-win-name", children: label }),
-          /* @__PURE__ */ (0, import_jsx_runtime11.jsxs)("span", { className: "ts-head-mid ts-win-mid", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)("div", { className: "ts-win-head", onDoubleClick: handleHeadDoubleClick, title: "\u53CC\u51FB\u5168\u5C4F", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("span", { className: `ts-win-dot${running ? "" : " idle"}` }),
+          /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("span", { className: "ts-win-name", children: label }),
+          /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)("span", { className: "ts-head-mid ts-win-mid", children: [
             messages.length,
             " \u6761\u6D88\u606F"
           ] }),
-          overlay ? /* @__PURE__ */ (0, import_jsx_runtime11.jsx)("span", { children: /* @__PURE__ */ (0, import_jsx_runtime11.jsx)("button", { className: "ts-icon-btn", onClick: onExitOverlay, title: "\u9000\u51FA\u5168\u5C4F", children: "\u2715" }) }) : /* @__PURE__ */ (0, import_jsx_runtime11.jsxs)("span", { children: [
-            /* @__PURE__ */ (0, import_jsx_runtime11.jsx)(
+          overlay ? /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("span", { children: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("button", { className: "ts-icon-btn", onClick: onExitOverlay, title: "\u9000\u51FA\u5168\u5C4F", children: "\u2715" }) }) : /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)("span", { children: [
+            /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
               "button",
               {
                 className: "ts-icon-btn",
@@ -6204,18 +6424,18 @@ function ExplorerWindow({
                 children: collapsed ? "\u25A1" : "\u2014"
               }
             ),
-            /* @__PURE__ */ (0, import_jsx_runtime11.jsx)("button", { className: "ts-icon-btn", onClick: () => onOverlay(session.id), title: "\u6700\u5927\u5316", children: "\u26F6" }),
-            /* @__PURE__ */ (0, import_jsx_runtime11.jsx)("button", { className: "ts-icon-btn", onClick: () => onHide(session.id), title: "\u9690\u85CF\u7A97\u53E3", children: "\u2715" })
+            /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("button", { className: "ts-icon-btn", onClick: () => onOverlay(session.id), title: "\u6700\u5927\u5316", children: "\u26F6" }),
+            /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("button", { className: "ts-icon-btn", onClick: () => onHide(session.id), title: "\u9690\u85CF\u7A97\u53E3", children: "\u2715" })
           ] })
         ] }),
-        (!collapsed || overlay) && /* @__PURE__ */ (0, import_jsx_runtime11.jsx)("div", { className: "ts-win-body", children: /* @__PURE__ */ (0, import_jsx_runtime11.jsx)(MsgList, { messages, emptyText: "\u7B49\u5F85\u8BE5\u63A2\u7D22\u8005\u54CD\u5E94\u2026" }) })
+        (!collapsed || overlay) && /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("div", { className: "ts-win-body", children: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(MsgList, { messages, sessionId: session.id, emptyText: "\u7B49\u5F85\u8BE5\u63A2\u7D22\u8005\u54CD\u5E94\u2026" }) })
       ]
     }
   );
 }
 
 // client/src/panel/composer-dock.ts
-var import_react13 = require("react");
+var import_react14 = require("react");
 var COMPOSER_SEAT = '[data-conversation-region="composer"]';
 var PRE_DOCK_STYLES = /* @__PURE__ */ new WeakMap();
 var HOST_MODAL_MIN_Z = 100;
@@ -6233,7 +6453,7 @@ function isHostModalCover(hit, dockRoot, styleOf = (el) => getComputedStyle(el))
   return false;
 }
 function useDockNativeComposer(ref, enabled, aboveOverlay, deps, cellSelector) {
-  (0, import_react13.useLayoutEffect)(() => {
+  (0, import_react14.useLayoutEffect)(() => {
     const seedCell = ref.current;
     if (!seedCell || typeof document === "undefined") return;
     const initialSeat = document.querySelector(COMPOSER_SEAT);
@@ -6524,14 +6744,14 @@ function useDockNativeComposer(ref, enabled, aboveOverlay, deps, cellSelector) {
 }
 
 // client/src/panel/explorer-status.ts
-var import_react14 = require("react");
+var import_react15 = require("react");
 var NOTICE_TTL_MS = 10 * 60 * 1e3;
 function useExplorerBadges(explorers, seenAt) {
-  const [raw, setRaw] = (0, import_react14.useState)({});
-  const listRef = (0, import_react14.useRef)(explorers);
+  const [raw, setRaw] = (0, import_react15.useState)({});
+  const listRef = (0, import_react15.useRef)(explorers);
   listRef.current = explorers;
   const idKey = explorers.map((e) => e.id).join(",");
-  (0, import_react14.useEffect)(() => {
+  (0, import_react15.useEffect)(() => {
     if (!idKey) {
       setRaw({});
       return;
@@ -6578,9 +6798,9 @@ function useExplorerBadges(explorers, seenAt) {
 }
 
 // client/src/panel/ExplorerSettings.tsx
-var import_react15 = require("react");
-var import_react_dom3 = require("react-dom");
-var import_jsx_runtime12 = require("react/jsx-runtime");
+var import_react16 = require("react");
+var import_react_dom4 = require("react-dom");
+var import_jsx_runtime13 = require("react/jsx-runtime");
 var POP_WIDTH = 300;
 function friendlyLoadError(message) {
   if (/Failed to fetch|NetworkError|Load failed/i.test(message)) {
@@ -6609,7 +6829,7 @@ function Switch({
   onToggle,
   tone
 }) {
-  return /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+  return /* @__PURE__ */ (0, import_jsx_runtime13.jsx)(
     "button",
     {
       type: "button",
@@ -6623,7 +6843,7 @@ function Switch({
         e.stopPropagation();
         onToggle();
       },
-      children: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("span", { className: "ts-switch-knob", "aria-hidden": "true" })
+      children: /* @__PURE__ */ (0, import_jsx_runtime13.jsx)("span", { className: "ts-switch-knob", "aria-hidden": "true" })
     }
   );
 }
@@ -6631,19 +6851,19 @@ function ExplorerSettings({
   variant = "text",
   place
 } = {}) {
-  const [open, setOpen] = (0, import_react15.useState)(false);
-  const [pos, setPos] = (0, import_react15.useState)(null);
-  const [data, setData] = (0, import_react15.useState)(null);
-  const [selected, setSelected] = (0, import_react15.useState)([]);
-  const [err, setErr] = (0, import_react15.useState)(null);
-  const [fromCache, setFromCache] = (0, import_react15.useState)(false);
-  const [loading, setLoading] = (0, import_react15.useState)(false);
-  const [busy, setBusy] = (0, import_react15.useState)(false);
-  const [attempt, setAttempt] = (0, import_react15.useState)(0);
-  const autoTriesRef = (0, import_react15.useRef)(0);
-  const boxRef = (0, import_react15.useRef)(null);
-  const popRef = (0, import_react15.useRef)(null);
-  (0, import_react15.useLayoutEffect)(() => {
+  const [open, setOpen] = (0, import_react16.useState)(false);
+  const [pos, setPos] = (0, import_react16.useState)(null);
+  const [data, setData] = (0, import_react16.useState)(null);
+  const [selected, setSelected] = (0, import_react16.useState)([]);
+  const [err, setErr] = (0, import_react16.useState)(null);
+  const [fromCache, setFromCache] = (0, import_react16.useState)(false);
+  const [loading, setLoading] = (0, import_react16.useState)(false);
+  const [busy, setBusy] = (0, import_react16.useState)(false);
+  const [attempt, setAttempt] = (0, import_react16.useState)(0);
+  const autoTriesRef = (0, import_react16.useRef)(0);
+  const boxRef = (0, import_react16.useRef)(null);
+  const popRef = (0, import_react16.useRef)(null);
+  (0, import_react16.useLayoutEffect)(() => {
     if (!open) return;
     const compute = place ?? defaultPlace;
     const apply3 = () => {
@@ -6668,7 +6888,7 @@ function ExplorerSettings({
       ro?.disconnect();
     };
   }, [open, attempt, place]);
-  (0, import_react15.useEffect)(() => {
+  (0, import_react16.useEffect)(() => {
     if (!open) return;
     let alive = true;
     let timer;
@@ -6709,7 +6929,7 @@ function ExplorerSettings({
       if (timer) window.clearTimeout(timer);
     };
   }, [open, attempt]);
-  (0, import_react15.useEffect)(() => {
+  (0, import_react16.useEffect)(() => {
     if (!open || !err) return;
     const again = () => setAttempt((n) => n + 1);
     const onVisible = () => {
@@ -6722,7 +6942,7 @@ function ExplorerSettings({
       window.removeEventListener("online", again);
     };
   }, [open, err]);
-  (0, import_react15.useEffect)(() => {
+  (0, import_react16.useEffect)(() => {
     if (!open) return;
     const onDoc = (e) => {
       if (!boxRef.current?.contains(e.target) && !popRef.current?.contains(e.target)) setOpen(false);
@@ -6797,8 +7017,8 @@ function ExplorerSettings({
     autoTriesRef.current = 0;
     setAttempt((n) => n + 1);
   };
-  return /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)("span", { className: "ts-expset", ref: boxRef, children: [
-    variant === "icon" ? /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)(
+  return /* @__PURE__ */ (0, import_jsx_runtime13.jsxs)("span", { className: "ts-expset", ref: boxRef, children: [
+    variant === "icon" ? /* @__PURE__ */ (0, import_jsx_runtime13.jsxs)(
       "button",
       {
         className: "ts-tg",
@@ -6807,7 +7027,7 @@ function ExplorerSettings({
         onClick: () => setOpen((v) => !v),
         title: "\u63A2\u7D22\u8005\u8BBE\u7F6E\uFF1A\u81EA\u884C\u9009\u62E9\u54EA\u4E9B\u63A2\u7D22\u8005\u53C2\u4E0E\uFF08\u9ED8\u8BA4 / \u514D\u8D39 / \u6536\u8D39\uFF0C\u53EF\u9010\u4E2A\u6216\u6574\u7EC4\u5F00\u5173\uFF0C\u81F3\u5C11\u4FDD\u7559 1 \u4E2A\uFF09",
         children: [
-          /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+          /* @__PURE__ */ (0, import_jsx_runtime13.jsx)(
             "span",
             {
               "aria-hidden": "true",
@@ -6816,10 +7036,10 @@ function ExplorerSettings({
               }
             }
           ),
-          total ? /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("span", { className: "ts-tg-badge", children: total }) : null
+          total ? /* @__PURE__ */ (0, import_jsx_runtime13.jsx)("span", { className: "ts-tg-badge", children: total }) : null
         ]
       }
-    ) : /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)(
+    ) : /* @__PURE__ */ (0, import_jsx_runtime13.jsxs)(
       "button",
       {
         className: `ts-btn ts-expset-btn${open ? " active" : ""}`,
@@ -6831,7 +7051,7 @@ function ExplorerSettings({
         ]
       }
     ),
-    open && (0, import_react_dom3.createPortal)(/* @__PURE__ */ (0, import_jsx_runtime12.jsxs)(
+    open && (0, import_react_dom4.createPortal)(/* @__PURE__ */ (0, import_jsx_runtime13.jsxs)(
       "div",
       {
         className: "ts-expset-pop",
@@ -6850,32 +7070,32 @@ function ExplorerSettings({
           visibility: pos ? "visible" : "hidden"
         },
         children: [
-          /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)("div", { className: "ts-expset-head", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime13.jsxs)("div", { className: "ts-expset-head", children: [
             "\u63A2\u7D22\u8005\u8BBE\u7F6E",
-            /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("span", { className: "ts-expset-head-tip", children: fromCache ? "\u4E0A\u6B21\u52A0\u8F7D \xB7 \u6B63\u5728\u5237\u65B0" : "\u81F3\u5C11\u4FDD\u7559 1 \u4E2A\uFF1B\u9009\u62E9\u5373\u65F6\u4FDD\u5B58" })
+            /* @__PURE__ */ (0, import_jsx_runtime13.jsx)("span", { className: "ts-expset-head-tip", children: fromCache ? "\u4E0A\u6B21\u52A0\u8F7D \xB7 \u6B63\u5728\u5237\u65B0" : "\u81F3\u5C11\u4FDD\u7559 1 \u4E2A\uFF1B\u9009\u62E9\u5373\u65F6\u4FDD\u5B58" })
           ] }),
-          err && /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)("div", { className: "ts-expset-err", "data-desk-explorers-err": "", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)("span", { className: "ts-expset-err-text", title: err, children: [
+          err && /* @__PURE__ */ (0, import_jsx_runtime13.jsxs)("div", { className: "ts-expset-err", "data-desk-explorers-err": "", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime13.jsxs)("span", { className: "ts-expset-err-text", title: err, children: [
               "\u26A0\uFE0F ",
               friendlyLoadError(err)
             ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("button", { className: "ts-expset-retry", type: "button", onClick: retry, disabled: loading, children: loading ? "\u91CD\u8BD5\u4E2D\u2026" : "\u91CD\u8BD5" })
+            /* @__PURE__ */ (0, import_jsx_runtime13.jsx)("button", { className: "ts-expset-retry", type: "button", onClick: retry, disabled: loading, children: loading ? "\u91CD\u8BD5\u4E2D\u2026" : "\u91CD\u8BD5" })
           ] }),
-          loading && !data && /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("div", { className: "ts-expset-empty", children: "\u52A0\u8F7D\u4E2D\u2026" }),
-          !loading && !data && !err && /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("div", { className: "ts-expset-empty", children: "\uFF08\u6682\u65E0\u76EE\u5F55\uFF09" }),
+          loading && !data && /* @__PURE__ */ (0, import_jsx_runtime13.jsx)("div", { className: "ts-expset-empty", children: "\u52A0\u8F7D\u4E2D\u2026" }),
+          !loading && !data && !err && /* @__PURE__ */ (0, import_jsx_runtime13.jsx)("div", { className: "ts-expset-empty", children: "\uFF08\u6682\u65E0\u76EE\u5F55\uFF09" }),
           data?.groups.map((g) => {
             const usable = g.items.filter((i) => i.available);
             const allOn = usable.length > 0 && usable.every((i) => selectedModels.has(i.model));
             const onCount = g.items.filter((i) => selectedModels.has(i.model)).length;
-            return /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)("div", { className: "ts-expset-group", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)("div", { className: "ts-expset-group-head", children: [
-                /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("span", { className: "ts-expset-group-name", children: g.label }),
-                /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)("span", { className: "ts-expset-group-count", children: [
+            return /* @__PURE__ */ (0, import_jsx_runtime13.jsxs)("div", { className: "ts-expset-group", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime13.jsxs)("div", { className: "ts-expset-group-head", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime13.jsx)("span", { className: "ts-expset-group-name", children: g.label }),
+                /* @__PURE__ */ (0, import_jsx_runtime13.jsxs)("span", { className: "ts-expset-group-count", children: [
                   onCount,
                   "/",
                   g.items.length
                 ] }),
-                /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime13.jsx)(
                   Switch,
                   {
                     tone: "group",
@@ -6886,9 +7106,9 @@ function ExplorerSettings({
                   }
                 )
               ] }),
-              g.items.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("div", { className: "ts-expset-empty", children: "\uFF08\u6682\u65E0\u63A2\u7D22\u8005\uFF09" }),
-              g.items.map((it) => /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)("div", { className: `ts-expset-row${it.available ? "" : " ts-expset-row-off"}`, children: [
-                /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)(
+              g.items.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime13.jsx)("div", { className: "ts-expset-empty", children: "\uFF08\u6682\u65E0\u63A2\u7D22\u8005\uFF09" }),
+              g.items.map((it) => /* @__PURE__ */ (0, import_jsx_runtime13.jsxs)("div", { className: `ts-expset-row${it.available ? "" : " ts-expset-row-off"}`, children: [
+                /* @__PURE__ */ (0, import_jsx_runtime13.jsxs)(
                   "span",
                   {
                     className: "ts-expset-name",
@@ -6896,11 +7116,11 @@ function ExplorerSettings({
 ${it.note}` : ""}${it.available ? "" : "\n\uFF08provider \u672A\u6CE8\u518C\uFF1A\u51ED\u636E\u672A\u914D\u7F6E\uFF0C\u6682\u4E0D\u53EF\u7528\uFF09"}`,
                     children: [
                       it.label,
-                      !it.available && /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("span", { className: "ts-expset-tag", children: "\u4E0D\u53EF\u7528" })
+                      !it.available && /* @__PURE__ */ (0, import_jsx_runtime13.jsx)("span", { className: "ts-expset-tag", children: "\u4E0D\u53EF\u7528" })
                     ]
                   }
                 ),
-                /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime13.jsx)(
                   Switch,
                   {
                     on: selectedModels.has(it.model),
@@ -6912,7 +7132,7 @@ ${it.note}` : ""}${it.available ? "" : "\n\uFF08provider \u672A\u6CE8\u518C\uFF1
               ] }, it.model))
             ] }, g.id);
           }),
-          busy && /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("div", { className: "ts-expset-busy", children: "\u4FDD\u5B58\u4E2D\u2026" })
+          busy && /* @__PURE__ */ (0, import_jsx_runtime13.jsx)("div", { className: "ts-expset-busy", children: "\u4FDD\u5B58\u4E2D\u2026" })
         ]
       }
     ), document.body)
@@ -6920,12 +7140,12 @@ ${it.note}` : ""}${it.available ? "" : "\n\uFF08provider \u672A\u6CE8\u518C\uFF1
 }
 
 // client/src/panel/SessionPicker.tsx
-var import_react17 = require("react");
-var import_react_dom4 = require("react-dom");
+var import_react18 = require("react");
+var import_react_dom5 = require("react-dom");
 
 // client/src/panel/ConfirmDialog.tsx
-var import_react16 = require("react");
-var import_jsx_runtime13 = require("react/jsx-runtime");
+var import_react17 = require("react");
+var import_jsx_runtime14 = require("react/jsx-runtime");
 function ConfirmDialog({
   title,
   message,
@@ -6936,11 +7156,11 @@ function ConfirmDialog({
   onConfirm,
   onCancel
 }) {
-  const cancelRef = (0, import_react16.useRef)(null);
-  (0, import_react16.useEffect)(() => {
+  const cancelRef = (0, import_react17.useRef)(null);
+  (0, import_react17.useEffect)(() => {
     cancelRef.current?.focus();
   }, []);
-  (0, import_react16.useEffect)(() => {
+  (0, import_react17.useEffect)(() => {
     const onKey = (e) => {
       if (e.key === "Escape") {
         e.stopPropagation();
@@ -6950,25 +7170,25 @@ function ConfirmDialog({
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [onCancel]);
-  return /* @__PURE__ */ (0, import_jsx_runtime13.jsx)(
+  return /* @__PURE__ */ (0, import_jsx_runtime14.jsx)(
     "div",
     {
       className: "ts-modal-mask",
       onClick: (e) => {
         if (e.target === e.currentTarget) onCancel();
       },
-      children: /* @__PURE__ */ (0, import_jsx_runtime13.jsxs)("div", { className: `ts-modal ts-confirm${danger ? " ts-confirm-danger" : ""}`, role: "alertdialog", "aria-modal": "true", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime13.jsxs)("div", { className: "ts-modal-head", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime13.jsxs)("span", { children: [
+      children: /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { className: `ts-modal ts-confirm${danger ? " ts-confirm-danger" : ""}`, role: "alertdialog", "aria-modal": "true", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { className: "ts-modal-head", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("span", { children: [
             danger ? "\u26A0\uFE0F " : "",
             title
           ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime13.jsx)("button", { className: "ts-icon-btn", onClick: onCancel, title: "\u5173\u95ED", children: "\u2715" })
+          /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("button", { className: "ts-icon-btn", onClick: onCancel, title: "\u5173\u95ED", children: "\u2715" })
         ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime13.jsx)("div", { className: "ts-modal-body", children: /* @__PURE__ */ (0, import_jsx_runtime13.jsx)("div", { className: "ts-confirm-msg", children: message }) }),
-        /* @__PURE__ */ (0, import_jsx_runtime13.jsxs)("div", { className: "ts-modal-foot", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime13.jsx)("button", { ref: cancelRef, className: "ts-btn", onClick: onCancel, disabled: busy, children: cancelText }),
-          /* @__PURE__ */ (0, import_jsx_runtime13.jsx)(
+        /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("div", { className: "ts-modal-body", children: /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("div", { className: "ts-confirm-msg", children: message }) }),
+        /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { className: "ts-modal-foot", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("button", { ref: cancelRef, className: "ts-btn", onClick: onCancel, disabled: busy, children: cancelText }),
+          /* @__PURE__ */ (0, import_jsx_runtime14.jsx)(
             "button",
             {
               className: `ts-btn ${danger ? "ts-btn-danger-solid" : "ts-btn-primary"}`,
@@ -6984,7 +7204,7 @@ function ConfirmDialog({
 }
 
 // client/src/panel/SessionPicker.tsx
-var import_jsx_runtime14 = require("react/jsx-runtime");
+var import_jsx_runtime15 = require("react/jsx-runtime");
 function relTime(ms) {
   if (!ms) return "";
   const d = Date.now() - ms;
@@ -6995,25 +7215,25 @@ function relTime(ms) {
   return new Date(ms).toLocaleDateString("zh-CN", { month: "2-digit", day: "2-digit" });
 }
 function MarqueeTitle({ text, prefix }) {
-  const clipRef = (0, import_react17.useRef)(null);
-  const [shift, setShift] = (0, import_react17.useState)(0);
+  const clipRef = (0, import_react18.useRef)(null);
+  const [shift, setShift] = (0, import_react18.useState)(0);
   const measure = () => {
     const el = clipRef.current;
     if (!el) return;
     const over = el.scrollWidth - el.clientWidth;
     setShift(over > 4 ? over : 0);
   };
-  (0, import_react17.useEffect)(() => {
+  (0, import_react18.useEffect)(() => {
     measure();
   }, [text]);
-  return /* @__PURE__ */ (0, import_jsx_runtime14.jsx)(
+  return /* @__PURE__ */ (0, import_jsx_runtime15.jsx)(
     "span",
     {
       className: "ts-sess-item-title",
       ref: clipRef,
       title: text,
       onMouseEnter: measure,
-      children: /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)(
+      children: /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)(
         "span",
         {
           className: `ts-marquee${shift > 0 ? " ts-marquee-move" : ""}`,
@@ -7030,19 +7250,19 @@ function MarqueeTitle({ text, prefix }) {
 var ICON_HISTORY = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v3.5l2.5 1.5"/><path d="M12 21a9 9 0 1 1 .001-18.001A9 9 0 0 1 12 21z"/><path d="M3 12h2"/><path d="M19 12h2"/></svg>';
 var ICON_NEW = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>';
 function SessionPicker({ sessions, currentId, onPick, onNew, onArchived }) {
-  const [open, setOpen] = (0, import_react17.useState)(false);
-  const [busy, setBusy] = (0, import_react17.useState)(false);
-  const [pos, setPos] = (0, import_react17.useState)(null);
-  const boxRef = (0, import_react17.useRef)(null);
-  const popRef = (0, import_react17.useRef)(null);
-  const [menuFor, setMenuFor] = (0, import_react17.useState)(null);
-  const [renameFor, setRenameFor] = (0, import_react17.useState)(null);
-  const [renameName, setRenameName] = (0, import_react17.useState)("");
-  const [archiving, setArchiving] = (0, import_react17.useState)(null);
-  const [pendingArchive, setPendingArchive] = (0, import_react17.useState)(null);
-  const [notice, setNotice] = (0, import_react17.useState)(null);
+  const [open, setOpen] = (0, import_react18.useState)(false);
+  const [busy, setBusy] = (0, import_react18.useState)(false);
+  const [pos, setPos] = (0, import_react18.useState)(null);
+  const boxRef = (0, import_react18.useRef)(null);
+  const popRef = (0, import_react18.useRef)(null);
+  const [menuFor, setMenuFor] = (0, import_react18.useState)(null);
+  const [renameFor, setRenameFor] = (0, import_react18.useState)(null);
+  const [renameName, setRenameName] = (0, import_react18.useState)("");
+  const [archiving, setArchiving] = (0, import_react18.useState)(null);
+  const [pendingArchive, setPendingArchive] = (0, import_react18.useState)(null);
+  const [notice, setNotice] = (0, import_react18.useState)(null);
   const pinned = usePinnedSessions();
-  (0, import_react17.useLayoutEffect)(() => {
+  (0, import_react18.useLayoutEffect)(() => {
     if (!open) {
       setPos(null);
       return;
@@ -7073,8 +7293,8 @@ function SessionPicker({ sessions, currentId, onPick, onNew, onArchived }) {
       window.removeEventListener("scroll", place, true);
     };
   }, [open, sessions.length]);
-  const current2 = (0, import_react17.useMemo)(() => sessions.find((s) => s.id === currentId), [sessions, currentId]);
-  (0, import_react17.useEffect)(() => {
+  const current2 = (0, import_react18.useMemo)(() => sessions.find((s) => s.id === currentId), [sessions, currentId]);
+  (0, import_react18.useEffect)(() => {
     if (!open) return;
     const onDoc = (e) => {
       if (!boxRef.current?.contains(e.target) && !popRef.current?.contains(e.target)) setOpen(false);
@@ -7089,7 +7309,7 @@ function SessionPicker({ sessions, currentId, onPick, onNew, onArchived }) {
       document.removeEventListener("keydown", onKey);
     };
   }, [open]);
-  (0, import_react17.useEffect)(() => {
+  (0, import_react18.useEffect)(() => {
     if (!notice) return;
     const timer = window.setTimeout(() => setNotice(null), 4e3);
     return () => window.clearTimeout(timer);
@@ -7155,40 +7375,40 @@ function SessionPicker({ sessions, currentId, onPick, onNew, onArchived }) {
     const child = await forkSession(session.id);
     setNotice(child ? "\u5DF2\u5206\u53C9\uFF1A\u65B0\u4F1A\u8BDD\u5DF2\u51FA\u73B0\u5728\u5217\u8868\u4E2D" : "\u5206\u53C9\u5931\u8D25");
   };
-  return /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("span", { className: "ts-sess", ref: boxRef, children: [
-    /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)(
+  return /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("span", { className: "ts-sess", ref: boxRef, children: [
+    /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)(
       "button",
       {
         className: `ts-sb-btn ts-sess-btn${open ? " active" : ""}`,
         onClick: () => setOpen((v) => !v),
         title: "\u8BE5\u9879\u76EE\u7684\u5386\u53F2\u4F1A\u8BDD\uFF1A\u70B9\u9009\u5373\u5207\u6362\u8FC7\u53BB\uFF0C\u53EF\u76F4\u63A5\u7EE7\u7EED\u53D1\u8A00",
         children: [
-          /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("span", { className: "ts-sess-ico", "aria-hidden": "true", dangerouslySetInnerHTML: { __html: ICON_HISTORY } }),
-          /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("span", { children: [
+          /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("span", { className: "ts-sess-ico", "aria-hidden": "true", dangerouslySetInnerHTML: { __html: ICON_HISTORY } }),
+          /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("span", { children: [
             "\u5386\u53F2\u4F1A\u8BDD\uFF08",
             sessions.length,
             "\uFF09"
           ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("span", { className: "ts-sess-cur", title: current2?.title || currentId, children: current2 ? current2.title : "\u5F53\u524D\u4F1A\u8BDD" }),
-          /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("span", { className: "ts-sess-caret", children: open ? "\u25B4" : "\u25BE" })
+          /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("span", { className: "ts-sess-cur", title: current2?.title || currentId, children: current2 ? current2.title : "\u5F53\u524D\u4F1A\u8BDD" }),
+          /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("span", { className: "ts-sess-caret", children: open ? "\u25B4" : "\u25BE" })
         ]
       }
     ),
-    /* @__PURE__ */ (0, import_jsx_runtime14.jsx)(
+    /* @__PURE__ */ (0, import_jsx_runtime15.jsx)(
       "button",
       {
         className: "ts-sb-btn ts-sess-new",
         onClick: handleNew,
         disabled: busy,
         title: "\u5728\u8BE5\u9879\u76EE\u4E0B\u5F00\u542F\u4E00\u4E2A\u65B0\u5BF9\u8BDD",
-        children: busy ? "\u65B0\u5EFA\u4E2D\u2026" : /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)(import_jsx_runtime14.Fragment, { children: [
-          /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("span", { className: "ts-sess-ico", "aria-hidden": "true", dangerouslySetInnerHTML: { __html: ICON_NEW } }),
+        children: busy ? "\u65B0\u5EFA\u4E2D\u2026" : /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)(import_jsx_runtime15.Fragment, { children: [
+          /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("span", { className: "ts-sess-ico", "aria-hidden": "true", dangerouslySetInnerHTML: { __html: ICON_NEW } }),
           "\u65B0\u5EFA\u4F1A\u8BDD"
         ] })
       }
     ),
-    notice && /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("span", { className: "ts-sess-notice", title: notice, children: notice }),
-    open && (0, import_react_dom4.createPortal)(/* @__PURE__ */ (0, import_jsx_runtime14.jsxs)(
+    notice && /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("span", { className: "ts-sess-notice", title: notice, children: notice }),
+    open && (0, import_react_dom5.createPortal)(/* @__PURE__ */ (0, import_jsx_runtime15.jsxs)(
       "div",
       {
         className: "ts-sess-pop",
@@ -7207,16 +7427,16 @@ function SessionPicker({ sessions, currentId, onPick, onNew, onArchived }) {
           visibility: pos ? void 0 : "hidden"
         },
         children: [
-          /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { className: "ts-sess-pop-head", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("div", { className: "ts-sess-pop-head", children: [
             "\u5386\u53F2\u4F1A\u8BDD \xB7 ",
             sessions.length,
             " \u4E2A"
           ] }),
-          sessions.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("div", { className: "ts-sess-empty", children: "\u8BE5\u9879\u76EE\u8FD8\u6CA1\u6709\u5386\u53F2\u4F1A\u8BDD\u3002\u70B9\u300C\uFF0B \u65B0\u5EFA\u4F1A\u8BDD\u300D\u5F00\u59CB\u7B2C\u4E00\u4E2A\u5BF9\u8BDD\u3002" }) : /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("div", { className: "ts-sess-list", children: sessions.map((s) => {
+          sessions.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("div", { className: "ts-sess-empty", children: "\u8BE5\u9879\u76EE\u8FD8\u6CA1\u6709\u5386\u53F2\u4F1A\u8BDD\u3002\u70B9\u300C\uFF0B \u65B0\u5EFA\u4F1A\u8BDD\u300D\u5F00\u59CB\u7B2C\u4E00\u4E2A\u5BF9\u8BDD\u3002" }) : /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("div", { className: "ts-sess-list", children: sessions.map((s) => {
             const isPinned = pinned.has(s.id);
             const rowOpen = menuFor === s.id || renameFor === s.id;
-            return /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { className: "ts-sess-row", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)(
+            return /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("div", { className: "ts-sess-row", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)(
                 "div",
                 {
                   className: `ts-sess-item${s.id === currentId ? " active" : ""}${rowOpen ? " ts-sess-item-open" : ""}`,
@@ -7235,14 +7455,14 @@ function SessionPicker({ sessions, currentId, onPick, onNew, onArchived }) {
                     onPick(s.id);
                   },
                   children: [
-                    /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("span", { className: `ts-win-dot${s.running ? "" : " idle"}` }),
-                    /* @__PURE__ */ (0, import_jsx_runtime14.jsx)(MarqueeTitle, { text: s.title, prefix: s.explorer ? "\u{1F50D} " : "" }),
-                    isPinned && /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("span", { className: "ts-sess-tag", title: "\u5DF2\u7F6E\u9876", children: "\u{1F4CC}" }),
-                    s.blank && /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("span", { className: "ts-sess-tag", children: "\u7A7A\u767D" }),
-                    /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("span", { className: "ts-sess-slot", children: [
-                      relTime(s.updatedAt) !== "" && /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("span", { className: "ts-sess-time", children: relTime(s.updatedAt) }),
-                      /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("span", { className: "ts-sess-rowops", children: [
-                        /* @__PURE__ */ (0, import_jsx_runtime14.jsx)(
+                    /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("span", { className: `ts-win-dot${s.running ? "" : " idle"}` }),
+                    /* @__PURE__ */ (0, import_jsx_runtime15.jsx)(MarqueeTitle, { text: s.title, prefix: s.explorer ? "\u{1F50D} " : "" }),
+                    isPinned && /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("span", { className: "ts-sess-tag", title: "\u5DF2\u7F6E\u9876", children: "\u{1F4CC}" }),
+                    s.blank && /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("span", { className: "ts-sess-tag", children: "\u7A7A\u767D" }),
+                    /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("span", { className: "ts-sess-slot", children: [
+                      relTime(s.updatedAt) !== "" && /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("span", { className: "ts-sess-time", children: relTime(s.updatedAt) }),
+                      /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("span", { className: "ts-sess-rowops", children: [
+                        /* @__PURE__ */ (0, import_jsx_runtime15.jsx)(
                           "button",
                           {
                             type: "button",
@@ -7258,7 +7478,7 @@ function SessionPicker({ sessions, currentId, onPick, onNew, onArchived }) {
                             children: "\u22EF"
                           }
                         ),
-                        /* @__PURE__ */ (0, import_jsx_runtime14.jsx)(
+                        /* @__PURE__ */ (0, import_jsx_runtime15.jsx)(
                           "button",
                           {
                             type: "button",
@@ -7277,8 +7497,8 @@ function SessionPicker({ sessions, currentId, onPick, onNew, onArchived }) {
                   ]
                 }
               ),
-              menuFor === s.id && /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { className: "ts-sess-menu", role: "menu", children: [
-                /* @__PURE__ */ (0, import_jsx_runtime14.jsx)(
+              menuFor === s.id && /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("div", { className: "ts-sess-menu", role: "menu", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime15.jsx)(
                   "button",
                   {
                     type: "button",
@@ -7288,7 +7508,7 @@ function SessionPicker({ sessions, currentId, onPick, onNew, onArchived }) {
                     children: isPinned ? "\u{1F4CC} \u53D6\u6D88\u7F6E\u9876" : "\u{1F4CC} \u7F6E\u9876\u4F1A\u8BDD"
                   }
                 ),
-                /* @__PURE__ */ (0, import_jsx_runtime14.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime15.jsx)(
                   "button",
                   {
                     type: "button",
@@ -7298,7 +7518,7 @@ function SessionPicker({ sessions, currentId, onPick, onNew, onArchived }) {
                     children: "\u270F\uFE0F \u91CD\u547D\u540D"
                   }
                 ),
-                /* @__PURE__ */ (0, import_jsx_runtime14.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime15.jsx)(
                   "button",
                   {
                     type: "button",
@@ -7309,7 +7529,7 @@ function SessionPicker({ sessions, currentId, onPick, onNew, onArchived }) {
                     children: "\u{1F4E5} \u5F52\u6863"
                   }
                 ),
-                /* @__PURE__ */ (0, import_jsx_runtime14.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime15.jsx)(
                   "button",
                   {
                     type: "button",
@@ -7320,8 +7540,8 @@ function SessionPicker({ sessions, currentId, onPick, onNew, onArchived }) {
                   }
                 )
               ] }),
-              renameFor === s.id && /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { className: "ts-sess-rename", children: [
-                /* @__PURE__ */ (0, import_jsx_runtime14.jsx)(
+              renameFor === s.id && /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("div", { className: "ts-sess-rename", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime15.jsx)(
                   "input",
                   {
                     className: "ts-input ts-sess-rename-input",
@@ -7338,7 +7558,7 @@ function SessionPicker({ sessions, currentId, onPick, onNew, onArchived }) {
                     }
                   }
                 ),
-                /* @__PURE__ */ (0, import_jsx_runtime14.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime15.jsx)(
                   "button",
                   {
                     type: "button",
@@ -7348,28 +7568,28 @@ function SessionPicker({ sessions, currentId, onPick, onNew, onArchived }) {
                     children: "\u4FDD\u5B58"
                   }
                 ),
-                /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("button", { type: "button", className: "ts-btn ts-btn-sm", onClick: () => setRenameFor(null), children: "\u53D6\u6D88" })
+                /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("button", { type: "button", className: "ts-btn ts-btn-sm", onClick: () => setRenameFor(null), children: "\u53D6\u6D88" })
               ] })
             ] }, s.id);
           }) })
         ]
       }
     ), document.body),
-    pendingArchive && /* @__PURE__ */ (0, import_jsx_runtime14.jsx)(
+    pendingArchive && /* @__PURE__ */ (0, import_jsx_runtime15.jsx)(
       ConfirmDialog,
       {
         title: "\u5F52\u6863\u4F1A\u8BDD",
         danger: true,
         confirmText: "\u505C\u6B62\u5E76\u5F52\u6863",
-        message: /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)(import_jsx_runtime14.Fragment, { children: [
-          /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("div", { className: "ts-confirm-lead", children: "\u8BE5\u4F1A\u8BDD\u6B63\u5728\u8FD0\u884C\uFF0C\u76F4\u63A5\u5F52\u6863\u4F1A\u88AB\u62D2\u7EDD\u3002" }),
-          /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("div", { className: "ts-confirm-target", children: /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("span", { className: "ts-confirm-name", children: [
+        message: /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)(import_jsx_runtime15.Fragment, { children: [
+          /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("div", { className: "ts-confirm-lead", children: "\u8BE5\u4F1A\u8BDD\u6B63\u5728\u8FD0\u884C\uFF0C\u76F4\u63A5\u5F52\u6863\u4F1A\u88AB\u62D2\u7EDD\u3002" }),
+          /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("div", { className: "ts-confirm-target", children: /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("span", { className: "ts-confirm-name", children: [
             "\u{1F4AC} ",
             pendingArchive.title
           ] }) }),
-          /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { className: "ts-confirm-note", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("div", { className: "ts-confirm-note", children: [
             "\u70B9\u300C\u505C\u6B62\u5E76\u5F52\u6863\u300D\u4F1A",
-            /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("b", { children: "\u5148\u505C\u6B62\u5B83\u6B63\u5728\u8DD1\u7684\u5DE5\u4F5C" }),
+            /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("b", { children: "\u5148\u505C\u6B62\u5B83\u6B63\u5728\u8DD1\u7684\u5DE5\u4F5C" }),
             "\uFF0C\u518D\u628A\u5B83\u5F52\u6863\u3002 \u5F52\u6863\u53EA\u662F\u4ECE\u5217\u8868\u4E2D\u79FB\u51FA\uFF0C\u4F1A\u8BDD\u8BB0\u5F55\u4E0D\u4F1A\u5220\u9664\uFF0C\u4E4B\u540E\u53EF\u5728\u5BBF\u4E3B\u7684\u300C\u5DF2\u5F52\u6863\u300D\u91CC\u6062\u590D\u3002"
           ] })
         ] }),
@@ -7385,7 +7605,7 @@ function SessionPicker({ sessions, currentId, onPick, onNew, onArchived }) {
 }
 
 // client/src/panel/activity.ts
-var import_react18 = require("react");
+var import_react19 = require("react");
 function statusSnapshot(ctx) {
   try {
     const svc2 = readService(ctx, "uiSession");
@@ -7433,9 +7653,9 @@ function readProjectActivity(ctx, projectPath) {
   }));
 }
 function useProjectsActivity(projects) {
-  const [byProject, setByProject] = (0, import_react18.useState)({});
+  const [byProject, setByProject] = (0, import_react19.useState)({});
   const key = projects.map((p) => `${p.id}:${p.path}`).join("|");
-  (0, import_react18.useEffect)(() => {
+  (0, import_react19.useEffect)(() => {
     const ctx = getClientContext();
     if (!ctx || projects.length === 0) {
       setByProject({});
@@ -7480,9 +7700,9 @@ function useProjectsActivity(projects) {
   return byProject;
 }
 function useProjectLastActivity(projects) {
-  const [byProject, setByProject] = (0, import_react18.useState)({});
+  const [byProject, setByProject] = (0, import_react19.useState)({});
   const key = projects.map((p) => `${p.id}:${p.path}`).join("|");
-  (0, import_react18.useEffect)(() => {
+  (0, import_react19.useEffect)(() => {
     const ctx = getClientContext();
     if (!ctx || projects.length === 0) {
       setByProject({});
@@ -8167,7 +8387,7 @@ function iconSvg(name, size = 14) {
 }
 
 // client/src/panel/DeskDock.tsx
-var import_jsx_runtime15 = require("react/jsx-runtime");
+var import_jsx_runtime16 = require("react/jsx-runtime");
 var SNAPSHOT_KEY = (projectId) => `tokensave:desk-dock.v2:${projectId}`;
 var SAVED_KEY = (projectId) => `tokensave:desk-saved.v2:${projectId}`;
 var REGIONS_KEY = (projectId) => `tokensave:desk-regions.v1:${projectId}`;
@@ -8740,33 +8960,33 @@ function kindLabel(id) {
 }
 var NO_EXPLORERS = [];
 function DeskDock({ project, sessionId, onBack }) {
-  const leftHostRef = (0, import_react19.useRef)(null);
-  const centerHostRef = (0, import_react19.useRef)(null);
-  const rightHostRef = (0, import_react19.useRef)(null);
-  const chatCellRef = (0, import_react19.useRef)(null);
-  const dockRootRef = (0, import_react19.useRef)(null);
-  const dragPanelRef = (0, import_react19.useRef)("");
-  const autoSessionRef = (0, import_react19.useRef)(false);
-  const apiRef = (0, import_react19.useRef)(null);
-  const containersRef = (0, import_react19.useRef)({});
-  const closedRef = (0, import_react19.useRef)(new Set(readClosed(project.id)));
-  const suppressDirtyRef = (0, import_react19.useRef)(false);
-  const restoredFromSnapshotRef = (0, import_react19.useRef)(false);
-  const resetToBuiltinRef = (0, import_react19.useRef)(null);
-  const paneOptsRef = (0, import_react19.useRef)(() => null);
-  const [, bump] = (0, import_react19.useState)(0);
-  const [data, setData] = (0, import_react19.useState)({ explorers: [] });
-  const peekDevUrlRef = (0, import_react19.useRef)("");
+  const leftHostRef = (0, import_react20.useRef)(null);
+  const centerHostRef = (0, import_react20.useRef)(null);
+  const rightHostRef = (0, import_react20.useRef)(null);
+  const chatCellRef = (0, import_react20.useRef)(null);
+  const dockRootRef = (0, import_react20.useRef)(null);
+  const dragPanelRef = (0, import_react20.useRef)("");
+  const autoSessionRef = (0, import_react20.useRef)(false);
+  const apiRef = (0, import_react20.useRef)(null);
+  const containersRef = (0, import_react20.useRef)({});
+  const closedRef = (0, import_react20.useRef)(new Set(readClosed(project.id)));
+  const suppressDirtyRef = (0, import_react20.useRef)(false);
+  const restoredFromSnapshotRef = (0, import_react20.useRef)(false);
+  const resetToBuiltinRef = (0, import_react20.useRef)(null);
+  const paneOptsRef = (0, import_react20.useRef)(() => null);
+  const [, bump] = (0, import_react20.useState)(0);
+  const [data, setData] = (0, import_react20.useState)({ explorers: [] });
+  const peekDevUrlRef = (0, import_react20.useRef)("");
   peekDevUrlRef.current = data.devUrl || "";
-  const [font, setFont] = (0, import_react19.useState)(readFont);
-  const [fontFamily, setFontFamily] = (0, import_react19.useState)(readFontFamily);
-  const [liveIds, setLiveIds] = (0, import_react19.useState)([]);
-  const seenRef = (0, import_react19.useRef)({});
-  const autoStopTurnRef = (0, import_react19.useRef)(0);
-  const explorersRef = (0, import_react19.useRef)([]);
-  const stopAllExplorersRef = (0, import_react19.useRef)(null);
-  const badgesRef = (0, import_react19.useRef)({});
-  (0, import_react19.useEffect)(() => {
+  const [font, setFont] = (0, import_react20.useState)(readFont);
+  const [fontFamily, setFontFamily] = (0, import_react20.useState)(readFontFamily);
+  const [liveIds, setLiveIds] = (0, import_react20.useState)([]);
+  const seenRef = (0, import_react20.useRef)({});
+  const autoStopTurnRef = (0, import_react20.useRef)(0);
+  const explorersRef = (0, import_react20.useRef)([]);
+  const stopAllExplorersRef = (0, import_react20.useRef)(null);
+  const badgesRef = (0, import_react20.useRef)({});
+  (0, import_react20.useEffect)(() => {
     const on = () => {
       setSkinMode(currentThemeMode());
       setSkin(readSkinId());
@@ -8774,9 +8994,9 @@ function DeskDock({ project, sessionId, onBack }) {
     window.addEventListener("ts-theme-changed", on);
     return () => window.removeEventListener("ts-theme-changed", on);
   }, []);
-  const [themeMode, setThemeMode] = (0, import_react19.useState)(() => readThemeMode(getClientContext()));
-  const [themeScheme, setThemeScheme] = (0, import_react19.useState)(() => readActiveScheme(getClientContext()));
-  (0, import_react19.useEffect)(() => {
+  const [themeMode, setThemeMode] = (0, import_react20.useState)(() => readThemeMode(getClientContext()));
+  const [themeScheme, setThemeScheme] = (0, import_react20.useState)(() => readActiveScheme(getClientContext()));
+  (0, import_react20.useEffect)(() => {
     const ctx = getClientContext();
     const sync2 = () => {
       setThemeMode(readThemeMode(ctx));
@@ -8785,24 +9005,24 @@ function DeskDock({ project, sessionId, onBack }) {
     sync2();
     return subscribeThemeMode(ctx, sync2);
   }, []);
-  const closePanelRef = (0, import_react19.useRef)(null);
-  const teardownRef = (0, import_react19.useRef)(false);
-  const paintBadgesRef = (0, import_react19.useRef)(null);
-  const [stopNote, setStopNote] = (0, import_react19.useState)("");
-  const [reloadKey, setReloadKey] = (0, import_react19.useState)(0);
-  const [hiddenRegions, setHiddenRegions] = (0, import_react19.useState)(() => readInitialHiddenRegions(project.id));
-  const hiddenRef = (0, import_react19.useRef)(hiddenRegions);
+  const closePanelRef = (0, import_react20.useRef)(null);
+  const teardownRef = (0, import_react20.useRef)(false);
+  const paintBadgesRef = (0, import_react20.useRef)(null);
+  const [stopNote, setStopNote] = (0, import_react20.useState)("");
+  const [reloadKey, setReloadKey] = (0, import_react20.useState)(0);
+  const [hiddenRegions, setHiddenRegions] = (0, import_react20.useState)(() => readInitialHiddenRegions(project.id));
+  const hiddenRef = (0, import_react20.useRef)(hiddenRegions);
   hiddenRef.current = hiddenRegions;
-  const syncChatSeatRef = (0, import_react19.useRef)(() => {
+  const syncChatSeatRef = (0, import_react20.useRef)(() => {
   });
-  const [layoutDirty, setLayoutDirty] = (0, import_react19.useState)(false);
-  const [settingsOpen, setSettingsOpen] = (0, import_react19.useState)(false);
-  const [projOpen, setProjOpen] = (0, import_react19.useState)(false);
-  const projHoverRef = (0, import_react19.useRef)(null);
-  const [skin, setSkin] = (0, import_react19.useState)(readSkinId);
-  const [skinMode, setSkinMode] = (0, import_react19.useState)(currentThemeMode);
-  const [popPos, setPopPos] = (0, import_react19.useState)(null);
-  const [sideW, setSideW] = (0, import_react19.useState)(() => {
+  const [layoutDirty, setLayoutDirty] = (0, import_react20.useState)(false);
+  const [settingsOpen, setSettingsOpen] = (0, import_react20.useState)(false);
+  const [projOpen, setProjOpen] = (0, import_react20.useState)(false);
+  const projHoverRef = (0, import_react20.useRef)(null);
+  const [skin, setSkin] = (0, import_react20.useState)(readSkinId);
+  const [skinMode, setSkinMode] = (0, import_react20.useState)(currentThemeMode);
+  const [popPos, setPopPos] = (0, import_react20.useState)(null);
+  const [sideW, setSideW] = (0, import_react20.useState)(() => {
     try {
       const raw = window.localStorage.getItem(SIDE_W_KEY);
       const p2 = raw ? JSON.parse(raw) : null;
@@ -8812,27 +9032,27 @@ function DeskDock({ project, sessionId, onBack }) {
       return { left: 220, right: 260 };
     }
   });
-  const applyRegions = (0, import_react19.useCallback)((hidden) => {
+  const applyRegions = (0, import_react20.useCallback)((hidden) => {
     setHiddenRegions(hidden);
     try {
       window.localStorage.setItem(REGIONS_KEY(project.id), JSON.stringify(hidden));
     } catch {
     }
   }, [project.id]);
-  const applySideW = (0, import_react19.useCallback)((w) => {
+  const applySideW = (0, import_react20.useCallback)((w) => {
     setSideW(w);
     try {
       window.localStorage.setItem(SIDE_W_KEY, JSON.stringify(w));
     } catch {
     }
   }, []);
-  const projBtnRef = (0, import_react19.useRef)(null);
-  const settingsBtnRef = (0, import_react19.useRef)(null);
-  const [activeLabel, setActiveLabel] = (0, import_react19.useState)("\u2014");
-  const [liveTip, setLiveTip] = (0, import_react19.useState)({ text: "\u7B49\u5F85\u5BF9\u8BDD\u2026", done: false });
+  const projBtnRef = (0, import_react20.useRef)(null);
+  const settingsBtnRef = (0, import_react20.useRef)(null);
+  const [activeLabel, setActiveLabel] = (0, import_react20.useState)("\u2014");
+  const [liveTip, setLiveTip] = (0, import_react20.useState)({ text: "\u7B49\u5F85\u5BF9\u8BDD\u2026", done: false });
   const sessions = useProjectSessions(project.path);
-  const [sessionError, setSessionError] = (0, import_react19.useState)("");
-  const sid = (0, import_react19.useMemo)(() => {
+  const [sessionError, setSessionError] = (0, import_react20.useState)("");
+  const sid = (0, import_react20.useMemo)(() => {
     const ctx = getClientContext();
     const prop = sessionId || "";
     const known = !!prop && sessions.some((s) => s.id === prop && !s.explorer);
@@ -8841,8 +9061,8 @@ function DeskDock({ project, sessionId, onBack }) {
     }
     return latestProjectSession(ctx, project.path)?.id ?? "";
   }, [project.path, sessionId, sessions]);
-  const [delegateSpans, setDelegateSpans] = (0, import_react19.useState)([]);
-  (0, import_react19.useEffect)(() => {
+  const [delegateSpans, setDelegateSpans] = (0, import_react20.useState)([]);
+  (0, import_react20.useEffect)(() => {
     if (!sid) {
       setDelegateSpans((prev) => prev.length > 0 ? [] : prev);
       return;
@@ -8852,7 +9072,7 @@ function DeskDock({ project, sessionId, onBack }) {
       setDelegateSpans((prev) => prev.length === next.length && prev.every((p, i) => p.startMs === next[i].startMs && p.endMs === next[i].endMs) ? prev : next);
     });
   }, [sid]);
-  const ownsRun = (0, import_react19.useMemo)(() => {
+  const ownsRun = (0, import_react20.useMemo)(() => {
     const run = data.run ?? null;
     if (!run) return true;
     if (run.originSessionId) return run.originSessionId === sid;
@@ -8862,12 +9082,12 @@ function DeskDock({ project, sessionId, onBack }) {
     const at = run.startedAtMs;
     return delegateSpans.some((s) => s.startMs - 5e3 <= at && at <= (s.endMs ?? Date.now()) + 5e3);
   }, [data.run, sid, delegateSpans]);
-  const explorers = (0, import_react19.useMemo)(
+  const explorers = (0, import_react20.useMemo)(
     () => ownsRun ? data.explorers : NO_EXPLORERS,
     [ownsRun, data.explorers]
   );
-  const titleFor = (0, import_react19.useCallback)((id) => paneTitle(id, project.name), [project.name]);
-  (0, import_react19.useEffect)(() => {
+  const titleFor = (0, import_react20.useCallback)((id) => paneTitle(id, project.name), [project.name]);
+  (0, import_react20.useEffect)(() => {
     if (sessionId === sid) return;
     if (sid) {
       rememberOpenedProject(sid, project.id);
@@ -8878,13 +9098,13 @@ function DeskDock({ project, sessionId, onBack }) {
     autoSessionRef.current = true;
     void startProjectSession(project.path, project.id, sessionId);
   }, [sessionId, sid, project.path, project.id]);
-  const markDirtyRef = (0, import_react19.useRef)(null);
+  const markDirtyRef = (0, import_react20.useRef)(null);
   markDirtyRef.current = () => {
     if (!suppressDirtyRef.current) setLayoutDirty(true);
   };
-  const dblClickRef = (0, import_react19.useRef)(null);
-  const openSideRef = (0, import_react19.useRef)(null);
-  (0, import_react19.useEffect)(() => {
+  const dblClickRef = (0, import_react20.useRef)(null);
+  const openSideRef = (0, import_react20.useRef)(null);
+  (0, import_react20.useEffect)(() => {
     if (!sid) {
       setLiveTip({ text: "\u7B49\u5F85\u5BF9\u8BDD\u2026", done: false });
       return;
@@ -8935,7 +9155,7 @@ function DeskDock({ project, sessionId, onBack }) {
     });
     return () => un();
   }, [sid]);
-  const regionOf = (0, import_react19.useCallback)((id) => {
+  const regionOf = (0, import_react20.useCallback)((id) => {
     const apis = apiRef.current;
     if (!apis) return null;
     for (const r of REGIONS) {
@@ -8943,7 +9163,7 @@ function DeskDock({ project, sessionId, onBack }) {
     }
     return null;
   }, []);
-  const paneOpts = (0, import_react19.useCallback)(
+  const paneOpts = (0, import_react20.useCallback)(
     (id, position) => ({
       id,
       component: "pane",
@@ -8955,7 +9175,7 @@ function DeskDock({ project, sessionId, onBack }) {
     [titleFor]
   );
   paneOptsRef.current = paneOpts;
-  (0, import_react19.useEffect)(() => {
+  (0, import_react20.useEffect)(() => {
     let alive = true;
     const pollExplorers = async () => {
       let next = null;
@@ -8988,7 +9208,7 @@ function DeskDock({ project, sessionId, onBack }) {
       window.clearInterval(t2);
     };
   }, [project.path]);
-  const closePanel = (0, import_react19.useCallback)(
+  const closePanel = (0, import_react20.useCallback)(
     (id) => {
       const apis = apiRef.current;
       const cur = regionOf(id);
@@ -9002,7 +9222,7 @@ function DeskDock({ project, sessionId, onBack }) {
     [regionOf, project.id]
   );
   closePanelRef.current = closePanel;
-  const moveWindowTo = (0, import_react19.useCallback)(
+  const moveWindowTo = (0, import_react20.useCallback)(
     (id, region, position) => {
       const apis = apiRef.current;
       if (!apis) return;
@@ -9034,7 +9254,7 @@ function DeskDock({ project, sessionId, onBack }) {
     },
     [regionOf]
   );
-  (0, import_react19.useEffect)(() => {
+  (0, import_react20.useEffect)(() => {
     const hosts = {
       left: leftHostRef.current,
       center: centerHostRef.current,
@@ -9434,7 +9654,7 @@ function DeskDock({ project, sessionId, onBack }) {
       delete window.__tsDeskDock;
     };
   }, [project.id]);
-  (0, import_react19.useEffect)(() => {
+  (0, import_react20.useEffect)(() => {
     const apis = apiRef.current;
     if (!apis) return;
     const hasPreview = !!data.devUrl;
@@ -9534,7 +9754,7 @@ function DeskDock({ project, sessionId, onBack }) {
     [liveIds.join(","), reloadKey],
     `.ts-dock-chatcell[data-desk-chat-cell="${project.id}"]`
   );
-  (0, import_react19.useEffect)(() => {
+  (0, import_react20.useEffect)(() => {
     if (!settingsOpen && !projOpen) return;
     const closeAll = () => {
       setSettingsOpen(false);
@@ -9558,10 +9778,10 @@ function DeskDock({ project, sessionId, onBack }) {
       document.removeEventListener("keydown", onKey, true);
     };
   }, [settingsOpen, projOpen]);
-  (0, import_react19.useEffect)(() => {
+  (0, import_react20.useEffect)(() => {
     syncChatSeatRef.current();
   }, [hiddenRegions]);
-  (0, import_react19.useEffect)(() => {
+  (0, import_react20.useEffect)(() => {
     applyFont(font, fontFamily);
     try {
       window.localStorage.setItem(FONT_KEY, font);
@@ -9569,7 +9789,7 @@ function DeskDock({ project, sessionId, onBack }) {
     } catch {
     }
   }, [font, fontFamily]);
-  const bindResizer = (0, import_react19.useCallback)(
+  const bindResizer = (0, import_react20.useCallback)(
     (side) => {
       return (event) => {
         const el = event.currentTarget;
@@ -9671,7 +9891,7 @@ function DeskDock({ project, sessionId, onBack }) {
     },
     [hiddenRegions, sideW, applyRegions, applySideW]
   );
-  const openSide = (0, import_react19.useCallback)(
+  const openSide = (0, import_react20.useCallback)(
     (side) => {
       const root = dockRootRef.current;
       if (!root || !hiddenRef.current.includes(side)) return;
@@ -9687,19 +9907,19 @@ function DeskDock({ project, sessionId, onBack }) {
     [sideW, applyRegions, applySideW]
   );
   openSideRef.current = openSide;
-  (0, import_react19.useEffect)(() => {
+  (0, import_react20.useEffect)(() => {
     try {
       window.localStorage.setItem(SIDE_W_KEY, JSON.stringify(sideW));
     } catch {
     }
   }, [sideW]);
-  const [drawer, setDrawer] = (0, import_react19.useState)(null);
-  const [narrow, setNarrow] = (0, import_react19.useState)(
+  const [drawer, setDrawer] = (0, import_react20.useState)(null);
+  const [narrow, setNarrow] = (0, import_react20.useState)(
     () => typeof window !== "undefined" && !!window.matchMedia && window.matchMedia("(max-width: 900px)").matches
   );
-  const [chrome, setChrome] = (0, import_react19.useState)(readChromePosition);
+  const [chrome, setChrome] = (0, import_react20.useState)(readChromePosition);
   const chromePos = effectiveChrome(chrome, narrow);
-  (0, import_react19.useEffect)(() => {
+  (0, import_react20.useEffect)(() => {
     const el = document.querySelector("[data-desk-statusbar]");
     if (!el || typeof ResizeObserver === "undefined") return;
     const apply3 = () => {
@@ -9711,7 +9931,7 @@ function DeskDock({ project, sessionId, onBack }) {
     ro.observe(el);
     return () => ro.disconnect();
   }, [liveIds, narrow]);
-  (0, import_react19.useEffect)(() => {
+  (0, import_react20.useEffect)(() => {
     if (typeof window === "undefined" || !window.matchMedia) return;
     const mq = window.matchMedia("(max-width: 900px)");
     const on = () => {
@@ -9747,7 +9967,7 @@ function DeskDock({ project, sessionId, onBack }) {
     });
     return { regions, hidden: [...hiddenRegions], sideW: { ...sideW } };
   };
-  const saveLayout = (0, import_react19.useCallback)(() => {
+  const saveLayout = (0, import_react20.useCallback)(() => {
     const snap = snapshotAll();
     if (!snap) return;
     try {
@@ -9760,7 +9980,7 @@ function DeskDock({ project, sessionId, onBack }) {
     } catch {
     }
   }, [project.id, hiddenRegions, sideW]);
-  const restoreDefaultLayout = (0, import_react19.useCallback)(() => {
+  const restoreDefaultLayout = (0, import_react20.useCallback)(() => {
     const apis = apiRef.current;
     if (!apis) return;
     suppressDirtyRef.current = true;
@@ -9797,7 +10017,7 @@ function DeskDock({ project, sessionId, onBack }) {
       suppressDirtyRef.current = false;
     }, 500);
   }, [project.id, applyRegions, applySideW]);
-  const applySkin2 = (0, import_react19.useCallback)((value) => {
+  const applySkin2 = (0, import_react20.useCallback)((value) => {
     chooseSkin(value);
     setSkin(readSkinId());
   }, []);
@@ -9842,14 +10062,14 @@ function DeskDock({ project, sessionId, onBack }) {
       }
     }, open ? 110 : 260);
   };
-  const projectList = (0, import_react19.useMemo)(() => projOpen ? loadProjects() : [], [projOpen]);
+  const projectList = (0, import_react20.useMemo)(() => projOpen ? loadProjects() : [], [projOpen]);
   const projectLastActive = useProjectLastActivity(projectList);
-  const sortedProjectList = (0, import_react19.useMemo)(() => {
+  const sortedProjectList = (0, import_react20.useMemo)(() => {
     const at = (p) => projectLastActive[p.id] || p.updatedAt || p.createdAt || 0;
     return [...projectList].sort((a, b) => at(b) - at(a));
   }, [projectList, projectLastActive]);
   const projectActivity = useProjectsActivity(projectList);
-  const allPaneIds = (0, import_react19.useMemo)(() => {
+  const allPaneIds = (0, import_react20.useMemo)(() => {
     const ids = [];
     KINDS.forEach((k) => {
       if (k === "preview" && !data.devUrl) return;
@@ -9863,7 +10083,7 @@ function DeskDock({ project, sessionId, onBack }) {
   explorersRef.current = explorers;
   const explorerBadges = useExplorerBadges(explorers, seenRef);
   badgesRef.current = explorerBadges;
-  const paintBadges = (0, import_react19.useCallback)(() => {
+  const paintBadges = (0, import_react20.useCallback)(() => {
     const root = dockRootRef.current;
     if (!root) return;
     root.querySelectorAll("[data-ts-pane]").forEach((pin) => {
@@ -9886,17 +10106,17 @@ function DeskDock({ project, sessionId, onBack }) {
       );
     });
   }, []);
-  const paintRef = (0, import_react19.useRef)(paintBadges);
+  const paintRef = (0, import_react20.useRef)(paintBadges);
   paintRef.current = paintBadges;
   paintBadgesRef.current = paintBadges;
-  (0, import_react19.useEffect)(() => {
+  (0, import_react20.useEffect)(() => {
     paintBadges();
     const t = window.setInterval(() => paintRef.current(), 1500);
     return () => window.clearInterval(t);
   }, [paintBadges, explorerBadges, liveIds, reloadKey]);
-  const ensureByIdRef = (0, import_react19.useRef)(null);
-  const autoMaxRef = (0, import_react19.useRef)(null);
-  const focusPane = (0, import_react19.useCallback)(
+  const ensureByIdRef = (0, import_react20.useRef)(null);
+  const autoMaxRef = (0, import_react20.useRef)(null);
+  const focusPane = (0, import_react20.useCallback)(
     (id) => {
       const apis = apiRef.current;
       if (!apis) return;
@@ -9916,7 +10136,7 @@ function DeskDock({ project, sessionId, onBack }) {
     },
     [regionOf, narrow, drawer]
   );
-  (0, import_react19.useEffect)(() => {
+  (0, import_react20.useEffect)(() => {
     const apis = apiRef.current;
     if (!apis) return;
     if (narrow) {
@@ -9940,7 +10160,7 @@ function DeskDock({ project, sessionId, onBack }) {
       }
     }
   }, [narrow, project.id, regionOf, liveIds]);
-  const stopAllExplorers = (0, import_react19.useCallback)(async () => {
+  const stopAllExplorers = (0, import_react20.useCallback)(async () => {
     const list = explorers.filter((e) => e.state === "running");
     if (!list.length) {
       setStopNote("\u6CA1\u6709\u5728\u8FD0\u884C\u7684\u63A2\u7D22\u8005");
@@ -9955,7 +10175,7 @@ function DeskDock({ project, sessionId, onBack }) {
     window.setTimeout(() => setReloadKey((k) => k + 1), 600);
   }, [explorers]);
   stopAllExplorersRef.current = stopAllExplorers;
-  const ensureById = (0, import_react19.useCallback)(
+  const ensureById = (0, import_react20.useCallback)(
     (id) => {
       const apis = apiRef.current;
       if (!apis) return;
@@ -9991,21 +10211,21 @@ function DeskDock({ project, sessionId, onBack }) {
     [regionOf]
   );
   ensureByIdRef.current = ensureById;
-  const nodeFor = (0, import_react19.useCallback)(
+  const nodeFor = (0, import_react20.useCallback)(
     (id) => {
       const parsed = parsePaneId(id);
       if (!parsed) return null;
       const { kind } = parsed;
-      if (kind === "board") return /* @__PURE__ */ (0, import_jsx_runtime15.jsx)(Blackboard, { workspace: project.path });
+      if (kind === "board") return /* @__PURE__ */ (0, import_jsx_runtime16.jsx)(Blackboard, { workspace: project.path });
       if (kind === "talk") {
-        return /* @__PURE__ */ (0, import_jsx_runtime15.jsx)(
+        return /* @__PURE__ */ (0, import_jsx_runtime16.jsx)(
           TalkColumn,
           {
             sessionId: sid,
             explorers,
-            actions: /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)(import_jsx_runtime15.Fragment, { children: [
-              stopNote ? /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("span", { className: "ts-talk-note", children: stopNote }) : null,
-              /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)(
+            actions: /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)(import_jsx_runtime16.Fragment, { children: [
+              stopNote ? /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { className: "ts-talk-note", children: stopNote }) : null,
+              /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)(
                 "button",
                 {
                   className: "ts-pop-all",
@@ -10013,7 +10233,7 @@ function DeskDock({ project, sessionId, onBack }) {
                   title: "\u505C\u6B62\u6240\u6709\u8FD8\u5728\u8FD0\u884C\u7684\u63A2\u7D22\u8005\uFF08\u4E3B\u5BF9\u8BDD\u5DF2\u7ED3\u675F\u65F6\u7279\u522B\u6709\u7528\uFF09",
                   onClick: () => void stopAllExplorers(),
                   children: [
-                    /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("span", { dangerouslySetInnerHTML: { __html: iconSvg2("stop", 13) } }),
+                    /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { dangerouslySetInnerHTML: { __html: iconSvg2("stop", 13) } }),
                     "\u5168\u90E8\u505C\u6B62"
                   ]
                 }
@@ -10022,9 +10242,9 @@ function DeskDock({ project, sessionId, onBack }) {
           }
         );
       }
-      if (kind === "save") return /* @__PURE__ */ (0, import_jsx_runtime15.jsx)(SavingsColumn, { sessionId: sid, explorers });
+      if (kind === "save") return /* @__PURE__ */ (0, import_jsx_runtime16.jsx)(SavingsColumn, { sessionId: sid, explorers });
       if (kind === "preview") {
-        return /* @__PURE__ */ (0, import_jsx_runtime15.jsx)(
+        return /* @__PURE__ */ (0, import_jsx_runtime16.jsx)(
           PreviewPanel,
           {
             project,
@@ -10037,13 +10257,13 @@ function DeskDock({ project, sessionId, onBack }) {
         );
       }
       if (kind === "chat") {
-        return /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("div", { className: "ts-dock-chatcell", "data-desk-chat-cell": project.id, ref: chatCellRef, children: /* @__PURE__ */ (0, import_jsx_runtime15.jsx)(MainChat, { sessionId: sid }) });
+        return /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("div", { className: "ts-dock-chatcell", "data-desk-chat-cell": project.id, ref: chatCellRef, children: /* @__PURE__ */ (0, import_jsx_runtime16.jsx)(MainChat, { sessionId: sid }) });
       }
       if (kind.startsWith("exp:")) {
         const esid = kind.slice(4);
         const es = explorers.find((x) => x.id === esid);
-        if (!es) return /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("div", { className: "ts-dock-empty", children: "\u63A2\u7D22\u8005\u5DF2\u7ED3\u675F" });
-        return /* @__PURE__ */ (0, import_jsx_runtime15.jsx)(
+        if (!es) return /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("div", { className: "ts-dock-empty", children: "\u63A2\u7D22\u8005\u5DF2\u7ED3\u675F" });
+        return /* @__PURE__ */ (0, import_jsx_runtime16.jsx)(
           ExplorerWindow,
           {
             session: es,
@@ -10072,7 +10292,7 @@ function DeskDock({ project, sessionId, onBack }) {
     },
     [project, sid, data, reloadKey, closePanel, regionOf, explorers]
   );
-  return /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)(
+  return /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)(
     "div",
     {
       ref: dockRootRef,
@@ -10094,9 +10314,9 @@ function DeskDock({ project, sessionId, onBack }) {
         ...hiddenRegions.includes("right") ? {} : { ["--ts-side-r"]: `${sideW.right}px` }
       },
       children: [
-        /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("header", { className: "ts-titlebar", "data-desk-titlebar": "", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("div", { className: "ts-title-left", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)(
+        /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("header", { className: "ts-titlebar", "data-desk-titlebar": "", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("div", { className: "ts-title-left", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)(
               "button",
               {
                 ref: projBtnRef,
@@ -10116,14 +10336,14 @@ function DeskDock({ project, sessionId, onBack }) {
                 onMouseEnter: () => hoverProj(true),
                 onMouseLeave: () => hoverProj(false),
                 children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("span", { "aria-hidden": "true", dangerouslySetInnerHTML: { __html: iconSvg2("zone", 19) } }),
-                  /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("span", { className: "ts-title-caret", "aria-hidden": "true", dangerouslySetInnerHTML: { __html: iconSvg2("chevron", 13) } })
+                  /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { "aria-hidden": "true", dangerouslySetInnerHTML: { __html: iconSvg2("zone", 19) } }),
+                  /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { className: "ts-title-caret", "aria-hidden": "true", dangerouslySetInnerHTML: { __html: iconSvg2("chevron", 13) } })
                 ]
               }
             ),
-            /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("span", { className: "ts-title-proj", "data-desk-title": "", title: project.name, children: project.name }),
-            closedIds.length ? /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("span", { className: "ts-sb-sep", "aria-hidden": "true" }) : null,
-            closedIds.slice(0, 6).map((id) => /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)(
+            /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { className: "ts-title-proj", "data-desk-title": "", title: project.name, children: project.name }),
+            closedIds.length ? /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { className: "ts-sb-sep", "aria-hidden": "true" }) : null,
+            closedIds.slice(0, 6).map((id) => /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)(
               "button",
               {
                 className: "ts-closed-chip",
@@ -10138,8 +10358,8 @@ function DeskDock({ project, sessionId, onBack }) {
               id
             ))
           ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("div", { className: "ts-title-right", children: [
-            ["left", "center", "right"].map((r) => /* @__PURE__ */ (0, import_jsx_runtime15.jsx)(
+          /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("div", { className: "ts-title-right", children: [
+            ["left", "center", "right"].map((r) => /* @__PURE__ */ (0, import_jsx_runtime16.jsx)(
               "button",
               {
                 className: "ts-tg ts-tg--region",
@@ -10154,8 +10374,8 @@ function DeskDock({ project, sessionId, onBack }) {
               },
               r
             )),
-            /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("span", { className: "ts-tg-sep", "aria-hidden": "true" }),
-            /* @__PURE__ */ (0, import_jsx_runtime15.jsx)(
+            /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { className: "ts-tg-sep", "aria-hidden": "true" }),
+            /* @__PURE__ */ (0, import_jsx_runtime16.jsx)(
               ExplorerSettings,
               {
                 variant: "icon",
@@ -10168,8 +10388,8 @@ function DeskDock({ project, sessionId, onBack }) {
                 })
               }
             ),
-            /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("span", { className: "ts-tg-sep", "aria-hidden": "true" }),
-            /* @__PURE__ */ (0, import_jsx_runtime15.jsx)(
+            /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { className: "ts-tg-sep", "aria-hidden": "true" }),
+            /* @__PURE__ */ (0, import_jsx_runtime16.jsx)(
               "button",
               {
                 ref: settingsBtnRef,
@@ -10190,7 +10410,7 @@ function DeskDock({ project, sessionId, onBack }) {
             )
           ] })
         ] }),
-        narrow && drawer ? /* @__PURE__ */ (0, import_jsx_runtime15.jsx)(
+        narrow && drawer ? /* @__PURE__ */ (0, import_jsx_runtime16.jsx)(
           "div",
           {
             className: "ts-drawer-mask",
@@ -10199,9 +10419,9 @@ function DeskDock({ project, sessionId, onBack }) {
             onClick: () => setDrawer(null)
           }
         ) : null,
-        /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("aside", { className: "ts-region", "data-region": "left", "aria-label": "\u4E3B\u4FA7\u680F", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("div", { className: "ts-region-host", ref: leftHostRef, "data-desk-host": "left" }),
-          /* @__PURE__ */ (0, import_jsx_runtime15.jsx)(
+        /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("aside", { className: "ts-region", "data-region": "left", "aria-label": "\u4E3B\u4FA7\u680F", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("div", { className: "ts-region-host", ref: leftHostRef, "data-desk-host": "left" }),
+          /* @__PURE__ */ (0, import_jsx_runtime16.jsx)(
             "div",
             {
               className: "ts-resizer ts-resizer--left",
@@ -10211,10 +10431,10 @@ function DeskDock({ project, sessionId, onBack }) {
             }
           )
         ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("main", { className: "ts-region", "data-region": "center", "aria-label": "\u7F16\u8F91\u533A / \u9762\u677F\u533A", children: /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("div", { className: "ts-region-host", ref: centerHostRef, "data-desk-host": "center" }) }),
-        /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("aside", { className: "ts-region", "data-region": "right", "aria-label": "\u8F85\u52A9\u4FA7\u680F", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("div", { className: "ts-region-host", ref: rightHostRef, "data-desk-host": "right" }),
-          /* @__PURE__ */ (0, import_jsx_runtime15.jsx)(
+        /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("main", { className: "ts-region", "data-region": "center", "aria-label": "\u7F16\u8F91\u533A / \u9762\u677F\u533A", children: /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("div", { className: "ts-region-host", ref: centerHostRef, "data-desk-host": "center" }) }),
+        /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("aside", { className: "ts-region", "data-region": "right", "aria-label": "\u8F85\u52A9\u4FA7\u680F", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("div", { className: "ts-region-host", ref: rightHostRef, "data-desk-host": "right" }),
+          /* @__PURE__ */ (0, import_jsx_runtime16.jsx)(
             "div",
             {
               className: "ts-resizer ts-resizer--right",
@@ -10224,8 +10444,8 @@ function DeskDock({ project, sessionId, onBack }) {
             }
           )
         ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("footer", { className: "ts-statusbar", "data-desk-statusbar": "", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("span", { className: "ts-sb-group ts-sb-grow", children: /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)(
+        /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("footer", { className: "ts-statusbar", "data-desk-statusbar": "", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { className: "ts-sb-group ts-sb-grow", children: /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)(
             "span",
             {
               className: "ts-sb-item",
@@ -10233,13 +10453,13 @@ function DeskDock({ project, sessionId, onBack }) {
               "data-done": liveTip.done ? "1" : void 0,
               title: `${activeLabel} \u2014 ${liveTip.text}`,
               children: [
-                /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("span", { className: "ts-sb-dot", "data-on": liveTip.done ? void 0 : "1", "aria-hidden": "true" }),
+                /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { className: "ts-sb-dot", "data-on": liveTip.done ? void 0 : "1", "aria-hidden": "true" }),
                 liveTip.text
               ]
             }
           ) }),
-          /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("span", { className: "ts-sb-group ts-sb-group--right", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime15.jsx)(
+          /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("span", { className: "ts-sb-group ts-sb-group--right", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime16.jsx)(
               SessionPicker,
               {
                 sessions,
@@ -10260,10 +10480,10 @@ function DeskDock({ project, sessionId, onBack }) {
                 }
               }
             ),
-            sessionError ? /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("span", { className: "ts-sb-item", "data-desk-session-error": "", style: { color: "#f85149" }, children: sessionError }) : null,
-            /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("span", { className: "ts-sb-sep", "aria-hidden": "true" }),
-            /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("span", { className: "ts-sb-sep", "aria-hidden": "true" }),
-            /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)(
+            sessionError ? /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { className: "ts-sb-item", "data-desk-session-error": "", style: { color: "#f85149" }, children: sessionError }) : null,
+            /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { className: "ts-sb-sep", "aria-hidden": "true" }),
+            /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { className: "ts-sb-sep", "aria-hidden": "true" }),
+            /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)(
               "button",
               {
                 className: "ts-sb-btn",
@@ -10272,12 +10492,12 @@ function DeskDock({ project, sessionId, onBack }) {
                 onClick: () => saveLayout(),
                 title: layoutDirty ? "\u5E03\u5C40\u5DF2\u6539\u52A8\u4F46\u8FD8\u6CA1\u4FDD\u5B58 \u2014\u2014 \u70B9\u4E00\u4E0B\u5B58\u4E3A\u9ED8\u8BA4\uFF1B\u53F3\u952E/\u957F\u6309\u53EF\u6062\u590D\u9ED8\u8BA4" : "\u628A\u5F53\u524D\u5E03\u5C40\u5B58\u4E3A\u9ED8\u8BA4",
                 children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("span", { dangerouslySetInnerHTML: { __html: iconSvg2("save", 13) } }),
+                  /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { dangerouslySetInnerHTML: { __html: iconSvg2("save", 13) } }),
                   layoutDirty ? "\u4FDD\u5B58\u5E03\u5C40 \u25CF" : "\u5E03\u5C40"
                 ]
               }
             ),
-            /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)(
+            /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)(
               "button",
               {
                 className: "ts-sb-btn",
@@ -10285,30 +10505,30 @@ function DeskDock({ project, sessionId, onBack }) {
                 onClick: restoreDefaultLayout,
                 title: "\u653E\u5F03\u6539\u52A8\uFF0C\u6062\u590D\u9ED8\u8BA4\u5E03\u5C40",
                 children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("span", { dangerouslySetInnerHTML: { __html: iconSvg2("reset", 13) } }),
+                  /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { dangerouslySetInnerHTML: { __html: iconSvg2("reset", 13) } }),
                   "\u6062\u590D"
                 ]
               }
             )
           ] })
         ] }),
-        settingsOpen ? /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)(
+        settingsOpen ? /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)(
           "div",
           {
             className: "ts-pop ts-set",
             "data-desk-settings-panel": "",
             style: popPos ?? { right: 12, top: 48 },
             children: [
-              /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("div", { className: "ts-set-block", "data-desk-set-block": "windows", children: [
-                /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("div", { className: "ts-set-head", children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("span", { className: "ts-set-title", children: "\u663E\u793A / \u9690\u85CF\u7A97\u53E3" }),
-                  /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("button", { className: "ts-pop-all", "data-desk-open-all": "", onClick: () => allPaneIds.forEach(ensureById), children: "\u5168\u90E8\u6253\u5F00" })
+              /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("div", { className: "ts-set-block", "data-desk-set-block": "windows", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("div", { className: "ts-set-head", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { className: "ts-set-title", children: "\u663E\u793A / \u9690\u85CF\u7A97\u53E3" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("button", { className: "ts-pop-all", "data-desk-open-all": "", onClick: () => allPaneIds.forEach(ensureById), children: "\u5168\u90E8\u6253\u5F00" })
                 ] }),
                 allPaneIds.map((id) => {
                   const cur = regionOf(id);
-                  return /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("div", { className: "ts-pop-item", "data-desk-pop-row": id, children: [
-                    /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("span", { dangerouslySetInnerHTML: { __html: iconSvg2(paneIcon(id), 14) } }),
-                    /* @__PURE__ */ (0, import_jsx_runtime15.jsx)(
+                  return /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("div", { className: "ts-pop-item", "data-desk-pop-row": id, children: [
+                    /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { dangerouslySetInnerHTML: { __html: iconSvg2(paneIcon(id), 14) } }),
+                    /* @__PURE__ */ (0, import_jsx_runtime16.jsx)(
                       "button",
                       {
                         className: "ts-pop-name ts-pop-name--jump",
@@ -10318,7 +10538,7 @@ function DeskDock({ project, sessionId, onBack }) {
                         children: kindLabel(id)
                       }
                     ),
-                    /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("span", { className: "ts-pop-where", children: REGIONS.map((r) => /* @__PURE__ */ (0, import_jsx_runtime15.jsx)(
+                    /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { className: "ts-pop-where", children: REGIONS.map((r) => /* @__PURE__ */ (0, import_jsx_runtime16.jsx)(
                       "button",
                       {
                         className: "ts-pop-region",
@@ -10337,14 +10557,14 @@ function DeskDock({ project, sessionId, onBack }) {
                   ] }, id);
                 })
               ] }),
-              narrow ? null : /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("div", { className: "ts-set-block", "data-desk-set-block": "chrome", children: [
-                /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("div", { className: "ts-set-head", children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("span", { className: "ts-set-title", children: "\u6807\u9898\u680F" }),
-                  /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("span", { className: "ts-set-hint", children: CHROME_LABEL[chrome] })
+              narrow ? null : /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("div", { className: "ts-set-block", "data-desk-set-block": "chrome", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("div", { className: "ts-set-head", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { className: "ts-set-title", children: "\u6807\u9898\u680F" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { className: "ts-set-hint", children: CHROME_LABEL[chrome] })
                 ] }),
-                /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("div", { className: "ts-set-row", children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("span", { className: "ts-set-k", children: "\u4F4D\u7F6E" }),
-                  /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("span", { className: "ts-set-seg", children: CHROME_POSITIONS.map((p) => /* @__PURE__ */ (0, import_jsx_runtime15.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("div", { className: "ts-set-row", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { className: "ts-set-k", children: "\u4F4D\u7F6E" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { className: "ts-set-seg", children: CHROME_POSITIONS.map((p) => /* @__PURE__ */ (0, import_jsx_runtime16.jsx)(
                     "button",
                     {
                       className: "ts-set-opt",
@@ -10358,12 +10578,12 @@ function DeskDock({ project, sessionId, onBack }) {
                   )) })
                 ] })
               ] }),
-              /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("div", { className: "ts-set-block", "data-desk-set-block": "theme", children: [
-                /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("div", { className: "ts-set-head", children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("span", { className: "ts-set-title", children: "\u4E3B\u9898" }),
-                  /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("span", { className: "ts-set-hint", "data-desk-theme-status": "", children: themeMode ? THEME_MODE_LABEL[themeMode] + (themeMode === "system" && themeScheme ? ` \xB7 \u5F53\u524D${themeScheme === "light" ? "\u6D45\u8272" : "\u6DF1\u8272"}` : "") : "\u5BBF\u4E3B\u672A\u63D0\u4F9B\u4E3B\u9898\u670D\u52A1" })
+              /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("div", { className: "ts-set-block", "data-desk-set-block": "theme", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("div", { className: "ts-set-head", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { className: "ts-set-title", children: "\u4E3B\u9898" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { className: "ts-set-hint", "data-desk-theme-status": "", children: themeMode ? THEME_MODE_LABEL[themeMode] + (themeMode === "system" && themeScheme ? ` \xB7 \u5F53\u524D${themeScheme === "light" ? "\u6D45\u8272" : "\u6DF1\u8272"}` : "") : "\u5BBF\u4E3B\u672A\u63D0\u4F9B\u4E3B\u9898\u670D\u52A1" })
                 ] }),
-                /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("div", { className: "ts-set-row", children: /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("span", { className: "ts-set-seg ts-set-seg--fill", children: THEME_MODES.map((mode) => /* @__PURE__ */ (0, import_jsx_runtime15.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("div", { className: "ts-set-row", children: /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { className: "ts-set-seg ts-set-seg--fill", children: THEME_MODES.map((mode) => /* @__PURE__ */ (0, import_jsx_runtime16.jsx)(
                   "button",
                   {
                     className: "ts-set-opt",
@@ -10377,13 +10597,13 @@ function DeskDock({ project, sessionId, onBack }) {
                   mode
                 )) }) })
               ] }),
-              /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("div", { className: "ts-set-block", "data-desk-set-block": "skin", children: [
-                /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("div", { className: "ts-set-head", children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("span", { className: "ts-set-title", children: "\u80CC\u666F\u76AE\u80A4" }),
-                  /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("span", { className: "ts-set-hint", "data-desk-skin-status": "", children: skin ? `${SKINS.find((s2) => s2.id === skin)?.label ?? skin} \xB7 ${skinMode === "light" ? "\u6D45\u8272" : "\u6DF1\u8272"}\u4E3B\u9898` : "\u65E0\u76AE\u80A4" })
+              /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("div", { className: "ts-set-block", "data-desk-set-block": "skin", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("div", { className: "ts-set-head", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { className: "ts-set-title", children: "\u80CC\u666F\u76AE\u80A4" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { className: "ts-set-hint", "data-desk-skin-status": "", children: skin ? `${SKINS.find((s2) => s2.id === skin)?.label ?? skin} \xB7 ${skinMode === "light" ? "\u6D45\u8272" : "\u6DF1\u8272"}\u4E3B\u9898` : "\u65E0\u76AE\u80A4" })
                 ] }),
-                /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("div", { className: "ts-skin-scroll", "data-desk-skin-scroll": "", children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime15.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("div", { className: "ts-skin-scroll", "data-desk-skin-scroll": "", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime16.jsx)(
                     "button",
                     {
                       className: "ts-skin-cell ts-skin-none",
@@ -10393,9 +10613,9 @@ function DeskDock({ project, sessionId, onBack }) {
                       children: "\u65E0\u76AE\u80A4"
                     }
                   ),
-                  SKIN_GROUPS.filter((g) => skinMode === "light" ? g.group.includes("\u6D45\u8272") : g.group.includes("\u6DF1\u8272")).map((g) => /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("div", { className: "ts-skin-group", children: [
-                    /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("span", { className: "ts-skin-glabel", children: g.group }),
-                    /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("div", { className: "ts-set-grid", children: g.items.map((s2) => /* @__PURE__ */ (0, import_jsx_runtime15.jsx)(
+                  SKIN_GROUPS.filter((g) => skinMode === "light" ? g.group.includes("\u6D45\u8272") : g.group.includes("\u6DF1\u8272")).map((g) => /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("div", { className: "ts-skin-group", children: [
+                    /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { className: "ts-skin-glabel", children: g.group }),
+                    /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("div", { className: "ts-set-grid", children: g.items.map((s2) => /* @__PURE__ */ (0, import_jsx_runtime16.jsx)(
                       "button",
                       {
                         className: "ts-skin-cell",
@@ -10410,18 +10630,18 @@ function DeskDock({ project, sessionId, onBack }) {
                   ] }, g.group))
                 ] })
               ] }),
-              /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("div", { className: "ts-set-block", "data-desk-set-block": "font", children: [
-                /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("div", { className: "ts-set-head", children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("span", { className: "ts-set-title", children: "\u5B57\u4F53" }),
-                  /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("span", { className: "ts-set-hint", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("div", { className: "ts-set-block", "data-desk-set-block": "font", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("div", { className: "ts-set-head", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { className: "ts-set-title", children: "\u5B57\u4F53" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("span", { className: "ts-set-hint", children: [
                     FONT_LEVELS.find((f) => f.id === font)?.label,
                     " \xB7 ",
                     FONT_FAMILIES.find((f) => f.id === fontFamily)?.label
                   ] })
                 ] }),
-                /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("div", { className: "ts-set-row", children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("span", { className: "ts-set-k", children: "\u754C\u9762\u5B57\u53F7" }),
-                  /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("span", { className: "ts-set-seg", children: FONT_LEVELS.map((f) => /* @__PURE__ */ (0, import_jsx_runtime15.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("div", { className: "ts-set-row", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { className: "ts-set-k", children: "\u754C\u9762\u5B57\u53F7" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { className: "ts-set-seg", children: FONT_LEVELS.map((f) => /* @__PURE__ */ (0, import_jsx_runtime16.jsx)(
                     "button",
                     {
                       className: "ts-set-opt",
@@ -10433,9 +10653,9 @@ function DeskDock({ project, sessionId, onBack }) {
                     f.id
                   )) })
                 ] }),
-                /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("div", { className: "ts-set-row", children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("span", { className: "ts-set-k", children: "\u5B57\u65CF" }),
-                  /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("span", { className: "ts-set-seg", children: FONT_FAMILIES.map((f) => /* @__PURE__ */ (0, import_jsx_runtime15.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("div", { className: "ts-set-row", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { className: "ts-set-k", children: "\u5B57\u65CF" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { className: "ts-set-seg", children: FONT_FAMILIES.map((f) => /* @__PURE__ */ (0, import_jsx_runtime16.jsx)(
                     "button",
                     {
                       className: "ts-set-opt",
@@ -10451,7 +10671,7 @@ function DeskDock({ project, sessionId, onBack }) {
             ]
           }
         ) : null,
-        projOpen ? /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)(
+        projOpen ? /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)(
           "div",
           {
             className: "ts-pop ts-projsw",
@@ -10460,19 +10680,19 @@ function DeskDock({ project, sessionId, onBack }) {
             onMouseEnter: () => hoverProj(true),
             onMouseLeave: () => hoverProj(false),
             children: [
-              /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("div", { className: "ts-set-head", children: [
-                /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("span", { className: "ts-set-title", children: "\u5207\u6362\u9879\u76EE" }),
-                /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("span", { className: "ts-set-hint", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("div", { className: "ts-set-head", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { className: "ts-set-title", children: "\u5207\u6362\u9879\u76EE" }),
+                /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("span", { className: "ts-set-hint", children: [
                   projectList.length,
                   " \u4E2A \xB7 \u70B9\u4E00\u884C\u8FDB\u5B83\u7684\u5DE5\u4F5C\u53F0"
                 ] })
               ] }),
-              /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("div", { className: "ts-projsw-list", children: sortedProjectList.map((p) => {
+              /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("div", { className: "ts-projsw-list", children: sortedProjectList.map((p) => {
                 const acts = projectActivity[p.id] || [];
                 const running = acts.filter((a) => a.state === "active").length;
                 const pending = acts.filter((a) => a.state === "pending").length;
                 const current2 = p.id === project.id;
-                return /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)(
+                return /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)(
                   "button",
                   {
                     className: "ts-projsw-row",
@@ -10487,29 +10707,29 @@ ${p.path}` + (acts.length ? `
                       if (!current2) enterProjectWorkbench(p.id);
                     },
                     children: [
-                      /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("span", { className: "ts-projsw-top", children: [
-                        /* @__PURE__ */ (0, import_jsx_runtime15.jsx)(
+                      /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("span", { className: "ts-projsw-top", children: [
+                        /* @__PURE__ */ (0, import_jsx_runtime16.jsx)(
                           "span",
                           {
                             className: `ts-projsw-dot${running ? " is-run" : pending ? " is-wait" : ""}`,
                             "aria-hidden": "true"
                           }
                         ),
-                        /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("span", { className: "ts-projsw-name", children: p.name }),
-                        current2 ? /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("span", { className: "ts-projsw-cur", children: "\u5F53\u524D" }) : null
+                        /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { className: "ts-projsw-name", children: p.name }),
+                        current2 ? /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { className: "ts-projsw-cur", children: "\u5F53\u524D" }) : null
                       ] }),
-                      /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("span", { className: "ts-projsw-meta", children: p.path }),
-                      /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("span", { className: "ts-projsw-tags", children: [
-                        running ? /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("span", { className: "ts-projsw-tag run", children: [
+                      /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { className: "ts-projsw-meta", children: p.path }),
+                      /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("span", { className: "ts-projsw-tags", children: [
+                        running ? /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("span", { className: "ts-projsw-tag run", children: [
                           "\u25CF \u8FD0\u884C\u4E2D ",
                           running
                         ] }) : null,
-                        pending && !running ? /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("span", { className: "ts-projsw-tag wait", children: [
+                        pending && !running ? /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("span", { className: "ts-projsw-tag wait", children: [
                           "\u5F85\u786E\u8BA4 ",
                           pending
                         ] }) : null,
-                        !running && !pending ? /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("span", { className: "ts-projsw-tag idle", children: "\u65E0\u8FDB\u884C\u4E2D\u5BF9\u8BDD" }) : null,
-                        /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("span", { className: "ts-projsw-age", children: [
+                        !running && !pending ? /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { className: "ts-projsw-tag idle", children: "\u65E0\u8FDB\u884C\u4E2D\u5BF9\u8BDD" }) : null,
+                        /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("span", { className: "ts-projsw-age", children: [
                           "\u66F4\u65B0\u4E8E ",
                           relAge(p.updatedAt)
                         ] })
@@ -10524,7 +10744,7 @@ ${p.path}` + (acts.length ? `
         ) : null,
         Object.entries(containersRef.current).map(([id, el]) => {
           const node = nodeFor(id);
-          return node ? (0, import_react_dom5.createPortal)(node, el, id) : null;
+          return node ? (0, import_react_dom6.createPortal)(node, el, id) : null;
         })
       ]
     }
@@ -10532,17 +10752,17 @@ ${p.path}` + (acts.length ? `
 }
 
 // client/src/panel/ControlRoom.tsx
-var import_jsx_runtime16 = require("react/jsx-runtime");
+var import_jsx_runtime17 = require("react/jsx-runtime");
 function ControlRoom({ sessionId }) {
-  (0, import_react20.useEffect)(() => {
+  (0, import_react21.useEffect)(() => {
     injectProjectCenterStyles();
   }, []);
-  (0, import_react20.useEffect)(() => {
+  (0, import_react21.useEffect)(() => {
     setControlRoomScreen("desk");
     requestWorkbench();
   }, []);
-  const [projects, setProjects] = (0, import_react20.useState)(() => loadProjects());
-  (0, import_react20.useEffect)(() => {
+  const [projects, setProjects] = (0, import_react21.useState)(() => loadProjects());
+  (0, import_react21.useEffect)(() => {
     const un = subscribeProjects(setProjects);
     const pull = () => {
       void syncProjectsFromServer().then(() => {
@@ -10568,11 +10788,11 @@ function ControlRoom({ sessionId }) {
     }
     return remembered;
   };
-  const [openedId, setOpenedId] = (0, import_react20.useState)(() => restoreOpenedId(sessionId));
-  (0, import_react20.useLayoutEffect)(() => {
+  const [openedId, setOpenedId] = (0, import_react21.useState)(() => restoreOpenedId(sessionId));
+  (0, import_react21.useLayoutEffect)(() => {
     setOpenedId(restoreOpenedId(sessionId));
   }, [sessionId]);
-  (0, import_react20.useEffect)(() => onRequestWorkbench((targetSid) => {
+  (0, import_react21.useEffect)(() => onRequestWorkbench((targetSid) => {
     setProjects(loadProjects());
     if (targetSid && sessionId && targetSid !== sessionId) return;
     const remembered = sessionId ? recallOpenedProject(sessionId) : null;
@@ -10588,7 +10808,7 @@ function ControlRoom({ sessionId }) {
   }), [sessionId]);
   const opened = openedId ? projects.find((p) => p.id === openedId) : void 0;
   if (sessionId && opened) {
-    return /* @__PURE__ */ (0, import_jsx_runtime16.jsx)(
+    return /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(
       DeskDock,
       {
         project: opened,
@@ -10598,10 +10818,10 @@ function ControlRoom({ sessionId }) {
       opened.id
     );
   }
-  return /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("div", { className: "ts-cr ts-center", children: /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("div", { className: "ts-center-emptywrap", children: /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("div", { className: "ts-center-empty", children: [
-    /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("div", { className: "ts-center-empty-title", children: "\u{1F6E0} \u5DE5\u4F5C\u53F0" }),
-    /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("div", { className: "ts-center-empty-sub", children: sessionId ? "\u8FD8\u6CA1\u6709\u9009\u62E9\u9879\u76EE\u3002\u5230\u300C\u9879\u76EE\u4E2D\u5FC3\u300D\u6311\u4E00\u4E2A\u9879\u76EE\uFF0C\u70B9\u5B83\uFF08\u6216\u70B9\u300C\u8FDB\u5165\u5DE5\u4F5C\u53F0\u300D\uFF09\u5373\u8FDB\u5165\u5DE5\u4F5C\u53F0\u3002" : "\u5F53\u524D\u4F1A\u8BDD\u4E0A\u4E0B\u6587\u4E0D\u53EF\u7528\uFF0C\u65E0\u6CD5\u8FDB\u5165\u5DE5\u4F5C\u53F0\u3002" }),
-    sessionId && /* @__PURE__ */ (0, import_jsx_runtime16.jsx)(
+  return /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("div", { className: "ts-cr ts-center", children: /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("div", { className: "ts-center-emptywrap", children: /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "ts-center-empty", children: [
+    /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("div", { className: "ts-center-empty-title", children: "\u{1F6E0} \u5DE5\u4F5C\u53F0" }),
+    /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("div", { className: "ts-center-empty-sub", children: sessionId ? "\u8FD8\u6CA1\u6709\u9009\u62E9\u9879\u76EE\u3002\u5230\u300C\u9879\u76EE\u4E2D\u5FC3\u300D\u6311\u4E00\u4E2A\u9879\u76EE\uFF0C\u70B9\u5B83\uFF08\u6216\u70B9\u300C\u8FDB\u5165\u5DE5\u4F5C\u53F0\u300D\uFF09\u5373\u8FDB\u5165\u5DE5\u4F5C\u53F0\u3002" : "\u5F53\u524D\u4F1A\u8BDD\u4E0A\u4E0B\u6587\u4E0D\u53EF\u7528\uFF0C\u65E0\u6CD5\u8FDB\u5165\u5DE5\u4F5C\u53F0\u3002" }),
+    sessionId && /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(
       "button",
       {
         className: "ts-btn ts-btn-primary",
@@ -10613,13 +10833,13 @@ function ControlRoom({ sessionId }) {
 }
 
 // client/src/panel/ProjectCenter.tsx
-var import_react22 = require("react");
+var import_react23 = require("react");
 
 // client/src/panel/AddProjectDialog.tsx
-var import_react21 = __toESM(require("react"), 1);
-var import_jsx_runtime17 = require("react/jsx-runtime");
+var import_react22 = __toESM(require("react"), 1);
+var import_jsx_runtime18 = require("react/jsx-runtime");
 function Icon({ name, size = 14 }) {
-  return /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("span", { className: "ts-ico", dangerouslySetInnerHTML: { __html: iconSvg(name, size) } });
+  return /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("span", { className: "ts-ico", dangerouslySetInnerHTML: { __html: iconSvg(name, size) } });
 }
 function baseName(p) {
   const parts = String(p || "").split("/").filter(Boolean);
@@ -10645,36 +10865,36 @@ function rootOf(p) {
   return m ? `${m[1].toUpperCase()}:/` : "/";
 }
 function AddProjectDialog({ onClose, onCreated }) {
-  const [cwd, setCwd] = (0, import_react21.useState)("");
-  const [parent, setParent] = (0, import_react21.useState)(null);
-  const [roots, setRoots] = (0, import_react21.useState)([]);
-  const [entries, setEntries] = (0, import_react21.useState)([]);
-  const [loading, setLoading] = (0, import_react21.useState)(true);
-  const [fsError, setFsError] = (0, import_react21.useState)(null);
-  const [selectedPath, setSelectedPath] = (0, import_react21.useState)(null);
-  const [name, setName] = (0, import_react21.useState)("");
-  const [description, setDescription] = (0, import_react21.useState)("");
-  const [newOpen, setNewOpen] = (0, import_react21.useState)(false);
-  const [newName, setNewName] = (0, import_react21.useState)("");
-  const [renameOpen, setRenameOpen] = (0, import_react21.useState)(false);
-  const [renameName, setRenameName] = (0, import_react21.useState)("");
-  const [folderBusy, setFolderBusy] = (0, import_react21.useState)(false);
-  const [actionError, setActionError] = (0, import_react21.useState)(null);
-  const [source, setSource] = (0, import_react21.useState)("local");
-  const [repoUrl, setRepoUrl] = (0, import_react21.useState)("");
-  const [cloneParent, setCloneParent] = (0, import_react21.useState)(null);
-  const [cloneName, setCloneName] = (0, import_react21.useState)("");
-  const [cloneTaskId, setCloneTaskId] = (0, import_react21.useState)(null);
-  const [cloneStatus, setCloneStatus] = (0, import_react21.useState)(null);
-  const [cloneLog, setCloneLog] = (0, import_react21.useState)([]);
-  const [cloneStarting, setCloneStarting] = (0, import_react21.useState)(false);
+  const [cwd, setCwd] = (0, import_react22.useState)("");
+  const [parent, setParent] = (0, import_react22.useState)(null);
+  const [roots, setRoots] = (0, import_react22.useState)([]);
+  const [entries, setEntries] = (0, import_react22.useState)([]);
+  const [loading, setLoading] = (0, import_react22.useState)(true);
+  const [fsError, setFsError] = (0, import_react22.useState)(null);
+  const [selectedPath, setSelectedPath] = (0, import_react22.useState)(null);
+  const [name, setName] = (0, import_react22.useState)("");
+  const [description, setDescription] = (0, import_react22.useState)("");
+  const [newOpen, setNewOpen] = (0, import_react22.useState)(false);
+  const [newName, setNewName] = (0, import_react22.useState)("");
+  const [renameOpen, setRenameOpen] = (0, import_react22.useState)(false);
+  const [renameName, setRenameName] = (0, import_react22.useState)("");
+  const [folderBusy, setFolderBusy] = (0, import_react22.useState)(false);
+  const [actionError, setActionError] = (0, import_react22.useState)(null);
+  const [source, setSource] = (0, import_react22.useState)("local");
+  const [repoUrl, setRepoUrl] = (0, import_react22.useState)("");
+  const [cloneParent, setCloneParent] = (0, import_react22.useState)(null);
+  const [cloneName, setCloneName] = (0, import_react22.useState)("");
+  const [cloneTaskId, setCloneTaskId] = (0, import_react22.useState)(null);
+  const [cloneStatus, setCloneStatus] = (0, import_react22.useState)(null);
+  const [cloneLog, setCloneLog] = (0, import_react22.useState)([]);
+  const [cloneStarting, setCloneStarting] = (0, import_react22.useState)(false);
   const clonePending = Boolean(cloneTaskId) && cloneStatus?.state === "running";
-  const [repoList, setRepoList] = (0, import_react21.useState)([]);
-  const [repoListError, setRepoListError] = (0, import_react21.useState)("");
-  const [repoListLoading, setRepoListLoading] = (0, import_react21.useState)(false);
-  const [repoQuery, setRepoQuery] = (0, import_react21.useState)("");
-  const [repoPickerOpen, setRepoPickerOpen] = (0, import_react21.useState)(false);
-  const load2 = (0, import_react21.useCallback)(async (path) => {
+  const [repoList, setRepoList] = (0, import_react22.useState)([]);
+  const [repoListError, setRepoListError] = (0, import_react22.useState)("");
+  const [repoListLoading, setRepoListLoading] = (0, import_react22.useState)(false);
+  const [repoQuery, setRepoQuery] = (0, import_react22.useState)("");
+  const [repoPickerOpen, setRepoPickerOpen] = (0, import_react22.useState)(false);
+  const load2 = (0, import_react22.useCallback)(async (path) => {
     setLoading(true);
     setFsError(null);
     try {
@@ -10689,7 +10909,7 @@ function AddProjectDialog({ onClose, onCreated }) {
       setLoading(false);
     }
   }, []);
-  (0, import_react21.useEffect)(() => {
+  (0, import_react22.useEffect)(() => {
     load2();
   }, [load2]);
   const crumbs = crumbsOf(cwd);
@@ -10709,7 +10929,7 @@ function AddProjectDialog({ onClose, onCreated }) {
     setSelectedPath(cwd);
     if (!name) setName(cwd.split("/").pop() || "");
   };
-  (0, import_react21.useEffect)(() => {
+  (0, import_react22.useEffect)(() => {
     setCloneParent(cwd || null);
   }, [cwd]);
   const repoNameFrom = (url) => {
@@ -10770,7 +10990,7 @@ function AddProjectDialog({ onClose, onCreated }) {
     const q = repoQuery.trim().toLowerCase();
     return r.fullName.toLowerCase().includes(q) || r.description.toLowerCase().includes(q) || r.language.toLowerCase().includes(q);
   }) : repoList;
-  (0, import_react21.useEffect)(() => {
+  (0, import_react22.useEffect)(() => {
     if (!cloneTaskId) return;
     let stopped = false;
     let misses = 0;
@@ -10855,19 +11075,19 @@ function AddProjectDialog({ onClose, onCreated }) {
       setFolderBusy(false);
     }
   };
-  return /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("div", { className: "ts-modal-mask", onClick: (e) => {
+  return /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("div", { className: "ts-modal-mask", onClick: (e) => {
     if (e.target === e.currentTarget) onClose();
-  }, children: /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "ts-modal ts-modal-addproj", children: [
-    /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "ts-modal-head", children: [
-      /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("span", { className: "ts-modal-title", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(Icon, { name: "folder", size: 15 }),
+  }, children: /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("div", { className: "ts-modal ts-modal-addproj", children: [
+    /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("div", { className: "ts-modal-head", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("span", { className: "ts-modal-title", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(Icon, { name: "folder", size: 15 }),
         " \u6DFB\u52A0\u9879\u76EE"
       ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("button", { className: "ts-icon-btn", onClick: onClose, title: "\u5173\u95ED", children: "\u2715" })
+      /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("button", { className: "ts-icon-btn", onClick: onClose, title: "\u5173\u95ED", children: "\u2715" })
     ] }),
-    /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "ts-modal-body ts-addproj-body", children: [
-      /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "ts-srcpick", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)(
+    /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("div", { className: "ts-modal-body ts-addproj-body", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("div", { className: "ts-srcpick", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)(
           "button",
           {
             className: `ts-srcbtn${source === "local" ? " ts-srcbtn-on" : ""}`,
@@ -10875,12 +11095,12 @@ function AddProjectDialog({ onClose, onCreated }) {
             disabled: clonePending,
             title: "\u9009\u62E9\u4E00\u4E2A\u5DF2\u6709\u7684\u672C\u5730\u76EE\u5F55\u4F5C\u4E3A\u9879\u76EE",
             children: [
-              /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(Icon, { name: "folder" }),
+              /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(Icon, { name: "folder" }),
               " \u672C\u5730\u5DF2\u6709\u76EE\u5F55"
             ]
           }
         ),
-        /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)(
+        /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)(
           "button",
           {
             className: `ts-srcbtn${source === "clone" ? " ts-srcbtn-on" : ""}`,
@@ -10888,24 +11108,24 @@ function AddProjectDialog({ onClose, onCreated }) {
             disabled: clonePending,
             title: "\u4ECE GitHub \u514B\u9686\u4E00\u4E2A\u4ED3\u5E93\uFF0C\u514B\u9686\u5B8C\u76F4\u63A5\u4F5C\u4E3A\u9879\u76EE",
             children: [
-              /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(Icon, { name: "branch" }),
+              /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(Icon, { name: "branch" }),
               " \u4ECE GitHub \u514B\u9686"
             ]
           }
         )
       ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("div", { className: "ts-addproj-col ts-addproj-col-left", children: /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "ts-addproj-picker", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("label", { className: "ts-field-label", children: source === "clone" ? "\u514B\u9686\u5230\u54EA\u4E2A\u76EE\u5F55\uFF08\u6D4F\u89C8\u9009\u62E9\u7236\u76EE\u5F55\uFF09" : "\u9009\u62E9\u9879\u76EE\u6587\u4EF6\u5939" }),
-        /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "ts-fs", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "ts-fs-crumb", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "ts-fs-crumbs", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("span", { className: "ts-fs-rooticon", onClick: () => load2(roots[0]), title: "\u6839\u76EE\u5F55", children: /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(Icon, { name: "folder", size: 13 }) }),
-              crumbs.map((c, i) => /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)(import_react21.default.Fragment, { children: [
-                /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("span", { onClick: () => gotoCrumb(i), children: c }),
-                i < crumbs.length - 1 && /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("span", { className: "ts-fs-sep", children: "/" })
+      /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("div", { className: "ts-addproj-col ts-addproj-col-left", children: /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("div", { className: "ts-addproj-picker", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("label", { className: "ts-field-label", children: source === "clone" ? "\u514B\u9686\u5230\u54EA\u4E2A\u76EE\u5F55\uFF08\u6D4F\u89C8\u9009\u62E9\u7236\u76EE\u5F55\uFF09" : "\u9009\u62E9\u9879\u76EE\u6587\u4EF6\u5939" }),
+        /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("div", { className: "ts-fs", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("div", { className: "ts-fs-crumb", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("div", { className: "ts-fs-crumbs", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("span", { className: "ts-fs-rooticon", onClick: () => load2(roots[0]), title: "\u6839\u76EE\u5F55", children: /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(Icon, { name: "folder", size: 13 }) }),
+              crumbs.map((c, i) => /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)(import_react22.default.Fragment, { children: [
+                /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("span", { onClick: () => gotoCrumb(i), children: c }),
+                i < crumbs.length - 1 && /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("span", { className: "ts-fs-sep", children: "/" })
               ] }, i))
             ] }),
-            roots.length > 1 && roots.map((r) => /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(
+            roots.length > 1 && roots.map((r) => /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(
               "span",
               {
                 className: `ts-fs-drive${r === rootOf(cwd) ? " ts-fs-drive-on" : ""}`,
@@ -10915,7 +11135,7 @@ function AddProjectDialog({ onClose, onCreated }) {
               },
               r
             )),
-            /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(
+            /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(
               "button",
               {
                 className: "ts-btn",
@@ -10931,29 +11151,29 @@ function AddProjectDialog({ onClose, onCreated }) {
               }
             )
           ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "ts-fs-list", children: [
-            loading && /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("div", { className: "ts-hint", children: "\u52A0\u8F7D\u4E2D\u2026" }),
-            fsError && /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "ts-hint", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("div", { className: "ts-fs-list", children: [
+            loading && /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("div", { className: "ts-hint", children: "\u52A0\u8F7D\u4E2D\u2026" }),
+            fsError && /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("div", { className: "ts-hint", children: [
               "\u26A0\uFE0F ",
               fsError
             ] }),
-            !loading && !fsError && entries.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("div", { className: "ts-hint", children: "\u8BE5\u76EE\u5F55\u4E0B\u6CA1\u6709\u5B50\u6587\u4EF6\u5939" }),
-            entries.map((entry) => /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("button", { className: "ts-fs-item", onClick: () => enterDir(entry), children: [
-              /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("span", { className: "ts-fs-item-name", children: [
-                /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(Icon, { name: "folder", size: 13 }),
+            !loading && !fsError && entries.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("div", { className: "ts-hint", children: "\u8BE5\u76EE\u5F55\u4E0B\u6CA1\u6709\u5B50\u6587\u4EF6\u5939" }),
+            entries.map((entry) => /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("button", { className: "ts-fs-item", onClick: () => enterDir(entry), children: [
+              /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("span", { className: "ts-fs-item-name", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(Icon, { name: "folder", size: 13 }),
                 " ",
                 entry.name
               ] }),
-              entry.isProject && /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("span", { className: "ts-tag", children: "\u68C0\u6D4B\u5230\u9879\u76EE" })
+              entry.isProject && /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("span", { className: "ts-tag", children: "\u68C0\u6D4B\u5230\u9879\u76EE" })
             ] }, entry.path))
           ] })
         ] })
       ] }) }),
-      /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "ts-addproj-col ts-addproj-col-right", children: [
-        source === "clone" && /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "ts-clone", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "ts-clone-head", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("label", { className: "ts-field-label", children: "\u4ED3\u5E93\u5730\u5740" }),
-            /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)(
+      /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("div", { className: "ts-addproj-col ts-addproj-col-right", children: [
+        source === "clone" && /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("div", { className: "ts-clone", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("div", { className: "ts-clone-head", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("label", { className: "ts-field-label", children: "\u4ED3\u5E93\u5730\u5740" }),
+            /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)(
               "button",
               {
                 className: "ts-btn ts-btn-sm",
@@ -10961,17 +11181,17 @@ function AddProjectDialog({ onClose, onCreated }) {
                 disabled: clonePending,
                 title: "\u4ECE\u4F60 GitHub \u8D26\u53F7\u4E0B\u5DF2\u6709\u7684\u4ED3\u5E93\u4E2D\u9009\u4E00\u4E2A",
                 children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(Icon, { name: "branch" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(Icon, { name: "branch" }),
                   " ",
                   repoPickerOpen ? "\u6536\u8D77\u4ED3\u5E93\u6E05\u5355" : "\u9009\u62E9\u6211\u7684\u4ED3\u5E93"
                 ]
               }
             )
           ] }),
-          repoPickerOpen && /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "ts-repolist", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "ts-repo-search", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(Icon, { name: "search" }),
-              /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(
+          repoPickerOpen && /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("div", { className: "ts-repolist", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("div", { className: "ts-repo-search", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(Icon, { name: "search" }),
+              /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(
                 "input",
                 {
                   className: "ts-repo-search-input",
@@ -10981,38 +11201,38 @@ function AddProjectDialog({ onClose, onCreated }) {
                   onChange: (e) => setRepoQuery(e.target.value)
                 }
               ),
-              repoQuery && /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("button", { className: "ts-repo-clear", onClick: () => setRepoQuery(""), title: "\u6E05\u7A7A", children: /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(Icon, { name: "close", size: 12 }) })
+              repoQuery && /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("button", { className: "ts-repo-clear", onClick: () => setRepoQuery(""), title: "\u6E05\u7A7A", children: /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(Icon, { name: "close", size: 12 }) })
             ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "ts-repo-items", children: [
-              repoListLoading && /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("div", { className: "ts-hint", children: "\u6B63\u5728\u8BFB\u53D6\u4F60\u7684\u4ED3\u5E93\u2026" }),
-              !repoListLoading && repoListError && /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "ts-hint", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("div", { className: "ts-repo-items", children: [
+              repoListLoading && /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("div", { className: "ts-hint", children: "\u6B63\u5728\u8BFB\u53D6\u4F60\u7684\u4ED3\u5E93\u2026" }),
+              !repoListLoading && repoListError && /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("div", { className: "ts-hint", children: [
                 "\u26A0\uFE0F ",
                 repoListError
               ] }),
-              !repoListLoading && !repoListError && repoList.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("div", { className: "ts-hint", children: "\u6CA1\u6709\u8BFB\u5230\u4ED3\u5E93" }),
-              !repoListLoading && repoList.length > 0 && filteredRepos.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "ts-hint", children: [
+              !repoListLoading && !repoListError && repoList.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("div", { className: "ts-hint", children: "\u6CA1\u6709\u8BFB\u5230\u4ED3\u5E93" }),
+              !repoListLoading && repoList.length > 0 && filteredRepos.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("div", { className: "ts-hint", children: [
                 "\u6CA1\u6709\u5339\u914D\u300C",
                 repoQuery,
                 "\u300D\u7684\u4ED3\u5E93"
               ] }),
-              filteredRepos.map((r) => /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)(
+              filteredRepos.map((r) => /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)(
                 "button",
                 {
                   className: "ts-repo-item",
                   onClick: () => pickRepo(r),
                   title: r.url,
                   children: [
-                    /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("span", { className: "ts-repo-name", children: r.fullName }),
-                    r.isPrivate && /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("span", { className: "ts-repo-badge", title: "\u79C1\u6709\u4ED3\u5E93", children: /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(Icon, { name: "lock", size: 11 }) }),
-                    r.language && /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("span", { className: "ts-repo-lang", children: r.language }),
-                    r.description && /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("span", { className: "ts-repo-desc", children: r.description })
+                    /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("span", { className: "ts-repo-name", children: r.fullName }),
+                    r.isPrivate && /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("span", { className: "ts-repo-badge", title: "\u79C1\u6709\u4ED3\u5E93", children: /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(Icon, { name: "lock", size: 11 }) }),
+                    r.language && /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("span", { className: "ts-repo-lang", children: r.language }),
+                    r.description && /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("span", { className: "ts-repo-desc", children: r.description })
                   ]
                 },
                 r.fullName
               ))
             ] })
           ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(
+          /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(
             "input",
             {
               className: "ts-input",
@@ -11028,8 +11248,8 @@ function AddProjectDialog({ onClose, onCreated }) {
               }
             }
           ),
-          /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "ts-clone-row", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(
+          /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("div", { className: "ts-clone-row", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(
               "input",
               {
                 className: "ts-input ts-newfolder-input",
@@ -11039,7 +11259,7 @@ function AddProjectDialog({ onClose, onCreated }) {
                 onChange: (e) => setCloneName(e.target.value)
               }
             ),
-            /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(
+            /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(
               "button",
               {
                 className: "ts-btn ts-btn-primary ts-btn-sm",
@@ -11049,33 +11269,33 @@ function AddProjectDialog({ onClose, onCreated }) {
               }
             )
           ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("span", { className: "ts-newfolder-hint", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("span", { className: "ts-newfolder-hint", children: [
             cloneParent ? `\u5C06\u514B\u9686\u5230\uFF1A${cloneParent}` : "\u8BF7\u5148\u5728\u4E0A\u9762\u6D4F\u89C8\u9009\u62E9\u4E00\u4E2A\u76EE\u5F55",
             "\uFF08\u79C1\u6709\u4ED3\u5E93\u81EA\u52A8\u7528\u672C\u673A gh \u767B\u5F55\u6001\uFF09"
           ] }),
-          cloneStatus && /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "ts-clone-progress", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("div", { className: "ts-clone-bar", children: /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(
+          cloneStatus && /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("div", { className: "ts-clone-progress", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("div", { className: "ts-clone-bar", children: /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(
               "div",
               {
                 className: `ts-clone-fill${cloneStatus.state === "error" ? " ts-clone-fill-err" : ""}`,
                 style: { width: `${Math.max(2, Math.min(100, cloneStatus.percent))}%` }
               }
             ) }),
-            /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "ts-clone-meta", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("span", { children: [
+            /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("div", { className: "ts-clone-meta", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("span", { children: [
                 cloneStatus.state === "running" && `${cloneStatus.phase || "\u8FDB\u884C\u4E2D"} ${cloneStatus.percent}%`,
                 cloneStatus.state === "done" && `\u2713 \u514B\u9686\u5B8C\u6210\uFF1A${cloneStatus.path}`,
                 cloneStatus.state === "error" && `\u2716 ${cloneStatus.message || "\u514B\u9686\u5931\u8D25"}`,
                 cloneStatus.state === "cancelled" && "\u5DF2\u53D6\u6D88"
               ] }),
-              cloneStatus.state === "done" && /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("button", { className: "ts-btn ts-btn-sm", onClick: finishClone, children: "\u52A0\u5165\u9879\u76EE" })
+              cloneStatus.state === "done" && /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("button", { className: "ts-btn ts-btn-sm", onClick: finishClone, children: "\u52A0\u5165\u9879\u76EE" })
             ] }),
-            cloneLog.length > 0 && cloneStatus.state === "running" && /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("div", { className: "ts-clone-log", children: cloneLog.slice(-3).join("\n") })
+            cloneLog.length > 0 && cloneStatus.state === "running" && /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("div", { className: "ts-clone-log", children: cloneLog.slice(-3).join("\n") })
           ] })
         ] }),
-        source === "local" && /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "ts-addproj-folderops", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "ts-newfolder", children: [
-            !newOpen ? /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(
+        source === "local" && /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("div", { className: "ts-addproj-folderops", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("div", { className: "ts-newfolder", children: [
+            !newOpen ? /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(
               "button",
               {
                 className: "ts-btn ts-btn-sm",
@@ -11088,8 +11308,8 @@ function AddProjectDialog({ onClose, onCreated }) {
                 title: "\u5728\u5F53\u524D\u76EE\u5F55\u4E0B\u65B0\u5EFA\u4E00\u4E2A\u6587\u4EF6\u5939\uFF08\u5B83\u672C\u8EAB\u5C31\u662F\u65B0\u9879\u76EE\uFF09",
                 children: "\uFF0B \u65B0\u5EFA\u6587\u4EF6\u5939"
               }
-            ) : /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)(import_jsx_runtime17.Fragment, { children: [
-              /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(
+            ) : /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)(import_jsx_runtime18.Fragment, { children: [
+              /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(
                 "input",
                 {
                   className: "ts-input ts-newfolder-input",
@@ -11106,7 +11326,7 @@ function AddProjectDialog({ onClose, onCreated }) {
                   }
                 }
               ),
-              /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(
+              /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(
                 "button",
                 {
                   className: "ts-btn ts-btn-primary ts-btn-sm",
@@ -11115,9 +11335,9 @@ function AddProjectDialog({ onClose, onCreated }) {
                   children: folderBusy ? "\u521B\u5EFA\u4E2D\u2026" : "\u521B\u5EFA"
                 }
               ),
-              /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("button", { className: "ts-btn ts-btn-sm", onClick: () => setNewOpen(false), children: "\u53D6\u6D88" })
+              /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("button", { className: "ts-btn ts-btn-sm", onClick: () => setNewOpen(false), children: "\u53D6\u6D88" })
             ] }),
-            selectedPath && (!renameOpen ? /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)(
+            selectedPath && (!renameOpen ? /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)(
               "button",
               {
                 className: "ts-btn ts-btn-sm",
@@ -11129,12 +11349,12 @@ function AddProjectDialog({ onClose, onCreated }) {
                 disabled: folderBusy,
                 title: "\u91CD\u547D\u540D\u5DF2\u9009\u4E2D\u7684\u6587\u4EF6\u5939\uFF08\u540C\u76EE\u5F55\u5185\u6539\u540D\uFF09",
                 children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(Icon, { name: "pencil", size: 12 }),
+                  /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(Icon, { name: "pencil", size: 12 }),
                   " \u91CD\u547D\u540D"
                 ]
               }
-            ) : /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)(import_jsx_runtime17.Fragment, { children: [
-              /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(
+            ) : /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)(import_jsx_runtime18.Fragment, { children: [
+              /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(
                 "input",
                 {
                   className: "ts-input ts-newfolder-input",
@@ -11151,7 +11371,7 @@ function AddProjectDialog({ onClose, onCreated }) {
                   }
                 }
               ),
-              /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(
+              /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(
                 "button",
                 {
                   className: "ts-btn ts-btn-primary ts-btn-sm",
@@ -11160,10 +11380,10 @@ function AddProjectDialog({ onClose, onCreated }) {
                   children: folderBusy ? "\u6539\u540D\u4E2D\u2026" : "\u786E\u8BA4\u6539\u540D"
                 }
               ),
-              /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("button", { className: "ts-btn ts-btn-sm", onClick: () => setRenameOpen(false), children: "\u53D6\u6D88" })
+              /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("button", { className: "ts-btn ts-btn-sm", onClick: () => setRenameOpen(false), children: "\u53D6\u6D88" })
             ] }))
           ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(
+          /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(
             "button",
             {
               className: `ts-btn ${selectedPath === cwd ? "ts-btn-picked" : "ts-btn-primary"} ts-addproj-pickbtn`,
@@ -11174,13 +11394,13 @@ function AddProjectDialog({ onClose, onCreated }) {
             }
           )
         ] }),
-        actionError && /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("span", { className: "ts-newfolder-err", children: [
+        actionError && /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("span", { className: "ts-newfolder-err", children: [
           "\u26A0\uFE0F ",
           actionError
         ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { children: [
-          /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("label", { className: "ts-field-label", children: "\u9879\u76EE\u540D\u79F0\uFF08\u53EF\u9009\uFF0C\u9ED8\u8BA4\u53D6\u6587\u4EF6\u5939\u540D\uFF09" }),
-          /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(
+        /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("div", { children: [
+          /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("label", { className: "ts-field-label", children: "\u9879\u76EE\u540D\u79F0\uFF08\u53EF\u9009\uFF0C\u9ED8\u8BA4\u53D6\u6587\u4EF6\u5939\u540D\uFF09" }),
+          /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(
             "input",
             {
               className: "ts-input",
@@ -11190,9 +11410,9 @@ function AddProjectDialog({ onClose, onCreated }) {
             }
           )
         ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { children: [
-          /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("label", { className: "ts-field-label", children: "\u9879\u76EE\u4ECB\u7ECD\uFF08\u53EF\u9009\uFF0C\u5C55\u793A\u5728\u9879\u76EE\u5361\u7247\u4E0E\u5217\u8868\u91CC\uFF09" }),
-          /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(
+        /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("div", { children: [
+          /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("label", { className: "ts-field-label", children: "\u9879\u76EE\u4ECB\u7ECD\uFF08\u53EF\u9009\uFF0C\u5C55\u793A\u5728\u9879\u76EE\u5361\u7247\u4E0E\u5217\u8868\u91CC\uFF09" }),
+          /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(
             "textarea",
             {
               className: "ts-input ts-textarea",
@@ -11205,9 +11425,9 @@ function AddProjectDialog({ onClose, onCreated }) {
         ] })
       ] })
     ] }),
-    /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "ts-modal-foot", children: [
-      /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("button", { className: "ts-btn", onClick: onClose, children: "\u53D6\u6D88" }),
-      /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(
+    /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("div", { className: "ts-modal-foot", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("button", { className: "ts-btn", onClick: onClose, children: "\u53D6\u6D88" }),
+      /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(
         "button",
         {
           className: "ts-btn ts-btn-primary",
@@ -11222,7 +11442,7 @@ function AddProjectDialog({ onClose, onCreated }) {
 }
 
 // client/src/panel/ProjectCenter.tsx
-var import_jsx_runtime18 = require("react/jsx-runtime");
+var import_jsx_runtime19 = require("react/jsx-runtime");
 installThemeCss();
 startThemeWatch();
 installSkinLayerCss();
@@ -11257,9 +11477,9 @@ function ActivityDots({
 }) {
   if (!items || items.length === 0) return null;
   const tip = items.map((a) => `${dotLabel(a.order)} ${a.state === "pending" ? "\u5F85\u4F60\u786E\u8BA4" : "\u6B63\u5728\u6D3B\u8DC3"} \xB7 ${a.title}`).join("\n");
-  return /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("span", { className: "ts-dots", title: `${tip}
+  return /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-dots", title: `${tip}
 
-\u70B9\u5E8F\u53F7\u53EF\u76F4\u63A5\u8FDB\u5165\u5BF9\u5E94\u5BF9\u8BDD\u7684\u5DE5\u4F5C\u53F0`, children: items.map((a) => /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(
+\u70B9\u5E8F\u53F7\u53EF\u76F4\u63A5\u8FDB\u5165\u5BF9\u5E94\u5BF9\u8BDD\u7684\u5DE5\u4F5C\u53F0`, children: items.map((a) => /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
     "button",
     {
       type: "button",
@@ -11276,8 +11496,8 @@ function ActivityDots({
   )) });
 }
 function DescEditor({ project, onSaved }) {
-  const [editing, setEditing] = (0, import_react22.useState)(false);
-  const [draft, setDraft] = (0, import_react22.useState)(project.description);
+  const [editing, setEditing] = (0, import_react23.useState)(false);
+  const [draft, setDraft] = (0, import_react23.useState)(project.description);
   const begin = (e) => {
     e.stopPropagation();
     setDraft(project.description);
@@ -11289,17 +11509,17 @@ function DescEditor({ project, onSaved }) {
     if (updateProjectDescription(project.id, draft)) onSaved();
   };
   if (!editing) {
-    return /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(
+    return /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
       "span",
       {
         className: "ts-plist-desc ts-desc-editable",
         title: project.description || "\u70B9\u51FB\u586B\u5199\u9879\u76EE\u4ECB\u7ECD",
         onClick: begin,
-        children: project.description || /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("span", { className: "ts-dim", children: "\u70B9\u51FB\u586B\u5199\u2026" })
+        children: project.description || /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-dim", children: "\u70B9\u51FB\u586B\u5199\u2026" })
       }
     );
   }
-  return /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(
+  return /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
     "input",
     {
       className: "ts-input ts-desc-input",
@@ -11322,16 +11542,16 @@ function DescEditor({ project, onSaved }) {
   );
 }
 function ProjectCenter({ sessionId }) {
-  (0, import_react22.useEffect)(() => {
+  (0, import_react23.useEffect)(() => {
     injectProjectCenterStyles();
   }, []);
-  const [projects, setProjects] = (0, import_react22.useState)(() => loadProjects());
-  const [showAdd, setShowAdd] = (0, import_react22.useState)(false);
-  const [prefs, setPrefs] = (0, import_react22.useState)(() => loadViewPrefs());
-  const [pendingRemove, setPendingRemove] = (0, import_react22.useState)(null);
-  const [deleteSource, setDeleteSource] = (0, import_react22.useState)(false);
-  const [removing, setRemoving] = (0, import_react22.useState)(false);
-  const [infos, setInfos] = (0, import_react22.useState)({});
+  const [projects, setProjects] = (0, import_react23.useState)(() => loadProjects());
+  const [showAdd, setShowAdd] = (0, import_react23.useState)(false);
+  const [prefs, setPrefs] = (0, import_react23.useState)(() => loadViewPrefs());
+  const [pendingRemove, setPendingRemove] = (0, import_react23.useState)(null);
+  const [deleteSource, setDeleteSource] = (0, import_react23.useState)(false);
+  const [removing, setRemoving] = (0, import_react23.useState)(false);
+  const [infos, setInfos] = (0, import_react23.useState)({});
   const activity = useProjectsActivity(projects);
   const setPref = (patch) => {
     const next = { ...prefs, ...patch };
@@ -11339,7 +11559,7 @@ function ProjectCenter({ sessionId }) {
     saveViewPrefs(next);
   };
   const infoOf = (p) => infos[p.path];
-  const shown = (0, import_react22.useMemo)(() => {
+  const shown = (0, import_react23.useMemo)(() => {
     const withTime = projects.map((p) => {
       const info = infos[p.path];
       const newest = info?.mtimeMs || 0;
@@ -11353,7 +11573,7 @@ function ProjectCenter({ sessionId }) {
     return sortProjects(withTime, prefs.sort);
   }, [projects, infos, prefs.sort]);
   const refresh = () => setProjects(loadProjects());
-  (0, import_react22.useEffect)(() => {
+  (0, import_react23.useEffect)(() => {
     const un = subscribeProjects(setProjects);
     const pull = () => {
       void syncProjectsFromServer().then(() => refresh());
@@ -11365,12 +11585,12 @@ function ProjectCenter({ sessionId }) {
       window.removeEventListener("focus", pull);
     };
   }, []);
-  (0, import_react22.useEffect)(() => {
+  (0, import_react23.useEffect)(() => {
     setControlRoomScreen("list");
     document.body.classList.add("ts-center-open");
     return () => document.body.classList.remove("ts-center-open");
   }, []);
-  (0, import_react22.useEffect)(() => {
+  (0, import_react23.useEffect)(() => {
     let alive = true;
     const paths = projects.map((p) => p.path);
     if (paths.length === 0) return;
@@ -11392,9 +11612,9 @@ function ProjectCenter({ sessionId }) {
     if (!current2 && !targetSessionId) return;
     if (enterProjectWorkbench(p.id, targetSessionId, intent)) refresh();
   };
-  const [busyId, setBusyId] = (0, import_react22.useState)(null);
-  const [notice, setNotice] = (0, import_react22.useState)(null);
-  (0, import_react22.useEffect)(() => {
+  const [busyId, setBusyId] = (0, import_react23.useState)(null);
+  const [notice, setNotice] = (0, import_react23.useState)(null);
+  (0, import_react23.useEffect)(() => {
     if (!notice) return;
     const timer = window.setTimeout(() => setNotice(null), 4e3);
     return () => window.clearTimeout(timer);
@@ -11440,12 +11660,12 @@ function ProjectCenter({ sessionId }) {
     toggleProjectStatus(id);
     refresh();
   };
-  const cardFace = (p, back) => /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)(import_jsx_runtime18.Fragment, { children: [
-    /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("div", { className: "ts-center-cardhead", children: [
-      /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("span", { className: "ts-center-icon", "aria-hidden": "true", children: back ? "\u2705" : "\u{1F4C1}" }),
-      /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("span", { className: "ts-center-name", title: p.name, children: p.name }),
-      /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(ActivityDots, { items: activity[p.id], onPick: (sid) => enter(p, sid) }),
-      /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(
+  const cardFace = (p, back) => /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)(import_jsx_runtime19.Fragment, { children: [
+    /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-center-cardhead", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-center-icon", "aria-hidden": "true", children: back ? "\u2705" : "\u{1F4C1}" }),
+      /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-center-name", title: p.name, children: p.name }),
+      /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(ActivityDots, { items: activity[p.id], onPick: (sid) => enter(p, sid) }),
+      /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
         "button",
         {
           type: "button",
@@ -11460,23 +11680,23 @@ function ProjectCenter({ sessionId }) {
         }
       )
     ] }),
-    /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("div", { className: "ts-center-path", title: p.path, children: [
-      /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("span", { className: "ts-center-basedir", children: baseName2(p.path) }),
-      /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("span", { className: "ts-center-fullpath", children: p.path })
+    /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-center-path", title: p.path, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-center-basedir", children: baseName2(p.path) }),
+      /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-center-fullpath", children: p.path })
     ] }),
-    /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("div", { className: "ts-center-desc", title: p.description, children: p.description || /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("span", { className: "ts-dim", children: "\uFF08\u672A\u586B\u5199\u9879\u76EE\u4ECB\u7ECD\uFF09" }) }),
-    /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("div", { className: "ts-center-meta", children: [
-      /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("span", { className: "ts-tag", title: "\u9879\u76EE\u6587\u4EF6\u5939\u5185\u6700\u8001\u6587\u4EF6\u7684\u4FEE\u6539\u65F6\u95F4", children: [
+    /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { className: "ts-center-desc", title: p.description, children: p.description || /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-dim", children: "\uFF08\u672A\u586B\u5199\u9879\u76EE\u4ECB\u7ECD\uFF09" }) }),
+    /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-center-meta", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("span", { className: "ts-tag", title: "\u9879\u76EE\u6587\u4EF6\u5939\u5185\u6700\u8001\u6587\u4EF6\u7684\u4FEE\u6539\u65F6\u95F4", children: [
         "\u521B\u5EFA\u4E8E ",
         infoOf(p)?.oldestMtimeMs ? formatCreated(infoOf(p).oldestMtimeMs) : "\u2014"
       ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("span", { className: "ts-tag ts-tag-warn", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("span", { className: "ts-tag ts-tag-warn", children: [
         "\u66F4\u65B0\u4E8E ",
         relTime2(infoOf(p)?.mtimeMs || 0)
       ] })
     ] }),
-    /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("div", { className: "ts-center-actions", children: [
-      infoOf(p)?.devRunning ? /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)(
+    /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-center-actions", children: [
+      infoOf(p)?.devRunning ? /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)(
         "a",
         {
           className: "ts-dev-chip on ts-dev-chip-link",
@@ -11495,11 +11715,11 @@ function ProjectCenter({ sessionId }) {
             }
           },
           children: [
-            /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("span", { className: "ts-dev-chip-state", children: "\u25CF \u5DF2\u542F\u52A8" }),
-            /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("span", { className: "ts-dev-chip-go", children: "\u53BB\u8C03\u8BD5 \u2192" })
+            /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-dev-chip-state", children: "\u25CF \u5DF2\u542F\u52A8" }),
+            /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-dev-chip-go", children: "\u53BB\u8C03\u8BD5 \u2192" })
           ]
         }
-      ) : /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(
+      ) : /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
         "span",
         {
           className: "ts-dev-chip",
@@ -11507,7 +11727,7 @@ function ProjectCenter({ sessionId }) {
           children: "\u25CB \u672A\u542F\u52A8"
         }
       ),
-      /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(
+      /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
         "button",
         {
           className: "ts-btn ts-btn-sm ts-btn-primary",
@@ -11520,7 +11740,7 @@ function ProjectCenter({ sessionId }) {
           children: busyId === p.id ? "\u65B0\u5EFA\u4E2D\u2026" : "\uFF0B \u65B0\u4F1A\u8BDD"
         }
       ),
-      /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(
+      /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
         "button",
         {
           className: "ts-btn ts-btn-sm ts-btn-danger",
@@ -11534,20 +11754,20 @@ function ProjectCenter({ sessionId }) {
       )
     ] })
   ] });
-  return /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("div", { className: "ts-cr ts-center", children: [
-    /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("div", { className: "ts-center-bg", "aria-hidden": "true", children: [
-      /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("span", { className: "ts-center-blob ts-center-blob1" }),
-      /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("span", { className: "ts-center-blob ts-center-blob2" }),
-      /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("span", { className: "ts-center-blob ts-center-blob3" })
+  return /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-cr ts-center", children: [
+    /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-center-bg", "aria-hidden": "true", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-center-blob ts-center-blob1" }),
+      /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-center-blob ts-center-blob2" }),
+      /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-center-blob ts-center-blob3" })
     ] }),
-    /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("div", { className: "ts-center-inner", children: [
-      /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("div", { className: "ts-center-head", children: /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("div", { className: "ts-center-headtext", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("div", { className: "ts-center-title", children: "\u{1F39B} \u9879\u76EE\u4E2D\u5FC3" }),
-        /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("div", { className: "ts-center-sub", children: "\u6DFB\u52A0\u9879\u76EE\u6587\u4EF6\u5939 \u2192 \u8FDB\u5165\u5DE5\u4F5C\u53F0\uFF1A\u5E76\u884C\u514D\u8D39\u6A21\u578B\u63A2\u7D22 + \u5171\u4EAB\u9ED1\u677F + \u534F\u4F5C\u6536\u76CA" })
+    /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-center-inner", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { className: "ts-center-head", children: /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-center-headtext", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { className: "ts-center-title", children: "\u{1F39B} \u9879\u76EE\u4E2D\u5FC3" }),
+        /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { className: "ts-center-sub", children: "\u6DFB\u52A0\u9879\u76EE\u6587\u4EF6\u5939 \u2192 \u8FDB\u5165\u5DE5\u4F5C\u53F0\uFF1A\u5E76\u884C\u514D\u8D39\u6A21\u578B\u63A2\u7D22 + \u5171\u4EAB\u9ED1\u677F + \u534F\u4F5C\u6536\u76CA" })
       ] }) }),
-      projects.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("div", { className: "ts-center-toolbar", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("div", { className: "ts-seg ts-seg-mode", role: "group", "aria-label": "\u5C55\u793A\u65B9\u5F0F", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(
+      projects.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-center-toolbar", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-seg ts-seg-mode", role: "group", "aria-label": "\u5C55\u793A\u65B9\u5F0F", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
             "button",
             {
               className: `ts-seg-btn${prefs.mode === "card" ? " active" : ""}`,
@@ -11556,7 +11776,7 @@ function ProjectCenter({ sessionId }) {
               children: "\u25A6 \u5361\u7247"
             }
           ),
-          /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(
+          /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
             "button",
             {
               className: `ts-seg-btn${prefs.mode === "list" ? " active" : ""}`,
@@ -11566,9 +11786,9 @@ function ProjectCenter({ sessionId }) {
             }
           )
         ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("div", { className: "ts-seg ts-seg-sort", role: "group", "aria-label": "\u6392\u5E8F\u65B9\u5F0F", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("span", { className: "ts-seg-label", children: "\u6392\u5E8F" }),
-          /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(
+        /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-seg ts-seg-sort", role: "group", "aria-label": "\u6392\u5E8F\u65B9\u5F0F", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-seg-label", children: "\u6392\u5E8F" }),
+          /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
             "button",
             {
               className: `ts-seg-btn${prefs.sort === "name" ? " active" : ""}`,
@@ -11576,7 +11796,7 @@ function ProjectCenter({ sessionId }) {
               children: "\u6309\u540D\u79F0"
             }
           ),
-          /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(
+          /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
             "button",
             {
               className: `ts-seg-btn${prefs.sort === "created" ? " active" : ""}`,
@@ -11584,7 +11804,7 @@ function ProjectCenter({ sessionId }) {
               children: "\u6309\u521B\u5EFA\u65F6\u95F4"
             }
           ),
-          /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(
+          /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
             "button",
             {
               className: `ts-seg-btn${prefs.sort === "updated" ? " active" : ""}`,
@@ -11592,7 +11812,7 @@ function ProjectCenter({ sessionId }) {
               children: "\u6309\u66F4\u65B0\u65F6\u95F4"
             }
           ),
-          /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(
+          /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
             "button",
             {
               className: `ts-seg-btn${prefs.sort === "status" ? " active" : ""}`,
@@ -11602,35 +11822,35 @@ function ProjectCenter({ sessionId }) {
             }
           )
         ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("span", { className: "ts-center-count", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("span", { className: "ts-center-count", children: [
           projects.length,
           " \u4E2A\u9879\u76EE"
         ] })
       ] }),
-      !sessionId && /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("div", { className: "ts-hint", children: "\u5F53\u524D\u4F1A\u8BDD\u4E0A\u4E0B\u6587\u4E0D\u53EF\u7528\uFF0C\u65E0\u6CD5\u8FDB\u5165\u5DE5\u4F5C\u53F0\uFF08\u4ECD\u53EF\u7BA1\u7406\u9879\u76EE\u5217\u8868\uFF09\u3002" }),
-      notice && /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("div", { className: "ts-hint", children: [
+      !sessionId && /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { className: "ts-hint", children: "\u5F53\u524D\u4F1A\u8BDD\u4E0A\u4E0B\u6587\u4E0D\u53EF\u7528\uFF0C\u65E0\u6CD5\u8FDB\u5165\u5DE5\u4F5C\u53F0\uFF08\u4ECD\u53EF\u7BA1\u7406\u9879\u76EE\u5217\u8868\uFF09\u3002" }),
+      notice && /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-hint", children: [
         "\u26A0\uFE0F ",
         notice
       ] }),
-      projects.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("div", { className: "ts-center-emptywrap", children: /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("button", { className: "ts-center-addcard", onClick: () => setShowAdd(true), children: [
-        /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("span", { className: "ts-center-addplus", children: "\uFF0B" }),
-        /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("span", { className: "ts-center-addlabel", children: "\u6DFB\u52A0\u9879\u76EE" }),
-        /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("span", { className: "ts-center-addhint", children: "\u9009\u62E9\u9879\u76EE\u6587\u4EF6\u5939\u5F00\u59CB" })
+      projects.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { className: "ts-center-emptywrap", children: /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("button", { className: "ts-center-addcard", onClick: () => setShowAdd(true), children: [
+        /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-center-addplus", children: "\uFF0B" }),
+        /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-center-addlabel", children: "\u6DFB\u52A0\u9879\u76EE" }),
+        /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-center-addhint", children: "\u9009\u62E9\u9879\u76EE\u6587\u4EF6\u5939\u5F00\u59CB" })
       ] }) }) : prefs.mode === "list" ? (
         /* —— 列表模式：序号 / 名称 / 路径 / 创建 / 上次更新 / 介绍 / 活跃 / 操作 ——
            点整行 = 进入工作台；介绍可编辑；（点）活跃点可直达对应对话 */
-        /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("div", { className: "ts-plist-wrap", children: /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("table", { className: "ts-plist", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("thead", { children: /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("tr", { children: [
-            /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("th", { className: "ts-plist-idx", children: "\u5E8F\u53F7" }),
-            /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("th", { children: "\u9879\u76EE\u540D\u79F0" }),
-            /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("th", { children: "\u9879\u76EE\u8DEF\u5F84" }),
-            /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("th", { className: "ts-plist-time", title: "\u9879\u76EE\u6587\u4EF6\u5939\u5185\u6700\u8001\u6587\u4EF6\u7684\u4FEE\u6539\u65F6\u95F4\uFF08\u4E0D\u662F\u52A0\u5165\u9879\u76EE\u4E2D\u5FC3\u7684\u65F6\u95F4\uFF09", children: "\u521B\u5EFA\u4E8E" }),
-            /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("th", { className: "ts-plist-time", children: "\u4E0A\u6B21\u66F4\u65B0" }),
-            /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("th", { children: "\u9879\u76EE\u4ECB\u7ECD" }),
-            /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("th", { className: "ts-plist-active", children: "\u6D3B\u8DC3\u5BF9\u8BDD" }),
-            /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("th", { className: "ts-plist-ops", children: "\u64CD\u4F5C" })
+        /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { className: "ts-plist-wrap", children: /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("table", { className: "ts-plist", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("thead", { children: /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("tr", { children: [
+            /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("th", { className: "ts-plist-idx", children: "\u5E8F\u53F7" }),
+            /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("th", { children: "\u9879\u76EE\u540D\u79F0" }),
+            /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("th", { children: "\u9879\u76EE\u8DEF\u5F84" }),
+            /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("th", { className: "ts-plist-time", title: "\u9879\u76EE\u6587\u4EF6\u5939\u5185\u6700\u8001\u6587\u4EF6\u7684\u4FEE\u6539\u65F6\u95F4\uFF08\u4E0D\u662F\u52A0\u5165\u9879\u76EE\u4E2D\u5FC3\u7684\u65F6\u95F4\uFF09", children: "\u521B\u5EFA\u4E8E" }),
+            /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("th", { className: "ts-plist-time", children: "\u4E0A\u6B21\u66F4\u65B0" }),
+            /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("th", { children: "\u9879\u76EE\u4ECB\u7ECD" }),
+            /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("th", { className: "ts-plist-active", children: "\u6D3B\u8DC3\u5BF9\u8BDD" }),
+            /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("th", { className: "ts-plist-ops", children: "\u64CD\u4F5C" })
           ] }) }),
-          /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("tbody", { children: shown.map((p, i) => /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)(
+          /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("tbody", { children: shown.map((p, i) => /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)(
             "tr",
             {
               className: "ts-plist-row-click",
@@ -11645,10 +11865,10 @@ function ProjectCenter({ sessionId }) {
                 }
               },
               children: [
-                /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("td", { className: "ts-plist-idx", children: i + 1 }),
-                /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("td", { children: /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("div", { className: "ts-plist-namecell", children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("span", { className: "ts-plist-name", title: p.name, children: p.name }),
-                  /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("td", { className: "ts-plist-idx", children: i + 1 }),
+                /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("td", { children: /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-plist-namecell", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-plist-name", title: p.name, children: p.name }),
+                  /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
                     "button",
                     {
                       type: "button",
@@ -11662,20 +11882,20 @@ function ProjectCenter({ sessionId }) {
                     }
                   )
                 ] }) }),
-                /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("td", { children: /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("span", { className: "ts-plist-path", title: p.path, children: p.path }) }),
-                /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("td", { children: /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-plist-path", title: p.path, children: p.path }) }),
+                /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
                   "td",
                   {
                     className: "ts-plist-time",
                     title: `\u9879\u76EE\u6587\u4EF6\u5939\u5185\u6700\u8001\u6587\u4EF6\u7684\u4FEE\u6539\u65F6\u95F4\uFF1A${infoOf(p)?.oldestMtimeMs ? new Date(infoOf(p).oldestMtimeMs).toLocaleString("zh-CN") : "\uFF08\u672A\u8BFB\u53D6\u5230\uFF09"}`,
-                    children: infoOf(p)?.oldestMtimeMs ? formatCreated(infoOf(p).oldestMtimeMs) : /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("span", { className: "ts-dim", children: "\uFF08\u672A\u8BFB\u53D6\u5230\uFF09" })
+                    children: infoOf(p)?.oldestMtimeMs ? formatCreated(infoOf(p).oldestMtimeMs) : /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-dim", children: "\uFF08\u672A\u8BFB\u53D6\u5230\uFF09" })
                   }
                 ),
-                /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("td", { className: "ts-plist-time", title: infoOf(p)?.mtimeMs ? new Date(infoOf(p).mtimeMs).toLocaleString("zh-CN") : "\uFF08\u672A\u8BFB\u53D6\u5230\uFF09", children: relTime2(infoOf(p)?.mtimeMs || 0) }),
-                /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("td", { children: /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(DescEditor, { project: p, onSaved: refresh }) }),
-                /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("td", { className: "ts-plist-active", children: /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(ActivityDots, { items: activity[p.id], onPick: (sid) => enter(p, sid) }) }),
-                /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("td", { className: "ts-plist-ops", children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("td", { className: "ts-plist-time", title: infoOf(p)?.mtimeMs ? new Date(infoOf(p).mtimeMs).toLocaleString("zh-CN") : "\uFF08\u672A\u8BFB\u53D6\u5230\uFF09", children: relTime2(infoOf(p)?.mtimeMs || 0) }),
+                /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("td", { children: /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(DescEditor, { project: p, onSaved: refresh }) }),
+                /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("td", { className: "ts-plist-active", children: /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(ActivityDots, { items: activity[p.id], onPick: (sid) => enter(p, sid) }) }),
+                /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("td", { className: "ts-plist-ops", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
                     "button",
                     {
                       className: "ts-btn ts-btn-sm ts-btn-primary",
@@ -11688,7 +11908,7 @@ function ProjectCenter({ sessionId }) {
                       children: busyId === p.id ? "\u65B0\u5EFA\u4E2D\u2026" : "\uFF0B \u65B0\u4F1A\u8BDD"
                     }
                   ),
-                  /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(
+                  /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
                     "button",
                     {
                       className: "ts-btn ts-btn-sm ts-btn-danger",
@@ -11708,8 +11928,8 @@ function ProjectCenter({ sessionId }) {
         ] }) })
       ) : (
         /* —— 卡片模式：点卡片直接进工作台 —— */
-        /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("div", { className: "ts-center-grid", children: [
-          shown.map((p) => /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(
+        /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-center-grid", children: [
+          shown.map((p) => /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
             "div",
             {
               className: `ts-flip-scene ts-center-card-click${sessionId ? "" : " disabled"}`,
@@ -11725,21 +11945,21 @@ function ProjectCenter({ sessionId }) {
                   enter(p);
                 }
               },
-              children: /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("div", { className: `ts-flip-inner${p.status === "done" ? " is-done" : ""}`, children: [
-                /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("div", { className: "ts-center-card ts-flip-face ts-flip-front", children: cardFace(p, false) }),
-                /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("div", { className: "ts-center-card ts-flip-face ts-flip-back", children: cardFace(p, true) })
+              children: /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: `ts-flip-inner${p.status === "done" ? " is-done" : ""}`, children: [
+                /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { className: "ts-center-card ts-flip-face ts-flip-front", children: cardFace(p, false) }),
+                /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { className: "ts-center-card ts-flip-face ts-flip-back", children: cardFace(p, true) })
               ] })
             },
             p.id
           )),
-          /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("button", { className: "ts-center-card ts-center-addcard", onClick: () => setShowAdd(true), children: [
-            /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("span", { className: "ts-center-addplus", children: "\uFF0B" }),
-            /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("span", { className: "ts-center-addlabel", children: "\u6DFB\u52A0\u9879\u76EE" })
+          /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("button", { className: "ts-center-card ts-center-addcard", onClick: () => setShowAdd(true), children: [
+            /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-center-addplus", children: "\uFF0B" }),
+            /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-center-addlabel", children: "\u6DFB\u52A0\u9879\u76EE" })
           ] })
         ] })
       )
     ] }),
-    showAdd && /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(
+    showAdd && /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
       AddProjectDialog,
       {
         onClose: () => setShowAdd(false),
@@ -11750,41 +11970,41 @@ function ProjectCenter({ sessionId }) {
         }
       }
     ),
-    pendingRemove && /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(
+    pendingRemove && /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
       ConfirmDialog,
       {
         title: "\u79FB\u9664\u9879\u76EE",
         danger: true,
         confirmText: deleteSource ? "\u5220\u9664\u5E76\u79FB\u9664" : "\u786E\u8BA4\u79FB\u9664",
         busy: removing,
-        message: /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)(import_jsx_runtime18.Fragment, { children: [
-          /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("div", { className: "ts-confirm-lead", children: [
+        message: /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)(import_jsx_runtime19.Fragment, { children: [
+          /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-confirm-lead", children: [
             "\u786E\u5B9A\u8981\u628A\u4EE5\u4E0B\u9879\u76EE\u4ECE",
-            /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("b", { children: "\u9879\u76EE\u4E2D\u5FC3" }),
+            /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("b", { children: "\u9879\u76EE\u4E2D\u5FC3" }),
             "\u79FB\u9664\u5417\uFF1F"
           ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("div", { className: "ts-confirm-target", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("span", { className: "ts-confirm-name", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-confirm-target", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("span", { className: "ts-confirm-name", children: [
               "\u{1F4C1} ",
               pendingRemove.name
             ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("span", { className: "ts-confirm-path", children: pendingRemove.path })
+            /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-confirm-path", children: pendingRemove.path })
           ] }),
-          deleteSource ? /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("div", { className: "ts-confirm-note ts-confirm-note-warn", children: [
+          deleteSource ? /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-confirm-note ts-confirm-note-warn", children: [
             "\u5C06",
-            /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("b", { children: "\u6C38\u4E45\u5220\u9664" }),
+            /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("b", { children: "\u6C38\u4E45\u5220\u9664" }),
             "\u8BE5\u9879\u76EE\u7684",
-            /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("b", { children: "\u6574\u4E2A\u6587\u4EF6\u5939" }),
+            /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("b", { children: "\u6574\u4E2A\u6587\u4EF6\u5939" }),
             "\uFF08\u8FDE\u6587\u4EF6\u5939\u672C\u8EAB\u4E00\u8D77\u5220\u6389\uFF0C\u542B .git \u4E0E\u672A\u63D0\u4EA4\u7684\u4FEE\u6539\uFF09\uFF0C",
-            /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("b", { children: "\u4E0D\u53EF\u6062\u590D" }),
+            /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("b", { children: "\u4E0D\u53EF\u6062\u590D" }),
             "\u3002"
-          ] }) : /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("div", { className: "ts-confirm-note", children: [
+          ] }) : /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-confirm-note", children: [
             "\u4EC5\u4ECE\u9879\u76EE\u4E2D\u5FC3\u7684\u5217\u8868\u91CC\u79FB\u9664\uFF0C",
-            /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("b", { children: "\u4E0D\u4F1A\u5220\u9664\u78C1\u76D8\u4E0A\u7684\u4EFB\u4F55\u6587\u4EF6" }),
+            /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("b", { children: "\u4E0D\u4F1A\u5220\u9664\u78C1\u76D8\u4E0A\u7684\u4EFB\u4F55\u6587\u4EF6" }),
             "\u3002 \u4E4B\u540E\u53EF\u4EE5\u91CD\u65B0\u300C\u6DFB\u52A0\u9879\u76EE\u300D\u628A\u5B83\u52A0\u56DE\u6765\u3002"
           ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("label", { className: "ts-confirm-opt", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(
+          /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("label", { className: "ts-confirm-opt", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
               "input",
               {
                 type: "checkbox",
@@ -11792,9 +12012,9 @@ function ProjectCenter({ sessionId }) {
                 onChange: (e) => setDeleteSource(e.target.checked)
               }
             ),
-            /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("span", { className: "ts-confirm-opt-text", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("span", { className: "ts-confirm-opt-text", children: [
               "\u540C\u65F6",
-              /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("b", { children: "\u5220\u9664\u9879\u76EE\u6E90\u4EE3\u7801" }),
+              /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("b", { children: "\u5220\u9664\u9879\u76EE\u6E90\u4EE3\u7801" }),
               "\uFF08\u628A\u9879\u76EE\u6587\u4EF6\u5939\u4ECE\u78C1\u76D8\u4E0A\u6574\u68F5\u5220\u6389\uFF0C\u4E0D\u53EF\u6062\u590D\uFF09"
             ] })
           ] })
@@ -11807,11 +12027,11 @@ function ProjectCenter({ sessionId }) {
 }
 
 // client/src/panel/ControlRoomEntry.tsx
-var import_react24 = require("react");
-var import_react_dom6 = require("react-dom");
+var import_react25 = require("react");
+var import_react_dom7 = require("react-dom");
 
 // client/src/panel/pulse.ts
-var import_react23 = require("react");
+var import_react24 = require("react");
 
 // client/src/panel/todo-collapse.ts
 var TODO_PANEL_SEL = '[data-testid="todo-panel"]';
@@ -12188,8 +12408,8 @@ async function scanOutcomes(ctx, projects) {
   }
 }
 function useActivityPulse() {
-  const [state, setState] = (0, import_react23.useState)(EMPTY);
-  (0, import_react23.useEffect)(() => {
+  const [state, setState] = (0, import_react24.useState)(EMPTY);
+  (0, import_react24.useEffect)(() => {
     const ctx = getClientContext();
     if (!ctx) return;
     let live = true;
@@ -13319,7 +13539,7 @@ function zoneOf(trigger, panel, x, y, pad = CORRIDOR_PAD) {
 }
 
 // client/src/panel/ControlRoomEntry.tsx
-var import_jsx_runtime19 = require("react/jsx-runtime");
+var import_jsx_runtime20 = require("react/jsx-runtime");
 var DOT_COUNT = 3;
 var RAIL_MIN_WIDE = 30;
 var NAV_LOCK_MS = 700;
@@ -13334,9 +13554,9 @@ function panelWidth(left, rows) {
   return panelWidthFor(rows, left);
 }
 function SectionHead({ title, note, children }) {
-  return /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-sec-head", children: [
-    /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-sec-title", children: title }),
-    note && /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-sec-note", children: note }),
+  return /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: "ts-sec-head", children: [
+    /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { className: "ts-sec-title", children: title }),
+    note && /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { className: "ts-sec-note", children: note }),
     children
   ] });
 }
@@ -13369,23 +13589,23 @@ function PulseDots({
   onHoverIn,
   onHoverOut
 }) {
-  return /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
+  return /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
     "span",
     {
       className: `ts-pulse${running ? " ts-pulse-run" : ""}${tone === "warn" ? " ts-pulse-warn" : ""}`,
       "aria-hidden": "true",
       onMouseEnter: onHoverIn,
       onMouseLeave: onHoverOut,
-      children: Array.from({ length: count }, (_, i) => /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("i", { className: "ts-pulse-dot", style: { animationDelay: `${i * 0.16}s` } }, i))
+      children: Array.from({ length: count }, (_, i) => /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("i", { className: "ts-pulse-dot", style: { animationDelay: `${i * 0.16}s` } }, i))
     }
   );
 }
 function ContinueSettingsBlock() {
-  const [s, setS] = (0, import_react24.useState)(() => getContinueSettings());
-  (0, import_react24.useEffect)(() => subscribeContinueSettings(() => setS(getContinueSettings())), []);
+  const [s, setS] = (0, import_react25.useState)(() => getContinueSettings());
+  (0, import_react25.useEffect)(() => subscribeContinueSettings(() => setS(getContinueSettings())), []);
   const update = (patch) => setS(setContinueSettings(patch));
-  return /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)(import_jsx_runtime19.Fragment, { children: [
-    /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(SectionHead, { title: "\u81EA\u52A8\u7EE7\u7EED", children: /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
+  return /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)(import_jsx_runtime20.Fragment, { children: [
+    /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(SectionHead, { title: "\u81EA\u52A8\u7EE7\u7EED", children: /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
       "button",
       {
         type: "button",
@@ -13394,14 +13614,14 @@ function ContinueSettingsBlock() {
         role: "switch",
         "aria-checked": s.enabled,
         onClick: () => update({ enabled: !s.enabled }),
-        children: /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("i", {})
+        children: /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("i", {})
       }
     ) }),
-    /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { className: "ts-cont-block", children: /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-box", children: [
-      /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-box-row ts-cont-sw-row", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-cont-sw-item", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("label", { title: "\u9519\u8BEF\u5206\u7C7B\uFF1A\u5F00\u542F\u540E\uFF0C\u9274\u6743 / \u4F59\u989D / \u672A\u77E5\u6A21\u578B / \u4E0A\u4E0B\u6587\u8D85\u957F\u8FD9\u7C7B\u91CD\u8BD5\u4E5F\u4E0D\u4F1A\u6210\u529F\u7684\u9519\u8BEF\u4F1A\u88AB\u8BC6\u522B\u51FA\u6765\uFF0C\u4E0D\u81EA\u52A8\u91CD\u8BD5\uFF0C\u53EA\u7ED9\u624B\u52A8\u6309\u94AE", children: "\u5206\u7C7B" }),
-          /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
+    /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("div", { className: "ts-cont-block", children: /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: "ts-box", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: "ts-box-row ts-cont-sw-row", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: "ts-cont-sw-item", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("label", { title: "\u9519\u8BEF\u5206\u7C7B\uFF1A\u5F00\u542F\u540E\uFF0C\u9274\u6743 / \u4F59\u989D / \u672A\u77E5\u6A21\u578B / \u4E0A\u4E0B\u6587\u8D85\u957F\u8FD9\u7C7B\u91CD\u8BD5\u4E5F\u4E0D\u4F1A\u6210\u529F\u7684\u9519\u8BEF\u4F1A\u88AB\u8BC6\u522B\u51FA\u6765\uFF0C\u4E0D\u81EA\u52A8\u91CD\u8BD5\uFF0C\u53EA\u7ED9\u624B\u52A8\u6309\u94AE", children: "\u5206\u7C7B" }),
+          /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
             "button",
             {
               type: "button",
@@ -13410,13 +13630,13 @@ function ContinueSettingsBlock() {
               role: "switch",
               "aria-checked": s.classify,
               onClick: () => update({ classify: !s.classify }),
-              children: /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("i", {})
+              children: /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("i", {})
             }
           )
         ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-cont-sw-item", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("label", { title: "\u8F93\u51FA\u8FBE\u5230\u957F\u5EA6\u4E0A\u9650\u88AB\u622A\u65AD\u65F6\uFF0C\u81EA\u52A8\u53D1\u300C\u7EE7\u7EED\u300D\u8BA9\u6A21\u578B\u63A5\u7740\u5199\uFF08\u63A8\u8350\u5F00\u542F\uFF1A\u8FD9\u8F6E\u6CA1\u5199\u5B8C\uFF0C\u63A5\u7740\u5199\u5C31\u884C\uFF09", children: "\u622A\u65AD" }),
-          /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
+        /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: "ts-cont-sw-item", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("label", { title: "\u8F93\u51FA\u8FBE\u5230\u957F\u5EA6\u4E0A\u9650\u88AB\u622A\u65AD\u65F6\uFF0C\u81EA\u52A8\u53D1\u300C\u7EE7\u7EED\u300D\u8BA9\u6A21\u578B\u63A5\u7740\u5199\uFF08\u63A8\u8350\u5F00\u542F\uFF1A\u8FD9\u8F6E\u6CA1\u5199\u5B8C\uFF0C\u63A5\u7740\u5199\u5C31\u884C\uFF09", children: "\u622A\u65AD" }),
+          /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
             "button",
             {
               type: "button",
@@ -13425,13 +13645,13 @@ function ContinueSettingsBlock() {
               role: "switch",
               "aria-checked": s.autoMaxTokens,
               onClick: () => update({ autoMaxTokens: !s.autoMaxTokens }),
-              children: /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("i", {})
+              children: /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("i", {})
             }
           )
         ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-cont-sw-item", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("label", { title: "\u77AC\u65F6\u6545\u969C\uFF1A\u7F51\u7EDC\u6296\u52A8 / \u8D85\u65F6 / 5xx / 429 \u9650\u6D41\u8FD9\u7C7B\u7B49\u4E00\u4E0B\u91CD\u8BD5\u5C31\u80FD\u597D\u7684\u9519\u8BEF\uFF0C\u81EA\u52A8\u91CD\u8BD5", children: "\u77AC\u65F6" }),
-          /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
+        /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: "ts-cont-sw-item", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("label", { title: "\u77AC\u65F6\u6545\u969C\uFF1A\u7F51\u7EDC\u6296\u52A8 / \u8D85\u65F6 / 5xx / 429 \u9650\u6D41\u8FD9\u7C7B\u7B49\u4E00\u4E0B\u91CD\u8BD5\u5C31\u80FD\u597D\u7684\u9519\u8BEF\uFF0C\u81EA\u52A8\u91CD\u8BD5", children: "\u77AC\u65F6" }),
+          /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
             "button",
             {
               type: "button",
@@ -13440,14 +13660,14 @@ function ContinueSettingsBlock() {
               role: "switch",
               "aria-checked": s.autoTransient,
               onClick: () => update({ autoTransient: !s.autoTransient }),
-              children: /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("i", {})
+              children: /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("i", {})
             }
           )
         ] })
       ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-box-row", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("label", { title: "\u53D1\u9001\u4E0A\u9650\uFF1A\u8FDE\u7EED\u81EA\u52A8\u7EE7\u7EED\u51E0\u6B21\u540E\u5C31\u505C\u4E0B\u6765\u7B49\u4F60\u4ECB\u5165\uFF08\u7528\u6237\u81EA\u5DF1\u53D1\u6D88\u606F\u6216\u624B\u52A8\u70B9\u300C\u7EE7\u7EED\u300D\u4F1A\u91CD\u7F6E\u8FD9\u4E2A\u8BA1\u6570\uFF09", children: "\u53D1\u9001\u4E0A\u9650" }),
-        /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
+      /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: "ts-box-row", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("label", { title: "\u53D1\u9001\u4E0A\u9650\uFF1A\u8FDE\u7EED\u81EA\u52A8\u7EE7\u7EED\u51E0\u6B21\u540E\u5C31\u505C\u4E0B\u6765\u7B49\u4F60\u4ECB\u5165\uFF08\u7528\u6237\u81EA\u5DF1\u53D1\u6D88\u606F\u6216\u624B\u52A8\u70B9\u300C\u7EE7\u7EED\u300D\u4F1A\u91CD\u7F6E\u8FD9\u4E2A\u8BA1\u6570\uFF09", children: "\u53D1\u9001\u4E0A\u9650" }),
+        /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
           "input",
           {
             className: "ts-cont-num",
@@ -13459,10 +13679,10 @@ function ContinueSettingsBlock() {
             onChange: (e) => update({ maxConsecutive: Number(e.target.value) })
           }
         ),
-        /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-cont-unit", children: "\u6B21" }),
-        /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-cont-gap" }),
-        /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("label", { title: "\u51B7\u5374\u57FA\u6570\uFF1A\u4E24\u6B21\u81EA\u52A8\u7EE7\u7EED\u4E4B\u95F4\u81F3\u5C11\u7B49\u8FD9\u4E48\u4E45\uFF1B\u8FDE\u7EED\u5931\u8D25\u4F1A\u6309\u500D\u6570\u9012\u589E\uFF0820s \u2192 40s \u2192 80s\u2026\uFF09\uFF0C\u5C01\u9876 5 \u5206\u949F\u3002\u907F\u514D\u628A\u5DF2\u7ECF\u574F\u4E86\u7684\u4E0A\u6E38\u6253\u5F97\u66F4\u6B7B", children: "\u51B7\u5374\u57FA\u6570" }),
-        /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
+        /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { className: "ts-cont-unit", children: "\u6B21" }),
+        /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { className: "ts-cont-gap" }),
+        /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("label", { title: "\u51B7\u5374\u57FA\u6570\uFF1A\u4E24\u6B21\u81EA\u52A8\u7EE7\u7EED\u4E4B\u95F4\u81F3\u5C11\u7B49\u8FD9\u4E48\u4E45\uFF1B\u8FDE\u7EED\u5931\u8D25\u4F1A\u6309\u500D\u6570\u9012\u589E\uFF0820s \u2192 40s \u2192 80s\u2026\uFF09\uFF0C\u5C01\u9876 5 \u5206\u949F\u3002\u907F\u514D\u628A\u5DF2\u7ECF\u574F\u4E86\u7684\u4E0A\u6E38\u6253\u5F97\u66F4\u6B7B", children: "\u51B7\u5374\u57FA\u6570" }),
+        /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
           "input",
           {
             className: "ts-cont-num",
@@ -13474,20 +13694,20 @@ function ContinueSettingsBlock() {
             onChange: (e) => update({ cooldownMs: Number(e.target.value) * 1e3 })
           }
         ),
-        /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-cont-unit", children: "\u79D2" })
+        /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { className: "ts-cont-unit", children: "\u79D2" })
       ] })
     ] }) })
   ] });
 }
 function HoverPanel({ pos, panelRef, items, onPick, onHover, onMarkRead, onMarkAllRead, onContinue, onArchive, onArchiveAll, onClose }) {
-  const [, bumpAuto] = (0, import_react24.useState)(0);
-  (0, import_react24.useEffect)(() => subscribeAutoContinue(() => bumpAuto((n) => n + 1)), []);
-  const [s, setS] = (0, import_react24.useState)(() => getSoundSettings());
-  const [playingLabel2, setPlayingLabel] = (0, import_react24.useState)(null);
-  (0, import_react24.useEffect)(() => subscribePlaying(setPlayingLabel), []);
+  const [, bumpAuto] = (0, import_react25.useState)(0);
+  (0, import_react25.useEffect)(() => subscribeAutoContinue(() => bumpAuto((n) => n + 1)), []);
+  const [s, setS] = (0, import_react25.useState)(() => getSoundSettings());
+  const [playingLabel2, setPlayingLabel] = (0, import_react25.useState)(null);
+  (0, import_react25.useEffect)(() => subscribePlaying(setPlayingLabel), []);
   const update = (patch) => setS(setSoundSettings(patch));
-  const [sendState, setSendState] = (0, import_react24.useState)({});
-  const [sendErr, setSendErr] = (0, import_react24.useState)("");
+  const [sendState, setSendState] = (0, import_react25.useState)({});
+  const [sendErr, setSendErr] = (0, import_react25.useState)("");
   const cont = async (it) => {
     const cur = sendState[it.key];
     if (cur === "sending" || cur === "sent") return;
@@ -13503,8 +13723,8 @@ function HoverPanel({ pos, panelRef, items, onPick, onHover, onMarkRead, onMarkA
     }
   };
   const Timer = ({ at }) => {
-    const [, force] = (0, import_react24.useState)(0);
-    (0, import_react24.useEffect)(() => {
+    const [, force] = (0, import_react25.useState)(0);
+    (0, import_react25.useEffect)(() => {
       if (!at) return;
       const id = window.setInterval(() => force((n) => n + 1), 3e4);
       return () => window.clearInterval(id);
@@ -13513,14 +13733,14 @@ function HoverPanel({ pos, panelRef, items, onPick, onHover, onMarkRead, onMarkA
     const diff = Date.now() - at;
     if (diff < 0) return null;
     const mins = Math.floor(diff / 6e4);
-    if (mins < 1) return /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-warn-timer", children: "\u521A\u521A" });
-    if (mins < 60) return /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("span", { className: "ts-warn-timer", children: [
+    if (mins < 1) return /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { className: "ts-warn-timer", children: "\u521A\u521A" });
+    if (mins < 60) return /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("span", { className: "ts-warn-timer", children: [
       mins,
       " \u5206\u949F\u524D"
     ] });
     const hours = Math.floor(mins / 60);
     const remMins = mins % 60;
-    return /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("span", { className: "ts-warn-timer", children: [
+    return /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("span", { className: "ts-warn-timer", children: [
       hours,
       " \u5C0F\u65F6",
       remMins > 0 ? ` ${remMins} \u5206` : "",
@@ -13528,8 +13748,8 @@ function HoverPanel({ pos, panelRef, items, onPick, onHover, onMarkRead, onMarkA
     ] });
   };
   const readable = items.filter((it) => it.icon !== "\u25CF").length;
-  return (0, import_react_dom6.createPortal)(
-    /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)(
+  return (0, import_react_dom7.createPortal)(
+    /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)(
       "div",
       {
         ref: panelRef,
@@ -13540,9 +13760,9 @@ function HoverPanel({ pos, panelRef, items, onPick, onHover, onMarkRead, onMarkA
         onMouseEnter: () => onHover(true),
         onMouseLeave: () => onHover(false),
         children: [
-          /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-sec", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)(SectionHead, { title: "\u63D0\u793A\u97F3", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
+          /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: "ts-sec", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)(SectionHead, { title: "\u63D0\u793A\u97F3", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
                 "button",
                 {
                   type: "button",
@@ -13551,10 +13771,10 @@ function HoverPanel({ pos, panelRef, items, onPick, onHover, onMarkRead, onMarkA
                   role: "switch",
                   "aria-checked": s.enabled,
                   onClick: () => update({ enabled: !s.enabled }),
-                  children: /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("i", {})
+                  children: /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("i", {})
                 }
               ),
-              pos.mode === "sheet" && /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
+              pos.mode === "sheet" && /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
                 "button",
                 {
                   type: "button",
@@ -13566,10 +13786,10 @@ function HoverPanel({ pos, panelRef, items, onPick, onHover, onMarkRead, onMarkA
                 }
               )
             ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { className: "ts-sound-body", children: /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-box", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-box-row", children: [
-                /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("label", { title: "\u97F3\u91CF\uFF1A\u63D0\u793A\u97F3\u7684\u97F3\u91CF\u5927\u5C0F", children: "\u97F3\u91CF" }),
-                /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
+            /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("div", { className: "ts-sound-body", children: /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: "ts-box", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: "ts-box-row", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("label", { title: "\u97F3\u91CF\uFF1A\u63D0\u793A\u97F3\u7684\u97F3\u91CF\u5927\u5C0F", children: "\u97F3\u91CF" }),
+                /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
                   "input",
                   {
                     className: "ts-sound-range",
@@ -13583,19 +13803,19 @@ function HoverPanel({ pos, panelRef, items, onPick, onHover, onMarkRead, onMarkA
                   }
                 )
               ] }),
-              /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-box-row", children: [
-                /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("label", { children: "\u5B8C\u6210" }),
-                /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
+              /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: "ts-box-row", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("label", { children: "\u5B8C\u6210" }),
+                /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
                   "select",
                   {
                     className: "ts-select",
                     value: s.doneId,
                     title: "\u6B63\u5E38\u7ED3\u675F\u65F6\u7684\u63D0\u793A\u97F3",
                     onChange: (e) => update({ doneId: e.target.value }),
-                    children: SOUND_OPTIONS.map((o) => /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("option", { value: o.id, children: o.label }, o.id))
+                    children: SOUND_OPTIONS.map((o) => /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("option", { value: o.id, children: o.label }, o.id))
                   }
                 ),
-                /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
                   "button",
                   {
                     type: "button",
@@ -13606,19 +13826,19 @@ function HoverPanel({ pos, panelRef, items, onPick, onHover, onMarkRead, onMarkA
                   }
                 )
               ] }),
-              /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-box-row", children: [
-                /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("label", { children: "\u4E2D\u65AD" }),
-                /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
+              /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: "ts-box-row", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("label", { children: "\u4E2D\u65AD" }),
+                /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
                   "select",
                   {
                     className: "ts-select",
                     value: s.failId,
                     title: "\u88AB\u4E2D\u65AD / \u5931\u8D25 / \u88AB\u622A\u65AD\u65F6\u7684\u63D0\u793A\u97F3",
                     onChange: (e) => update({ failId: e.target.value }),
-                    children: SOUND_OPTIONS.map((o) => /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("option", { value: o.id, children: o.label }, o.id))
+                    children: SOUND_OPTIONS.map((o) => /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("option", { value: o.id, children: o.label }, o.id))
                   }
                 ),
-                /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
                   "button",
                   {
                     type: "button",
@@ -13629,19 +13849,19 @@ function HoverPanel({ pos, panelRef, items, onPick, onHover, onMarkRead, onMarkA
                   }
                 )
               ] }),
-              /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-box-row", children: [
-                /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("label", { children: "\u65F6\u957F" }),
-                /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
+              /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: "ts-box-row", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("label", { children: "\u65F6\u957F" }),
+                /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
                   "select",
                   {
                     className: "ts-select",
                     value: s.duration,
                     title: "\u6BCF\u6B21\u63D0\u9192\u6301\u7EED\u591A\u4E45\uFF08\u5230\u70B9\u81EA\u52A8\u505C\uFF09",
                     onChange: (e) => update({ duration: e.target.value }),
-                    children: DURATION_OPTIONS.map((o) => /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("option", { value: o.id, children: o.label }, o.id))
+                    children: DURATION_OPTIONS.map((o) => /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("option", { value: o.id, children: o.label }, o.id))
                   }
                 ),
-                s.duration === "custom" && /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
+                s.duration === "custom" && /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
                   "input",
                   {
                     className: "ts-sound-min",
@@ -13653,8 +13873,8 @@ function HoverPanel({ pos, panelRef, items, onPick, onHover, onMarkRead, onMarkA
                     onChange: (e) => update({ customMinutes: Number(e.target.value) })
                   }
                 ),
-                s.duration === "custom" && /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-sound-unit", children: "\u5206\u949F" }),
-                /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
+                s.duration === "custom" && /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { className: "ts-sound-unit", children: "\u5206\u949F" }),
+                /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
                   "button",
                   {
                     type: "button",
@@ -13667,11 +13887,11 @@ function HoverPanel({ pos, panelRef, items, onPick, onHover, onMarkRead, onMarkA
               ] })
             ] }) })
           ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { className: "ts-sec", children: /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(ContinueSettingsBlock, {}) }),
-          /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-sec ts-sec-list", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(SectionHead, { title: "\u5BF9\u8BDD\u6E05\u5355", note: String(items.length), children: /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("span", { className: "ts-warn-headops", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-warn-slot", "aria-hidden": "true" }),
-              /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
+          /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("div", { className: "ts-sec", children: /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(ContinueSettingsBlock, {}) }),
+          /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: "ts-sec ts-sec-list", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(SectionHead, { title: "\u5BF9\u8BDD\u6E05\u5355", note: String(items.length), children: /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("span", { className: "ts-warn-headops", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { className: "ts-warn-slot", "aria-hidden": "true" }),
+              /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
                 "button",
                 {
                   type: "button",
@@ -13680,10 +13900,10 @@ function HoverPanel({ pos, panelRef, items, onPick, onHover, onMarkRead, onMarkA
                   title: readable === 0 ? "\u6CA1\u6709\u9700\u8981\u6807\u6CE8\u5DF2\u8BFB\u7684\u5BF9\u8BDD" : `\u628A\u6E05\u5355\u91CC\u8FD9 ${readable} \u6761\u5168\u90E8\u6807\u4E3A\u5DF2\u8BFB\uFF0C\u4E0D\u518D\u63D0\u9192\uFF08\u65B0\u4E00\u8F6E / \u65B0\u7684\u5F85\u786E\u8BA4\u4F1A\u91CD\u65B0\u63D0\u9192\uFF09`,
                   "aria-label": "\u5168\u90E8\u6807\u4E3A\u5DF2\u8BFB",
                   onClick: onMarkAllRead,
-                  children: /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-warn-ico", "aria-hidden": "true", dangerouslySetInnerHTML: { __html: iconSvg("check", 12) } })
+                  children: /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { className: "ts-warn-ico", "aria-hidden": "true", dangerouslySetInnerHTML: { __html: iconSvg("check", 12) } })
                 }
               ),
-              /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
+              /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
                 "button",
                 {
                   type: "button",
@@ -13692,15 +13912,15 @@ function HoverPanel({ pos, panelRef, items, onPick, onHover, onMarkRead, onMarkA
                   title: items.length === 0 ? "\u6E05\u5355\u91CC\u6CA1\u6709\u5BF9\u8BDD" : `\u628A\u6E05\u5355\u91CC\u8FD9 ${items.length} \u6761\u5BF9\u8BDD\u5168\u90E8\u5F52\u6863\uFF08\u53EF\u5728\u4FA7\u680F\u300C\u5168\u90E8\u5BF9\u8BDD\uFF08\u663E\u793A\u5DF2\u5F52\u6863\uFF09\u300D\u91CC\u6062\u590D\uFF09`,
                   "aria-label": "\u5168\u90E8\u5F52\u6863",
                   onClick: onArchiveAll,
-                  children: /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-warn-ico", "aria-hidden": "true", dangerouslySetInnerHTML: { __html: iconSvg("archive", 12) } })
+                  children: /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { className: "ts-warn-ico", "aria-hidden": "true", dangerouslySetInnerHTML: { __html: iconSvg("archive", 12) } })
                 }
               )
             ] }) }),
-            /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { className: "ts-list-body", children: /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { className: "ts-box ts-box-list", children: /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-warn-pop-list", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("div", { className: "ts-list-body", children: /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("div", { className: "ts-box ts-box-list", children: /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: "ts-warn-pop-list", children: [
               items.map((it) => {
                 const auto = autoStateOf(it.sessionId);
-                return /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: `ts-warn-row${it.icon === "\u25CF" ? " is-active" : ""}`, children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)(
+                return /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: `ts-warn-row${it.icon === "\u25CF" ? " is-active" : ""}`, children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)(
                     "button",
                     {
                       type: "button",
@@ -13708,30 +13928,30 @@ function HoverPanel({ pos, panelRef, items, onPick, onHover, onMarkRead, onMarkA
                       title: [it.title, it.sub, it.continueHint, "\u70B9\u51FB\uFF1A\u6253\u5F00\u8FD9\u6761\u5BF9\u8BDD\u7684\u5DE5\u4F5C\u53F0"].filter(Boolean).join("\n"),
                       onClick: () => onPick(it),
                       children: [
-                        /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-warn-icon", "aria-hidden": "true", children: it.icon }),
-                        /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("span", { className: "ts-warn-body", children: [
-                          /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-warn-title", children: it.title }),
-                          /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("span", { className: "ts-warn-tags", children: [
-                            it.sub && /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-warn-sub", style: pillStyle(it.projectKey), children: it.sub }),
-                            it.icon === "\u25CF" && /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(Timer, { at: it.lastPromptAt }),
-                            it.shortReason && /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-warn-reason", children: it.shortReason })
+                        /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { className: "ts-warn-icon", "aria-hidden": "true", children: it.icon }),
+                        /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("span", { className: "ts-warn-body", children: [
+                          /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { className: "ts-warn-title", children: it.title }),
+                          /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("span", { className: "ts-warn-tags", children: [
+                            it.sub && /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { className: "ts-warn-sub", style: pillStyle(it.projectKey), children: it.sub }),
+                            it.icon === "\u25CF" && /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(Timer, { at: it.lastPromptAt }),
+                            it.shortReason && /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { className: "ts-warn-reason", children: it.shortReason })
                           ] })
                         ] })
                       ]
                     }
                   ),
-                  /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-warn-actions", children: [
-                    /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("span", { className: "ts-warn-slot", children: [
-                      it.canContinue && auto === "sent" && /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
+                  /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: "ts-warn-actions", children: [
+                    /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("span", { className: "ts-warn-slot", children: [
+                      it.canContinue && auto === "sent" && /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
                         "span",
                         {
                           className: "ts-warn-done",
                           title: it.continueHint ? `\u5DF2\u81EA\u52A8\u53D1\u9001\u300C\u7EE7\u7EED\u300D\uFF1A${it.continueHint}` : "\u5DF2\u81EA\u52A8\u53D1\u9001\u300C\u7EE7\u7EED\u300D\u8BA9\u6A21\u578B\u63A5\u7740\u8F93\u51FA",
-                          children: /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-warn-ico", "aria-hidden": "true", dangerouslySetInnerHTML: { __html: iconSvg("sent", 12) } })
+                          children: /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { className: "ts-warn-ico", "aria-hidden": "true", dangerouslySetInnerHTML: { __html: iconSvg("sent", 12) } })
                         }
                       ),
-                      it.canContinue && auto === "sending" && /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-warn-done is-busy", title: "\u6B63\u5728\u53D1\u9001\u300C\u7EE7\u7EED\u300D\u2026", children: /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-warn-ico", "aria-hidden": "true", dangerouslySetInnerHTML: { __html: iconSvg("play", 12) } }) }),
-                      it.canContinue && (auto === "idle" || auto === "error") && /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
+                      it.canContinue && auto === "sending" && /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { className: "ts-warn-done is-busy", title: "\u6B63\u5728\u53D1\u9001\u300C\u7EE7\u7EED\u300D\u2026", children: /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { className: "ts-warn-ico", "aria-hidden": "true", dangerouslySetInnerHTML: { __html: iconSvg("play", 12) } }) }),
+                      it.canContinue && (auto === "idle" || auto === "error") && /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
                         "button",
                         {
                           type: "button",
@@ -13743,11 +13963,11 @@ function HoverPanel({ pos, panelRef, items, onPick, onHover, onMarkRead, onMarkA
                             void cont(it);
                           },
                           disabled: sendState[it.key] === "sending",
-                          children: /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-warn-ico", "aria-hidden": "true", dangerouslySetInnerHTML: { __html: iconSvg("play", 12) } })
+                          children: /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { className: "ts-warn-ico", "aria-hidden": "true", dangerouslySetInnerHTML: { __html: iconSvg("play", 12) } })
                         }
                       )
                     ] }),
-                    /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-warn-slot", children: /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
+                    /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { className: "ts-warn-slot", children: /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
                       "button",
                       {
                         type: "button",
@@ -13758,10 +13978,10 @@ function HoverPanel({ pos, panelRef, items, onPick, onHover, onMarkRead, onMarkA
                           e.stopPropagation();
                           onMarkRead(it.key);
                         },
-                        children: /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-warn-ico", "aria-hidden": "true", dangerouslySetInnerHTML: { __html: iconSvg("check", 12) } })
+                        children: /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { className: "ts-warn-ico", "aria-hidden": "true", dangerouslySetInnerHTML: { __html: iconSvg("check", 12) } })
                       }
                     ) }),
-                    /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-warn-slot", children: /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
+                    /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { className: "ts-warn-slot", children: /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
                       "button",
                       {
                         type: "button",
@@ -13772,14 +13992,14 @@ function HoverPanel({ pos, panelRef, items, onPick, onHover, onMarkRead, onMarkA
                           e.stopPropagation();
                           onArchive(it);
                         },
-                        children: /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-warn-ico", "aria-hidden": "true", dangerouslySetInnerHTML: { __html: iconSvg("archive", 12) } })
+                        children: /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { className: "ts-warn-ico", "aria-hidden": "true", dangerouslySetInnerHTML: { __html: iconSvg("archive", 12) } })
                       }
                     ) })
                   ] })
                 ] }, it.key);
               }),
-              items.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-warn-empty", children: [
-                /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { "aria-hidden": "true", children: "\u25CB" }),
+              items.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: "ts-warn-empty", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { "aria-hidden": "true", children: "\u25CB" }),
                 "\u6CA1\u6709\u6B63\u5728\u5173\u6CE8\u7684\u5BF9\u8BDD"
               ] })
             ] }) }) })
@@ -13791,11 +14011,11 @@ function HoverPanel({ pos, panelRef, items, onPick, onHover, onMarkRead, onMarkA
   );
 }
 function ControlRoomEntry({ wide }) {
-  (0, import_react24.useEffect)(() => {
+  (0, import_react25.useEffect)(() => {
     injectProjectCenterStyles();
   }, []);
-  const [screen, setScreen] = (0, import_react24.useState)(() => getLiveScreen());
-  (0, import_react24.useEffect)(() => {
+  const [screen, setScreen] = (0, import_react25.useState)(() => getLiveScreen());
+  (0, import_react25.useEffect)(() => {
     const sync2 = () => setScreen(getLiveScreen());
     sync2();
     const offList = onRequestProjectList(sync2);
@@ -13807,9 +14027,9 @@ function ControlRoomEntry({ wide }) {
   }, []);
   const pulse = useActivityPulse();
   const alive = pulse.alive > 0;
-  const navigatingRef = (0, import_react24.useRef)(false);
-  const [offSurface, setOffSurface] = (0, import_react24.useState)(false);
-  (0, import_react24.useEffect)(() => {
+  const navigatingRef = (0, import_react25.useRef)(false);
+  const [offSurface, setOffSurface] = (0, import_react25.useState)(false);
+  (0, import_react25.useEffect)(() => {
     const probe = () => setOffSurface(activeHostPanelId(getClientContext()) !== null);
     probe();
     const timer = window.setInterval(probe, 500);
@@ -13819,9 +14039,9 @@ function ControlRoomEntry({ wide }) {
   const running = pulse.running > 0;
   const warnUnread = pulse.warn > 0;
   const doneUnread = pulse.done.length > 0;
-  const btnRef = (0, import_react24.useRef)(null);
-  const [dotCount, setDotCount] = (0, import_react24.useState)(DOT_COUNT);
-  (0, import_react24.useEffect)(() => {
+  const btnRef = (0, import_react25.useRef)(null);
+  const [dotCount, setDotCount] = (0, import_react25.useState)(DOT_COUNT);
+  (0, import_react25.useEffect)(() => {
     const el = btnRef.current;
     if (!el) return;
     const measure = () => {
@@ -13863,9 +14083,9 @@ function ControlRoomEntry({ wide }) {
     }
     setArchiveError(`\u5F52\u6863\u5931\u8D25\uFF1A${res.error}`);
   };
-  const [archivingId, setArchivingId] = (0, import_react24.useState)("");
-  const [pendingArchive, setPendingArchive] = (0, import_react24.useState)(null);
-  const [archiveError, setArchiveError] = (0, import_react24.useState)("");
+  const [archivingId, setArchivingId] = (0, import_react25.useState)("");
+  const [pendingArchive, setPendingArchive] = (0, import_react25.useState)(null);
+  const [archiveError, setArchiveError] = (0, import_react25.useState)("");
   const archiveAll = async () => {
     const list = hoverItems.filter((it) => it.sessionId);
     if (list.length === 0) return;
@@ -13927,8 +14147,8 @@ function ControlRoomEntry({ wide }) {
     ...warnItems,
     ...doneItems
   ];
-  const [hoverPos, setHoverPos] = (0, import_react24.useState)(null);
-  const hoverTimer = (0, import_react24.useRef)(null);
+  const [hoverPos, setHoverPos] = (0, import_react25.useState)(null);
+  const hoverTimer = (0, import_react25.useRef)(null);
   const clearHoverTimer = () => {
     if (hoverTimer.current) {
       window.clearTimeout(hoverTimer.current);
@@ -13936,11 +14156,11 @@ function ControlRoomEntry({ wide }) {
     }
   };
   const wantW = hoverPos && hoverItems.length > 0 && hoverPos.mode === "side" ? panelWidth(hoverPos.left, hoverItems) : 0;
-  (0, import_react24.useEffect)(() => {
+  (0, import_react25.useEffect)(() => {
     if (!hoverPos || wantW === 0 || hoverPos.width === wantW) return;
     setHoverPos({ ...hoverPos, width: wantW });
   }, [wantW]);
-  (0, import_react24.useEffect)(() => {
+  (0, import_react25.useEffect)(() => {
     if (!hoverPos) return;
     let raf2 = 0;
     const onResize = () => {
@@ -13991,10 +14211,10 @@ function ControlRoomEntry({ wide }) {
     const pos = computePanelPos();
     if (pos) setHoverPos(pos);
   };
-  const insideRef = (0, import_react24.useRef)(false);
-  const renewRef = (0, import_react24.useRef)(0);
-  const staleRef = (0, import_react24.useRef)(0);
-  const interactAtRef = (0, import_react24.useRef)(0);
+  const insideRef = (0, import_react25.useRef)(false);
+  const renewRef = (0, import_react25.useRef)(0);
+  const staleRef = (0, import_react25.useRef)(0);
+  const interactAtRef = (0, import_react25.useRef)(0);
   const panelFormActive = () => {
     const p = panelRef.current;
     const a = document.activeElement;
@@ -14049,10 +14269,10 @@ function ControlRoomEntry({ wide }) {
     renewRef.current = 0;
     scheduleClose();
   };
-  (0, import_react24.useEffect)(() => clearHoverTimer, []);
-  const triggerRef = (0, import_react24.useRef)(null);
-  const panelRef = (0, import_react24.useRef)(null);
-  const pointerRef = (0, import_react24.useRef)(null);
+  (0, import_react25.useEffect)(() => clearHoverTimer, []);
+  const triggerRef = (0, import_react25.useRef)(null);
+  const panelRef = (0, import_react25.useRef)(null);
+  const pointerRef = (0, import_react25.useRef)(null);
   const pointerZone = () => {
     const pt = pointerRef.current;
     const t = triggerRef.current;
@@ -14064,7 +14284,7 @@ function ControlRoomEntry({ wide }) {
       pt?.y ?? null
     );
   };
-  (0, import_react24.useEffect)(() => {
+  (0, import_react25.useEffect)(() => {
     const onMove = (e) => {
       pointerRef.current = { x: e.clientX, y: e.clientY };
     };
@@ -14090,7 +14310,7 @@ function ControlRoomEntry({ wide }) {
       togglePanel(e);
     }
   };
-  (0, import_react24.useEffect)(() => {
+  (0, import_react25.useEffect)(() => {
     if (!hoverPos) return;
     const onDown = (ev) => {
       const t = ev.target;
@@ -14120,11 +14340,11 @@ function ControlRoomEntry({ wide }) {
       document.removeEventListener("keydown", onKey);
     };
   }, [hoverPos]);
-  (0, import_react24.useEffect)(() => {
+  (0, import_react25.useEffect)(() => {
     return initSoundBridge();
   }, []);
-  return /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)(import_jsx_runtime19.Fragment, { children: [
-    /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)(
+  return /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)(import_jsx_runtime20.Fragment, { children: [
+    /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)(
       "button",
       {
         ref: btnRef,
@@ -14150,16 +14370,16 @@ function ControlRoomEntry({ wide }) {
           window.setTimeout(() => setScreen(getLiveScreen()), NAV_LOCK_MS);
         },
         children: [
-          (!alive || wide) && /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
+          (!alive || wide) && /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
             "span",
             {
               className: "ts-side-icon",
               "aria-hidden": "true",
-              dangerouslySetInnerHTML: { __html: iconSvg(toDesk ? "compass" : "folder", 15) }
+              dangerouslySetInnerHTML: { __html: iconSvg(toDesk ? "compass" : "folder", wide ? 16 : 18) }
             }
           ),
-          wide && /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-side-label", children: toDesk ? "\u56DE\u5230\u5DE5\u4F5C\u53F0" : "\u9879\u76EE\u4E2D\u5FC3" }),
-          alive && /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)(
+          wide && /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { className: "ts-side-label", children: toDesk ? "\u56DE\u5230\u5DE5\u4F5C\u53F0" : "\u9879\u76EE\u4E2D\u5FC3" }),
+          alive && /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)(
             "span",
             {
               ref: triggerRef,
@@ -14167,7 +14387,7 @@ function ControlRoomEntry({ wide }) {
               onMouseOver: openHover,
               onMouseLeave: closeHover,
               children: [
-                warnUnread && /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
+                warnUnread && /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
                   "span",
                   {
                     className: "ts-side-badge is-warn",
@@ -14183,7 +14403,7 @@ ${pulse.tip}`,
                     children: pulse.warn
                   }
                 ),
-                doneUnread && /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
+                doneUnread && /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
                   "span",
                   {
                     className: "ts-side-badge is-done",
@@ -14197,7 +14417,7 @@ ${pulse.tip}`,
                     children: pulse.done.length
                   }
                 ),
-                breathing > 0 && /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
+                breathing > 0 && /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
                   PulseDots,
                   {
                     tone,
@@ -14211,7 +14431,7 @@ ${pulse.tip}`,
         ]
       }
     ),
-    hoverPos && /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
+    hoverPos && /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
       HoverPanel,
       {
         pos: hoverPos,
@@ -14251,11 +14471,11 @@ ${pulse.tip}`,
         }
       }
     ),
-    pendingArchive && /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
+    pendingArchive && /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
       ConfirmDialog,
       {
         title: "\u505C\u6B62\u5E76\u5F52\u6863\u8FD9\u6761\u5BF9\u8BDD\uFF1F",
-        message: /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)(import_jsx_runtime19.Fragment, { children: [
+        message: /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)(import_jsx_runtime20.Fragment, { children: [
           "\u300C",
           pendingArchive.title,
           "\u300D\u8FD8\u6709\u6B63\u5728\u8FDB\u884C\u7684\u5DE5\u4F5C\u3002\u5F52\u6863\u4F1A\u5148\u505C\u6B62\u8FD9\u4E9B\u5DE5\u4F5C\uFF1B\u4E4B\u540E\u53EF\u5728\u4FA7\u680F\u300C\u5168\u90E8\u5BF9\u8BDD\uFF08\u663E\u793A\u5DF2\u5F52\u6863\uFF09\u300D\u91CC\u6062\u590D\uFF0C\u88AB\u505C\u6B62\u7684\u5DE5\u4F5C\u4E0D\u4F1A\u81EA\u52A8\u7EE7\u7EED\u3002"
@@ -15137,8 +15357,8 @@ function installComposerFocus() {
 }
 
 // client/src/panel/dock-spike.tsx
-var import_react25 = require("react");
-var import_jsx_runtime20 = require("react/jsx-runtime");
+var import_react26 = require("react");
+var import_jsx_runtime21 = require("react/jsx-runtime");
 var SPIKE_FLAG_KEY = "tokensave:dock-spike.v1";
 var SPIKE_CSS_ID = "tokensave-dock-spike-css";
 var SPIKE_CSS = `
@@ -15275,11 +15495,11 @@ function buildPaneDom(spec, state) {
   return root;
 }
 function DockSpike() {
-  const hostRef = (0, import_react25.useRef)(null);
-  const apiRef = (0, import_react25.useRef)(null);
-  const stateRef = (0, import_react25.useRef)({ ticks: {}, drafts: {}, focusLog: [], layoutOps: [] });
-  const [locked, setLocked] = (0, import_react25.useState)(false);
-  (0, import_react25.useEffect)(() => {
+  const hostRef = (0, import_react26.useRef)(null);
+  const apiRef = (0, import_react26.useRef)(null);
+  const stateRef = (0, import_react26.useRef)({ ticks: {}, drafts: {}, focusLog: [], layoutOps: [] });
+  const [locked, setLocked] = (0, import_react26.useState)(false);
+  (0, import_react26.useEffect)(() => {
     const host = hostRef.current;
     if (!host) return;
     const DVC = installDockview();
@@ -15402,10 +15622,10 @@ function DockSpike() {
       delete window.__tsDockSpike;
     };
   }, []);
-  return /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: "ts-spike-shell", "data-spike-shell": "", children: [
-    /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: "ts-spike-bar", children: [
-      /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("b", { children: "dockview spike\uFF08Step A\uFF09" }),
-      /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
+  return /* @__PURE__ */ (0, import_jsx_runtime21.jsxs)("div", { className: "ts-spike-shell", "data-spike-shell": "", children: [
+    /* @__PURE__ */ (0, import_jsx_runtime21.jsxs)("div", { className: "ts-spike-bar", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime21.jsx)("b", { children: "dockview spike\uFF08Step A\uFF09" }),
+      /* @__PURE__ */ (0, import_jsx_runtime21.jsx)(
         "button",
         {
           className: "ts-spike-btn",
@@ -15418,28 +15638,28 @@ function DockSpike() {
           children: locked ? "\u89E3\u9501\u5E03\u5C40" : "\u9501\u5B9A\u5E03\u5C40\uFF08disableDnd\uFF09"
         }
       ),
-      /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("button", { className: "ts-spike-btn", onClick: () => apiRef.current?.addFloatingGroup(apiRef.current.getPanel("A:chat"), { width: 520, height: 380 }), children: "\u6D6E\u52A8 \u9879\u76EEA \xB7 \u4E3B\u5BF9\u8BDD" }),
-      /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("button", { className: "ts-spike-btn", onClick: () => apiRef.current?.getPanel("A:preview")?.api.setVisible(false), children: "\u9690\u85CF \u9879\u76EEA \xB7 \u9884\u89C8" }),
-      /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("button", { className: "ts-spike-btn", onClick: () => apiRef.current?.getPanel("A:preview")?.api.setVisible(true), children: "\u663E\u793A \u9879\u76EEA \xB7 \u9884\u89C8" }),
-      /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { style: { color: "#6b7280" }, children: "\u62D6\u62FD/\u7F29\u653E\u9762\u677F\uFF0C\u7136\u540E\u770B\u4E24\u4E2A\u9879\u76EE\u7684\u8F93\u5165\u6846\u662F\u5426\u4E92\u4E0D\u5E72\u6270" })
+      /* @__PURE__ */ (0, import_jsx_runtime21.jsx)("button", { className: "ts-spike-btn", onClick: () => apiRef.current?.addFloatingGroup(apiRef.current.getPanel("A:chat"), { width: 520, height: 380 }), children: "\u6D6E\u52A8 \u9879\u76EEA \xB7 \u4E3B\u5BF9\u8BDD" }),
+      /* @__PURE__ */ (0, import_jsx_runtime21.jsx)("button", { className: "ts-spike-btn", onClick: () => apiRef.current?.getPanel("A:preview")?.api.setVisible(false), children: "\u9690\u85CF \u9879\u76EEA \xB7 \u9884\u89C8" }),
+      /* @__PURE__ */ (0, import_jsx_runtime21.jsx)("button", { className: "ts-spike-btn", onClick: () => apiRef.current?.getPanel("A:preview")?.api.setVisible(true), children: "\u663E\u793A \u9879\u76EEA \xB7 \u9884\u89C8" }),
+      /* @__PURE__ */ (0, import_jsx_runtime21.jsx)("span", { style: { color: "#6b7280" }, children: "\u62D6\u62FD/\u7F29\u653E\u9762\u677F\uFF0C\u7136\u540E\u770B\u4E24\u4E2A\u9879\u76EE\u7684\u8F93\u5165\u6846\u662F\u5426\u4E92\u4E0D\u5E72\u6270" })
     ] }),
-    /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("div", { className: "ts-spike-dock", ref: hostRef, "data-spike-dock": "" })
+    /* @__PURE__ */ (0, import_jsx_runtime21.jsx)("div", { className: "ts-spike-dock", ref: hostRef, "data-spike-dock": "" })
   ] });
 }
 function DockSpikeGate() {
-  const [on] = (0, import_react25.useState)(() => spikeEnabled());
+  const [on] = (0, import_react26.useState)(() => spikeEnabled());
   if (!on) return null;
-  return /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(DockSpike, {});
+  return /* @__PURE__ */ (0, import_jsx_runtime21.jsx)(DockSpike, {});
 }
 
 // client/src/index.ts
 var inject = { slots: true };
 function Probe(props) {
   const sid = props?.sessionId;
-  (0, import_react26.useEffect)(() => {
+  (0, import_react27.useEffect)(() => {
     setCurrentSessionId(sid ? String(sid) : "");
   }, [sid]);
-  (0, import_react26.useEffect)(() => {
+  (0, import_react27.useEffect)(() => {
     const ctx = getClientContext();
     if (!ctx) return;
     if (sid) {

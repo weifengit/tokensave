@@ -76,7 +76,7 @@ export function ExplorerWindow({
       </div>
       {(!collapsed || overlay) && (
         <div className="ts-win-body">
-          <MsgList messages={messages} emptyText="等待该探索者响应…" />
+          <MsgList messages={messages} sessionId={session.id} emptyText="等待该探索者响应…" />
         </div>
       )}
     </div>

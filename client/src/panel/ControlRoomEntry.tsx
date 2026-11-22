@@ -1253,7 +1253,7 @@ export function ControlRoomEntry({ wide }: { wide?: boolean }) {
           <span
             className="ts-side-icon"
             aria-hidden="true"
-            dangerouslySetInnerHTML={{ __html: iconSvg(toDesk ? 'compass' : 'folder', 15) }}
+            dangerouslySetInnerHTML={{ __html: iconSvg(toDesk ? 'compass' : 'folder', wide ? 16 : 18) }}
           />
         )}
         {wide && <span className="ts-side-label">{toDesk ? '回到工作台' : '项目中心'}</span>}
