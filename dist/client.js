@@ -2535,7 +2535,17 @@ body.ts-desk-nochat [data-conversation-region="composer"] {
 .ts-warn-row:not(.is-active) .ts-warn-item:hover { background:rgba(245,158,11,.14); }
 .ts-warn-row.is-active .ts-warn-item:hover { background:rgba(34,197,94,.12); }
 .ts-warn-item:focus-visible { outline:1px solid rgba(96,165,250,.8); }
-.ts-warn-icon { flex:none; font-size:calc(var(--ts-fs, 12.5px) * 0.88); line-height:1.7; opacity:.9; }
+/* \u884C\u9996\u72B6\u6001\u56FE\u6807\uFF1A\u76F8\u5BF9\u4E24\u884C\u5185\u5BB9\uFF08\u6807\u9898 + \u6807\u7B7E\uFF09\u5782\u76F4\u5C45\u4E2D\uFF0C26\xD726 \u724C + 18px \u7EBF\u6761\u56FE\u6807\u3002
+   \u8FDB\u884C\u4E2D\u7528\u5F00\u53E3\u5706\u5F27\u7F13\u6162\u65CB\u8F6C\uFF1Bprefers-reduced-motion \u4E0B\u505C\u8F6C\u3002 */
+.ts-warn-icon { flex:none; align-self:center; width:26px; height:26px; box-sizing:border-box; display:inline-flex; align-items:center; justify-content:center; border-radius:8px; border:1px solid rgba(127,127,127,.32); background:rgba(127,127,127,.12); }
+.ts-warn-icon svg { display:block; }
+.ts-warn-icon.is-active { color:#4ade80; border-color:rgba(74,222,128,.45); background:rgba(74,222,128,.12); }
+.ts-warn-icon.is-pending { color:#fbbf24; border-color:rgba(245,158,11,.45); background:rgba(245,158,11,.12); }
+.ts-warn-icon.is-failed { color:#fca5a5; border-color:rgba(248,113,113,.45); background:rgba(248,113,113,.12); }
+.ts-warn-icon.is-done { color:#7dd3fc; border-color:rgba(56,189,248,.45); background:rgba(56,189,248,.12); }
+.ts-warn-icon.is-active svg { animation:ts-warn-spin 1.2s linear infinite; transform-origin:50% 50%; }
+@keyframes ts-warn-spin { to { transform:rotate(360deg) } }
+@media (prefers-reduced-motion: reduce) { .ts-warn-icon.is-active svg { animation:none; } }
 /* min-width:0 \u662F\u9632\u6490\u5BBD\u7684\u5173\u952E\uFF1A\u8FD9\u4E24\u5C42\u53EA\u8981\u6709\u4E00\u5C42\u6CA1\u5199\uFF0C\u957F\u6807\u9898\u5C31\u4F1A\u628A\u6574\u4E2A\u9762\u677F\u9876\u5BBD */
 .ts-warn-body { min-width:0; flex:1; display:flex; flex-direction:column; gap:3px; }
 .ts-warn-title { min-width:0; font-size:var(--ts-fs, 12.5px); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
@@ -8366,6 +8376,14 @@ var ICON_BODIES = {
   play: '<path d="M8 5.5l11 6.5-11 6.5z"/>',
   /** 双勾：已发送（自动继续已接手，不再是可点按钮） */
   sent: '<path d="M3 12.5l4.2 4.2 7-7.4"/><path d="M11 14.5l2.2 2.2 7.3-8"/>',
+  /** 时钟：对话等待确认 */
+  clock: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 1.8"/>',
+  /** 圆圈对勾：对话已完成 */
+  checkCircle: '<circle cx="12" cy="12" r="8.5"/><path d="M8.3 12.2l2.5 2.5 4.9-5.4"/>',
+  /** 警示三角：对话故障中断（需要处理） */
+  alert: '<path d="M12 4.6 3.7 19h16.6z"/><path d="M12 9.5v4.2"/><path d="M12 16.7h.01"/>',
+  /** 开口圆弧：对话进行中（CSS 旋转） */
+  running: '<path d="M12 3.5a8.5 8.5 0 1 1-6.02 2.48"/>',
   /** 列表：项目中心（原来的 🗂️） */
   list: '<rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M7 9.5h10"/><path d="M7 13.5h6"/>',
   /** 书：项目预览 */
@@ -13572,6 +13590,12 @@ function sidebarRightOf(btn) {
   return best;
 }
 var CONTINUE_TEXT = "\u7EE7\u7EED";
+var STATUS_ICONS = {
+  active: "running",
+  pending: "clock",
+  failed: "alert",
+  done: "checkCircle"
+};
 function pillStyle(key) {
   if (!key) return {};
   let h = 0;
@@ -13747,7 +13771,7 @@ function HoverPanel({ pos, panelRef, items, onPick, onHover, onMarkRead, onMarkA
       "\u524D"
     ] });
   };
-  const readable = items.filter((it) => it.icon !== "\u25CF").length;
+  const readable = items.filter((it) => it.status !== "active").length;
   return (0, import_react_dom7.createPortal)(
     /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)(
       "div",
@@ -13919,7 +13943,7 @@ function HoverPanel({ pos, panelRef, items, onPick, onHover, onMarkRead, onMarkA
             /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("div", { className: "ts-list-body", children: /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("div", { className: "ts-box ts-box-list", children: /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: "ts-warn-pop-list", children: [
               items.map((it) => {
                 const auto = autoStateOf(it.sessionId);
-                return /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: `ts-warn-row${it.icon === "\u25CF" ? " is-active" : ""}`, children: [
+                return /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: `ts-warn-row${it.status === "active" ? " is-active" : ""}`, children: [
                   /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)(
                     "button",
                     {
@@ -13928,12 +13952,19 @@ function HoverPanel({ pos, panelRef, items, onPick, onHover, onMarkRead, onMarkA
                       title: [it.title, it.sub, it.continueHint, "\u70B9\u51FB\uFF1A\u6253\u5F00\u8FD9\u6761\u5BF9\u8BDD\u7684\u5DE5\u4F5C\u53F0"].filter(Boolean).join("\n"),
                       onClick: () => onPick(it),
                       children: [
-                        /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { className: "ts-warn-icon", "aria-hidden": "true", children: it.icon }),
+                        /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
+                          "span",
+                          {
+                            className: `ts-warn-icon is-${it.status}`,
+                            "aria-hidden": "true",
+                            dangerouslySetInnerHTML: { __html: iconSvg(STATUS_ICONS[it.status], 18) }
+                          }
+                        ),
                         /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("span", { className: "ts-warn-body", children: [
                           /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { className: "ts-warn-title", children: it.title }),
                           /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("span", { className: "ts-warn-tags", children: [
                             it.sub && /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { className: "ts-warn-sub", style: pillStyle(it.projectKey), children: it.sub }),
-                            it.icon === "\u25CF" && /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(Timer, { at: it.lastPromptAt }),
+                            it.status === "active" && /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(Timer, { at: it.lastPromptAt }),
                             it.shortReason && /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { className: "ts-warn-reason", children: it.shortReason })
                           ] })
                         ] })
@@ -14110,7 +14141,7 @@ function ControlRoomEntry({ wide }) {
     key: i.key,
     sessionId: i.sessionId,
     projectId: i.projectId,
-    icon: i.kind === "pending" ? "\u23F3" : "\u26A0\uFE0F",
+    status: i.kind === "pending" ? "pending" : "failed",
     title: i.title || "\uFF08\u672A\u547D\u540D\u5BF9\u8BDD\uFF09",
     sub: i.project || "",
     projectKey: i.projectId || i.project,
@@ -14126,7 +14157,7 @@ function ControlRoomEntry({ wide }) {
     key: d.key,
     sessionId: d.sessionId,
     projectId: d.projectId,
-    icon: "\u2705",
+    status: "done",
     title: d.title || "\uFF08\u672A\u547D\u540D\u5BF9\u8BDD\uFF09",
     sub: d.project || "",
     projectKey: d.projectId || d.project,
@@ -14137,7 +14168,7 @@ function ControlRoomEntry({ wide }) {
       key: `a:${a.sessionId}`,
       sessionId: a.sessionId,
       projectId: a.projectId,
-      icon: "\u25CF",
+      status: "active",
       title: a.title || "\uFF08\u672A\u547D\u540D\u5BF9\u8BDD\uFF09",
       sub: a.project || "",
       projectKey: a.projectId || a.project,

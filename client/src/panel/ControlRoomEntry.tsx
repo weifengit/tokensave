@@ -180,12 +180,22 @@ const CONTINUE_TEXT = '继续'
 
 
 /** 浮层里的一行（活跃/需要处理/已完成共用结构）。 */
+/** 行首状态：进行中 / 等待确认 / 故障中断 / 已完成 */
+type PopStatus = 'active' | 'pending' | 'failed' | 'done'
+
+/** 状态 → 线条图标名（行首大图标与状态色都由它派生） */
+const STATUS_ICONS: Record<PopStatus, string> = {
+  active: 'running',
+  pending: 'clock',
+  failed: 'alert',
+  done: 'checkCircle',
+}
 interface PopItem {
   /** 已读标注键（markPulseRead 用） */
   key: string
   sessionId: string
   projectId: string
-  icon: string
+  status: PopStatus
   title: string
   sub: string
   /** 项目身份（给胶囊配色用：id 优先，退回项目名） */
@@ -371,7 +381,8 @@ function ContinueSettingsBlock() {
  * 跑马灯悬浮面板：一个列表 + 两块设置（提示音 / 自动继续）。
  *
  * 设计约束（本次修订集中在这里）：
- *   - **没有标签页**：一条对话是活跃/需处理/已完成，看行首图标就知道（● / ⏳⚠️ / ✅），
+ *   - **没有标签页**：一条对话是活跃/需处理/已完成，看行首状态图标就知道
+ *     （转动=进行中 / 时钟=等待 / 警示=故障 / 对勾=完成），
  *     再分三个 tab 是重复信息，还把本来就能一眼看完的清单拆成三次点击；
  *   - **宽度必须固定在一个区间**：内容（长标题 / 长原因）不能把面板撐宽 →
  *     所有可变长文本一律 `min-width:0` + 省略号，面板宽度由常量定死，
@@ -449,7 +460,7 @@ function HoverPanel({ pos, panelRef, items, onPick, onHover, onMarkRead, onMarkA
   }
 
   /** 有多少条真的能标已读（活跃的对话没有「已读」概念，不参与计数） */
-  const readable = items.filter((it) => it.icon !== '●').length
+  const readable = items.filter((it) => it.status !== 'active').length
   return createPortal(
     <div
       ref={panelRef}
@@ -634,19 +645,23 @@ function HoverPanel({ pos, panelRef, items, onPick, onHover, onMarkRead, onMarkA
         {items.map((it) => {
           const auto = autoStateOf(it.sessionId)
           return (
-            <div className={`ts-warn-row${it.icon === '●' ? ' is-active' : ''}`} key={it.key}>
+            <div className={`ts-warn-row${it.status === 'active' ? ' is-active' : ''}`} key={it.key}>
               <button
                 type="button"
                 className="ts-warn-item"
                 title={[it.title, it.sub, it.continueHint, '点击：打开这条对话的工作台'].filter(Boolean).join('\n')}
                 onClick={() => onPick(it)}
               >
-                <span className="ts-warn-icon" aria-hidden="true">{it.icon}</span>
+                <span
+                  className={`ts-warn-icon is-${it.status}`}
+                  aria-hidden="true"
+                  dangerouslySetInnerHTML={{ __html: iconSvg(STATUS_ICONS[it.status], 18) }}
+                />
                 <span className="ts-warn-body">
                   <span className="ts-warn-title">{it.title}</span>
                   <span className="ts-warn-tags">
                     {it.sub && <span className="ts-warn-sub" style={pillStyle(it.projectKey)}>{it.sub}</span>}
-                    {it.icon === '●' && <Timer at={it.lastPromptAt} />}
+                    {it.status === 'active' && <Timer at={it.lastPromptAt} />}
                     {it.shortReason && <span className="ts-warn-reason">{it.shortReason}</span>}
                   </span>
                 </span>
@@ -882,7 +897,7 @@ export function ControlRoomEntry({ wide }: { wide?: boolean }) {
     key: i.key,
     sessionId: i.sessionId,
     projectId: i.projectId,
-    icon: i.kind === 'pending' ? '⏳' : '⚠️',
+    status: i.kind === 'pending' ? 'pending' : 'failed',
     title: i.title || '（未命名对话）',
     sub: i.project || '',
     projectKey: i.projectId || i.project,
@@ -898,20 +913,20 @@ export function ControlRoomEntry({ wide }: { wide?: boolean }) {
     key: d.key,
     sessionId: d.sessionId,
     projectId: d.projectId,
-    icon: '✅',
+    status: 'done',
     title: d.title || '（未命名对话）',
     sub: d.project || '',
     projectKey: d.projectId || d.project,
     canContinue: false
   }))
 
-  /** 悬浮清单里的全部条目：跑着的（●） + 需处理的（⏳/⚠️） + 已完成的（✅），与 tip 同序 */
+  /** 悬浮清单里的全部条目：进行中 / 需处理（等待·故障）/ 已完成，与 tip 同序 */
   const hoverItems: PopItem[] = [
     ...pulse.active.map((a) => ({
       key: `a:${a.sessionId}`,
       sessionId: a.sessionId,
       projectId: a.projectId,
-      icon: '●',
+      status: 'active' as const,
       title: a.title || '（未命名对话）',
       sub: a.project || '',
       projectKey: a.projectId || a.project,

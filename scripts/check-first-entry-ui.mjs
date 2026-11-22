@@ -206,6 +206,18 @@ check('三个动作统一图标按钮 + 固定槽位（不挤压内容、垂直�
   /play: '<path d="M8 5\.5l11 6\.5-11 6\.5z"\/>/.test(icons) &&
   !/📥/.test(entrySrc))
 
+check('行首状态图标：线条 + 26px 牌 + 两行垂直居中 + 进行中旋转（不再用拟物 emoji）',
+  /type PopStatus = 'active' \| 'pending' \| 'failed' \| 'done'/.test(entrySrc) &&
+  /const STATUS_ICONS: Record<PopStatus, string> = \{/.test(entrySrc) &&
+  /active: 'running'/.test(entrySrc) && /pending: 'clock'/.test(entrySrc) &&
+  /iconSvg\(STATUS_ICONS\[it\.status\], 18\)/.test(entrySrc) &&
+  // 图标本体在共享 icons.ts（同一套 24 视窗线条），不是 emoji
+  /clock: '<circle/.test(icons) && /checkCircle: '<circle/.test(icons) &&
+  /alert: '<path d="M12 4\.6/.test(icons) && /running: '<path d="M12 3\.5/.test(icons) &&
+  /\.ts-warn-icon \{ flex:none; align-self:center; width:26px; height:26px;/.test(styles) &&
+  /\.ts-warn-icon\.is-active svg \{ animation:ts-warn-spin/.test(styles) &&
+  !/⏳|✅|⚠️/.test(entrySrc))
+
 console.log('— 7. Windows 默认盘符：E → D → C —')
 
 check('盘符优先级 E → D → C，且默认起点取首选盘',

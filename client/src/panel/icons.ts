@@ -35,6 +35,14 @@ export const ICON_BODIES: Record<string, string> = {
   play: '<path d="M8 5.5l11 6.5-11 6.5z"/>',
   /** 双勾：已发送（自动继续已接手，不再是可点按钮） */
   sent: '<path d="M3 12.5l4.2 4.2 7-7.4"/><path d="M11 14.5l2.2 2.2 7.3-8"/>',
+  /** 时钟：对话等待确认 */
+  clock: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 1.8"/>',
+  /** 圆圈对勾：对话已完成 */
+  checkCircle: '<circle cx="12" cy="12" r="8.5"/><path d="M8.3 12.2l2.5 2.5 4.9-5.4"/>',
+  /** 警示三角：对话故障中断（需要处理） */
+  alert: '<path d="M12 4.6 3.7 19h16.6z"/><path d="M12 9.5v4.2"/><path d="M12 16.7h.01"/>',
+  /** 开口圆弧：对话进行中（CSS 旋转） */
+  running: '<path d="M12 3.5a8.5 8.5 0 1 1-6.02 2.48"/>',
   /** 列表：项目中心（原来的 🗂️） */
   list: '<rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M7 9.5h10"/><path d="M7 13.5h6"/>',
   /** 书：项目预览 */

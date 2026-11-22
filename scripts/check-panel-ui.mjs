@@ -273,7 +273,7 @@ check('第二行用了 ts-cont-sw-row 类', /className="ts-box-row ts-cont-sw-ro
 check('计时器渲染在标签行内（与项目胶囊同行，不在下面另起一行）',
   /<span className="ts-warn-tags">[\s\S]*?<Timer at=/.test(tsx))
 check('标签行下方不再有计时器兄弟节点',
-  !/\n\s*\{it\.icon === '●' && <Timer at=\{it\.lastPromptAt\} \/>\}\n\s*<\/span>/.test(tsx))
+  !/\n\s*\{it\.status === 'active' && <Timer at=\{it\.lastPromptAt\} \/>\}\n\s*<\/span>/.test(tsx))
 
 // —— 标题行控件与子行控件同列（右侧一律落在 21px 内距上）——
 // 21 = 12(ts-list-body) + 1(ts-box-list 边框) + 3(其内距) + 5(ts-warn-pop-list 内距)，

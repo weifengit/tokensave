@@ -364,7 +364,17 @@ body.ts-desk-nochat [data-conversation-region="composer"] {
 .ts-warn-row:not(.is-active) .ts-warn-item:hover { background:rgba(245,158,11,.14); }
 .ts-warn-row.is-active .ts-warn-item:hover { background:rgba(34,197,94,.12); }
 .ts-warn-item:focus-visible { outline:1px solid rgba(96,165,250,.8); }
-.ts-warn-icon { flex:none; font-size:calc(var(--ts-fs, 12.5px) * 0.88); line-height:1.7; opacity:.9; }
+/* 行首状态图标：相对两行内容（标题 + 标签）垂直居中，26×26 牌 + 18px 线条图标。
+   进行中用开口圆弧缓慢旋转；prefers-reduced-motion 下停转。 */
+.ts-warn-icon { flex:none; align-self:center; width:26px; height:26px; box-sizing:border-box; display:inline-flex; align-items:center; justify-content:center; border-radius:8px; border:1px solid rgba(127,127,127,.32); background:rgba(127,127,127,.12); }
+.ts-warn-icon svg { display:block; }
+.ts-warn-icon.is-active { color:#4ade80; border-color:rgba(74,222,128,.45); background:rgba(74,222,128,.12); }
+.ts-warn-icon.is-pending { color:#fbbf24; border-color:rgba(245,158,11,.45); background:rgba(245,158,11,.12); }
+.ts-warn-icon.is-failed { color:#fca5a5; border-color:rgba(248,113,113,.45); background:rgba(248,113,113,.12); }
+.ts-warn-icon.is-done { color:#7dd3fc; border-color:rgba(56,189,248,.45); background:rgba(56,189,248,.12); }
+.ts-warn-icon.is-active svg { animation:ts-warn-spin 1.2s linear infinite; transform-origin:50% 50%; }
+@keyframes ts-warn-spin { to { transform:rotate(360deg) } }
+@media (prefers-reduced-motion: reduce) { .ts-warn-icon.is-active svg { animation:none; } }
 /* min-width:0 是防撐宽的关键：这两层只要有一层没写，长标题就会把整个面板顶宽 */
 .ts-warn-body { min-width:0; flex:1; display:flex; flex-direction:column; gap:3px; }
 .ts-warn-title { min-width:0; font-size:var(--ts-fs, 12.5px); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
