@@ -317,6 +317,14 @@ function dropDoneFor(sessionId: string): void {
   }
 }
 
+/** 把一组已读键落盘，并让呼吸灯立刻按新状态重算（角标 / 清单同一拍刷新）。 */
+function applyReadKeys(keys: readonly string[]): void {
+  if (keys.length === 0) return
+  for (const k of keys) readMarks.set(k, Date.now())
+  persistReadMarks()
+  notifyOutcome()
+}
+
 /**
  * 标注已读（黄灯清单 / 完成清单共用）。
  * @param kind - 标注哪一类
@@ -325,11 +333,23 @@ function dropDoneFor(sessionId: string): void {
  * 写 localStorage 跨刷新保留。同一轮不会重复提醒，但**新一轮 / 新的待确认会话期**会重新提醒。
  */
 export function markPulseRead(kind: 'warn' | 'done', key?: string): void {
-  const keys = key ? [key] : kind === 'warn' ? lastWarnKeys : lastDoneKeys
-  if (keys.length === 0) return
-  for (const k of keys) readMarks.set(k, Date.now())
-  persistReadMarks()
-  notifyOutcome()
+  applyReadKeys(key ? [key] : kind === 'warn' ? lastWarnKeys : lastDoneKeys)
+}
+
+/**
+ * 把一个会话的全部未读项标为已读（归档时用：归档 = 已处理，效果同点行内的「已读」）。
+ *
+ * 只靠宿主归档集刷新不够：黄/蓝清单的数据来自 outcomeCache / doneCache，
+ * 归档后要等 10s 兜底扫描发现会话不在项目里才会被清掉 —— 这期间数字角标不降、
+ * 对话也还挂在清单里（用户反馈「点了归档，角标和清单都没反应」）。
+ * 按 sessionId 匹配而不是按 item.key：点击到归档完成之间可能又跑完一轮，键会变。
+ * @param sessionId - 刚归档成功的会话
+ */
+export function markSessionRead(sessionId: string): void {
+  if (!sessionId) return
+  const owns = (k: string): boolean =>
+    k.startsWith(`w:p:${sessionId}:`) || k.startsWith(`w:f:${sessionId}:`) || k.startsWith(`d:${sessionId}:`)
+  applyReadKeys([...lastWarnKeys, ...lastDoneKeys].filter(owns))
 }
 /** sessionId → 观察到「停止」的本地时刻（负结论新鲜度判定用） */
 const stoppedAt = new Map<string, number>()

@@ -29,6 +29,7 @@ const icons = readFileSync(join(root, 'client/src/panel/icons.ts'), 'utf8')
 const ghCli = readFileSync(join(root, 'src/gh-cli.ts'), 'utf8')
 const route = readFileSync(join(root, 'src/board-web-route.ts'), 'utf8')
 const layoutSrc = readFileSync(join(root, 'client/src/panel/desk-first-layout.ts'), 'utf8')
+const pulseSrc = readFileSync(join(root, 'client/src/panel/pulse.ts'), 'utf8')
 
 console.log('— 1. 首次进入的界面布局 —')
 
@@ -195,6 +196,20 @@ check('归档走宿主 uiWorkspace.archiveSession（复用 sessions.ts 的封装
   /停止并归档/.test(entrySrc) &&
   // 归档当前会话后留在本项目工作台（不掉回 Hero）
   /stayInProjectAfterArchive/.test(entrySrc))
+
+check('归档 = 已处理：成功后按会话标已读（与点行内「已读」同一效果）',
+  // 单一归档（含「停止并归档」的重试路径）与全部归档两条成功路径都要标已读
+  /if \(res\.ok\) \{[\s\S]{0,400}?markSessionRead\(it\.sessionId\)/.test(entrySrc) &&
+  /if \(res\.ok\) markSessionRead\(it\.sessionId\)/.test(entrySrc) &&
+  /import \{ markPulseRead, markSessionRead, useActivityPulse, type InterruptKind \} from '\.\/pulse'/.test(entrySrc))
+
+check('markSessionRead：按 sessionId 覆盖三类未读键，标注后立刻重算呼吸灯',
+  /export function markSessionRead\(sessionId: string\): void \{/.test(pulseSrc) &&
+  pulseSrc.includes('w:p:${sessionId}:') &&
+  pulseSrc.includes('w:f:${sessionId}:') &&
+  pulseSrc.includes('d:${sessionId}:') &&
+  // 与行内「已读」共用同一落盘 + 立即重算通道：角标与清单在同一拍更新
+  /function applyReadKeys\(keys: readonly string\[\]\): void \{[\s\S]{0,240}?persistReadMarks\(\)[\s\S]{0,80}?notifyOutcome\(\)/.test(pulseSrc))
 
 check('三个动作统一图标按钮 + 固定槽位（不挤压内容、垂直对齐）',
   /\.ts-warn-icon-btn \{[^}]*width:22px; height:22px/.test(styles) &&

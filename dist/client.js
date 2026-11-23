@@ -12229,12 +12229,19 @@ function dropDoneFor(sessionId) {
     if (doneCache[i].sessionId === sessionId) doneCache.splice(i, 1);
   }
 }
-function markPulseRead(kind, key) {
-  const keys = key ? [key] : kind === "warn" ? lastWarnKeys : lastDoneKeys;
+function applyReadKeys(keys) {
   if (keys.length === 0) return;
   for (const k of keys) readMarks.set(k, Date.now());
   persistReadMarks();
   notifyOutcome();
+}
+function markPulseRead(kind, key) {
+  applyReadKeys(key ? [key] : kind === "warn" ? lastWarnKeys : lastDoneKeys);
+}
+function markSessionRead(sessionId) {
+  if (!sessionId) return;
+  const owns = (k) => k.startsWith(`w:p:${sessionId}:`) || k.startsWith(`w:f:${sessionId}:`) || k.startsWith(`d:${sessionId}:`);
+  applyReadKeys([...lastWarnKeys, ...lastDoneKeys].filter(owns));
 }
 var stoppedAt = /* @__PURE__ */ new Map();
 var inflight = /* @__PURE__ */ new Set();
@@ -14127,6 +14134,7 @@ function ControlRoomEntry({ wide }) {
     const res = await archiveSession(it.sessionId, stopActivity);
     setArchivingId("");
     if (res.ok) {
+      markSessionRead(it.sessionId);
       setHoverPos(null);
       try {
         const project = loadProjects().find((p) => p.id === it.projectId);
@@ -14152,7 +14160,8 @@ function ControlRoomEntry({ wide }) {
     let failed = 0;
     for (const it of list) {
       const res = await archiveSession(it.sessionId, false);
-      if (!res.ok) {
+      if (res.ok) markSessionRead(it.sessionId);
+      else {
         failed++;
         if (res.active) setPendingArchive(it);
       }

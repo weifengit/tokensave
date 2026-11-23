@@ -36,7 +36,8 @@
  *
  * 已读标注写 localStorage（跨刷新、同源多标签共享），同一轮不会重复提醒，
  * 新的一轮 / 新的待确认会话期会重新提醒；点条目跳转**不再**顺手标已读
- *（那属于误操作高发设计）—— 要标已读就点行内的「已读」。
+ *（那属于误操作高发设计）—— 要标已读就点行内的「已读」；
+ * 归档同样算「已处理」：归档成功后按会话标已读，角标与清单同一拍更新。
  *
  * 浮层 portal 到 body + position:fixed → rail（56px 收起态）与展开态都从按钮
  * 右缘飞出，不受侧边栏宽度 / overflow 裁剪影响（Step 24 下拉被裁的教训）。
@@ -49,7 +50,7 @@ import {
   activeHostPanelId, archiveSession, enterProjectWorkbench, getLiveScreen, onRequestProjectList, onRequestWorkbench, openControlRoom,
   sendToSession, stayInProjectAfterArchive,
 } from './sessions'
-import { markPulseRead, useActivityPulse, type InterruptKind } from './pulse'
+import { markPulseRead, markSessionRead, useActivityPulse, type InterruptKind } from './pulse'
 import { iconSvg } from './icons'
 import { injectProjectCenterStyles } from './styles'
 import { loadProjects } from './store'
@@ -837,7 +838,10 @@ export function ControlRoomEntry({ wide }: { wide?: boolean }) {
     const res = await archiveSession(it.sessionId, stopActivity)
     setArchivingId('')
     if (res.ok) {
-      // 归档成功后：这条对话从清单里消失（宿主归档集已更新 → pulse 下一拍不再列它）
+      // 归档 = 已处理：与行内「已读」同一效果 —— 立刻降角标、从清单移除。
+      // 只靠宿主归档集刷新不够：黄/蓝清单来自 outcome / done 缓存，要等 10s 兜底扫描
+      // 才会把已归档会话清掉，这段时间角标与清单都停在旧状态（用户反馈）。
+      markSessionRead(it.sessionId)
       setHoverPos(null)
       // 归档的若是当前会话 → 留在本项目工作台，不掉回 Hero
       try {
@@ -869,7 +873,8 @@ export function ControlRoomEntry({ wide }: { wide?: boolean }) {
     let failed = 0
     for (const it of list) {
       const res = await archiveSession(it.sessionId, false)
-      if (!res.ok) {
+      if (res.ok) markSessionRead(it.sessionId)
+      else {
         failed++
         // 正在运行的那条：停下来问用户（其余先归档完）
         if (res.active) setPendingArchive(it)
