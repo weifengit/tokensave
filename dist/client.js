@@ -2402,18 +2402,12 @@ body.ts-desk-nochat [data-conversation-region="composer"] {
 /* \u6E05\u5355\u6D6E\u5C42\uFF1Aportal \u5230 body + position:fixed\uFF08top/left \u7531 JSX \u6309\u6309\u94AE\u77E9\u5F62\u7ED9\uFF09\uFF0C
    \u6240\u4EE5 rail\uFF0856px \u6536\u8D77\uFF09\u4E0E\u5C55\u5F00\u6001\u90FD\u4ECE\u6309\u94AE\u53F3\u7F18\u98DE\u51FA\uFF0C\u4E0D\u88AB\u4FA7\u8FB9\u680F overflow \u88C1\u526A */
 .ts-warn-pop { position:fixed; z-index:60; max-width:calc(100vw - 24px); max-height:80vh; display:flex; flex-direction:column; border-radius:12px; border:1px solid var(--ts-pop-line); background:var(--ts-pop-bg); color:var(--ts-pop-fg); box-shadow:var(--ts-pop-shadow); backdrop-filter:blur(12px) saturate(1.2); overflow:hidden; }
-/* \u624B\u673A\u6446\u6CD5\uFF1A\u951A\u70B9\u53F3\u4FA7\u653E\u4E0D\u4E0B\u6700\u7A84\u9762\u677F \u2192 \u8D34\u89C6\u53E3\u5C45\u4E2D\uFF08\u51E0\u4F55\u5728 panel-width.ts \u7684 sheetBox\uFF0C
-   \u7531 ControlRoomEntry \u52A0 is-sheet \u7C7B\uFF09\u3002
-   \u8FD9\u91CC\u53EA\u505A\u4E24\u4EF6\u4E8B\uFF1A
-   1) z-index \u62AC\u5230 950\u3002\u7A84\u5C4F\u4E0B\u4FA7\u8FB9\u680F\u662F\u6D6E\u5C42\u62BD\u5C49\uFF08\u5B98\u65B9 / \u751F\u6001\u63D2\u4EF6\u90FD\u5728 899~900 \u8FD9\u4E00\u6863\uFF09\uFF0C
-      \u539F\u6765\u7684 60 \u4F1A\u88AB\u5B83\u548C\u5B83\u7684\u9ED1\u7EB1\u538B\u5728\u4E0B\u9762 \u2014\u2014 \u9762\u677F\u65E2\u53D1\u6697\u53C8\u70B9\u4E0D\u7740\uFF1B950 \u4ECD\u4F4E\u4E8E\u5B98\u65B9\u5F39\u7A97
-      (1000) \u4E0E\u83DC\u5355 (1100)\uFF0C\u4E0D\u4F1A\u76D6\u4F4F\u771F\u6B63\u7684\u6A21\u6001\u3002
-   2) max-width \u4E0E sheetBox \u7684 vw-16 \u5BF9\u9F50\uFF0C\u514D\u5F97\u884C\u5185\u5BBD\u5EA6\u88AB\u8FD9\u91CC\u518D\u5939\u4E00\u6B21\u3002 */
 /* \u624B\u673A\u6446\u6CD5\uFF1A\u8D34\u89C6\u53E3\u9876\u90E8\u3001\u4E14\u4E0E\u89E6\u53D1\u5668\u8131\u94A9\u3002
    1) z-index \u62AC\u5230 950\u3002\u7A84\u5C4F\u4E0B\u4FA7\u8FB9\u680F\u662F\u6D6E\u5C42\u62BD\u5C49\uFF08\u5B98\u65B9 / \u751F\u6001\u63D2\u4EF6\u90FD\u5728 899~900 \u8FD9\u4E00\u6863\uFF09\uFF0C
       \u539F\u6765\u7684 60 \u4F1A\u88AB\u5B83\u548C\u5B83\u7684\u9ED1\u7EB1\u538B\u5728\u4E0B\u9762 \u2014\u2014 \u9762\u677F\u65E2\u53D1\u6697\u53C8\u70B9\u4E0D\u7740\uFF1B950 \u4ECD\u4F4E\u4E8E\u5B98\u65B9\u5F39\u7A97
       (1000) \u4E0E\u83DC\u5355 (1100)\uFF0C\u4E0D\u4F1A\u76D6\u4F4F\u771F\u6B63\u7684\u6A21\u6001\u3002
-   2) max-width \u4E0E sheetBox \u7684 vw-16 \u5BF9\u9F50\uFF0C\u514D\u5F97\u884C\u5185\u5BBD\u5EA6\u88AB\u8FD9\u91CC\u518D\u5939\u4E00\u6B21\u3002
+   2) max-width \u4E0E\u300C\u6781\u7A84\u5C4F\u56DE\u9000\u5BBD\u300D\u7684 vw-16 \u5BF9\u9F50 \u2014\u2014 \u6B63\u5E38\u624B\u673A\u4E0A JS \u7ED9 272~340\uFF0C
+      \u8FD9\u91CC\u53EA\u662F\u515C\u5E95\u4E0A\u754C\uFF0C\u4E0D\u4F1A\u518D\u628A\u9762\u677F\u5939\u7A84\u3002
    3) top \u7531 CSS \u5B9A\uFF08\u542B\u5218\u6D77\u5B89\u5168\u533A\uFF09\uFF0C\u4E0D\u5728 JS \u91CC\u8DDF\u89E6\u53D1\u5668\u7B97\uFF1A\u624B\u673A\u4E0A\u62BD\u5C49\u4E00\u6536\uFF0C
       \u89E6\u53D1\u5668\u5C31\u662F display:none\uFF0C\u8DDF\u7740\u5B83\u7B97\u9762\u677F\u4F1A\u6F02\u79FB\u751A\u81F3\u88AB\u7B97\u5230\u5C4F\u5916\u3002 */
 .ts-warn-pop.is-sheet { z-index:950; max-width:calc(100vw - 16px); top:calc(env(safe-area-inset-top, 0px) + 12px); bottom:auto; }
@@ -2482,8 +2476,11 @@ body.ts-desk-nochat [data-conversation-region="composer"] {
 .ts-box-row > label { flex:none; font-size:calc(var(--ts-fs, 12.5px) * 0.84); opacity:.62; letter-spacing:.02em; cursor:help; }
 /* \u6E05\u5355\u5916\u6846\uFF1A\u88C5 .ts-warn-pop-list\uFF08\u5B83\u81EA\u5DF1\u7BA1\u6EDA\u52A8\u4E0E\u884C\u95F4\u8DDD\uFF09 */
 .ts-box-list { flex:1 1 auto; display:flex; flex-direction:column; min-height:0; overflow:hidden; padding:3px; }
-/* \u6E05\u5355\u533A\u5185\u5BB9\u5BB9\u5668\uFF1A\u4E0E\u63D0\u793A\u97F3 / \u81EA\u52A8\u7EE7\u7EED\u540C\u6B3E\u5916\u8DDD\uFF080 12px 10px\uFF09\uFF0C\u4FDD\u8BC1\u4E09\u4E2A\u5916\u6846\u5DE6\u53F3\u5BF9\u9F50\u3001\u5185\u8DDD\u4E00\u81F4 */
-.ts-list-body { flex:1 1 auto; min-height:0; width:100%; box-sizing:border-box; padding:0 12px 10px; }
+/* \u6E05\u5355\u533A\u5185\u5BB9\u5BB9\u5668\uFF1A\u4E0E\u63D0\u793A\u97F3 / \u81EA\u52A8\u7EE7\u7EED\u540C\u6B3E\u5916\u8DDD\uFF080 12px 10px\uFF09\uFF0C\u4FDD\u8BC1\u4E09\u4E2A\u5916\u6846\u5DE6\u53F3\u5BF9\u9F50\u3001\u5185\u8DDD\u4E00\u81F4\u3002
+   \u5FC5\u987B\u662F flex \u5BB9\u5668\uFF1A\u91CC\u9762\u7684 .ts-box-list \u9760 flex:1 + min-height:0 \u624D\u80FD\u88AB\u9762\u677F\u9AD8\u5EA6\u538B\u4F4F\u3002
+   \u5426\u5219\u5B83\u4F1A\u6309\u5185\u5BB9\u957F\u9AD8\uFF08height:auto\uFF09\uFF0C\u6E05\u5355\u5185\u90E8\u5C31\u6CA1\u6709\u53EF\u6EDA\u52A8\u7684\u7A7A\u95F4 \u2014\u2014 \u4F1A\u8BDD\u4E00\u591A\uFF0C
+   \u672B\u5C3E\u51E0\u6761\u76F4\u63A5\u88AB .ts-warn-pop \u7684 overflow:hidden \u88C1\u6389\uFF08\u7528\u6237\u53CD\u9988\u300C\u4E0B\u9762\u7684\u4F1A\u8BDD\u770B\u4E0D\u5230\u300D\uFF09\u3002 */
+.ts-list-body { flex:1 1 auto; min-height:0; width:100%; box-sizing:border-box; padding:0 12px 10px; display:flex; flex-direction:column; }
 /* \u2014\u2014 \u63D0\u793A\u97F3\u8BBE\u7F6E\u533A\uFF08\u5185\u5D4C\u5728\u60AC\u6D6E\u9762\u677F\u9876\u90E8\uFF0C\u4E0E\u300C\u5BF9\u8BDD\u6E05\u5355\u300D\u540C\u9762\u677F\u540C\u73B0\uFF09\u2014\u2014
    \u5BBD\u5EA6 100%\uFF08\u4E0D\u518D\u5199\u6B7B 272px\uFF09\uFF1A\u4E0E\u81EA\u52A8\u7EE7\u7EED\u533A\u3001\u6E05\u5355\u533A\u4E25\u683C\u540C\u5BBD\u3001\u540C\u8FB9\u8DDD\u3002 */
 .ts-sound-body { flex:none; width:100%; box-sizing:border-box; display:flex; flex-direction:column; gap:6px; padding:0 12px 10px; }
@@ -2518,7 +2515,7 @@ body.ts-desk-nochat [data-conversation-region="composer"] {
 .ts-cont-num { flex:none; width:46px; height:22px; box-sizing:border-box; border:1px solid rgba(127,127,127,.35); border-radius:6px; background:rgba(127,127,127,.1); color:inherit; font-family:inherit; font-size:calc(var(--ts-fs, 12.5px) * 0.84); line-height:1; padding:0 5px; text-align:center; -moz-appearance:textfield; appearance:textfield; }
 .ts-cont-num::-webkit-outer-spin-button, .ts-cont-num::-webkit-inner-spin-button { -webkit-appearance:none; appearance:none; margin:0; }
 .ts-cont-unit { flex:none; font-size:calc(var(--ts-fs, 12.5px) * 0.8); opacity:.5; }
-.ts-warn-pop-list { flex:1 1 auto; overflow:auto; overflow-x:hidden; padding:5px; display:flex; flex-direction:column; gap:2px; min-height:32px; }
+.ts-warn-pop-list { flex:1 1 auto; overflow:auto; overflow-x:hidden; overscroll-behavior:contain; -webkit-overflow-scrolling:touch; padding:5px; display:flex; flex-direction:column; gap:2px; min-height:32px; }
 /* \u4E00\u884C = \u6761\u76EE\uFF08\u70B9\u5B83\u8DF3\u8F6C\uFF09+ \u53F3\u4FA7\u64CD\u4F5C\u533A\u3002align-items:center \u8BA9\u64CD\u4F5C\u6309\u94AE\u4E0E\u4E24\u884C\u6587\u672C\u5C45\u4E2D\u5BF9\u9F50\uFF0C
    \u4E0D\u518D\u50CF\u4EE5\u524D\u90A3\u6837\u8D34\u9876\u663E\u5F97\u6B6A\u3002 */
 /* padding-right:0 \u2014\u2014 \u884C\u5185\u4E09\u4E2A\u56FE\u6807\u69FD\u4F4D\u8981\u548C\u6807\u9898\u884C\u7684\u300C\u5168\u90E8\u300D\u56FE\u6807**\u9010\u5217\u540C\u4E2D\u5FC3**\uFF1A
@@ -13533,14 +13530,20 @@ function clampPanelWidth(want, avail) {
   const w = Number.isFinite(want) ? want : 0;
   return Math.round(Math.max(lower, Math.min(upper, w)));
 }
-var SHEET_MARGIN_X = 8;
-var SHEET_MAX_W = 460;
+var SHEET_MARGIN_X = 16;
+var SHEET_MAX_W = 340;
 function needsSheetLayout(sideSpace) {
   return !(sideSpace >= POP_W_MIN);
 }
-function sheetBox(viewportW) {
+function sheetBox(viewportW, rows = []) {
   const vw = Number.isFinite(viewportW) ? viewportW : 390;
-  const width = Math.round(Math.min(SHEET_MAX_W, Math.max(0, vw - SHEET_MARGIN_X * 2)));
+  const room = Math.max(0, vw - SHEET_MARGIN_X * 2);
+  if (room < POP_W_MIN) {
+    const width2 = Math.round(Math.max(0, vw - 16));
+    return { left: Math.max(8, Math.round((vw - width2) / 2)), width: width2 };
+  }
+  const want = rows.length === 0 ? 0 : widestRowWidth(rows);
+  const width = Math.round(Math.min(SHEET_MAX_W, room, Math.max(POP_W_MIN, want)));
   return { left: Math.max(SHEET_MARGIN_X, Math.round((vw - width) / 2)), width };
 }
 function textWidth(text, px, weight = 400) {
@@ -14223,11 +14226,14 @@ function ControlRoomEntry({ wide }) {
       hoverTimer.current = null;
     }
   };
-  const wantW = hoverPos && hoverItems.length > 0 && hoverPos.mode === "side" ? panelWidth(hoverPos.left, hoverItems) : 0;
+  const wantBox = hoverPos && hoverItems.length > 0 ? hoverPos.mode === "sheet" ? sheetBox(window.innerWidth, hoverItems) : { left: hoverPos.left, width: panelWidth(hoverPos.left, hoverItems) } : null;
+  const wantW = wantBox?.width ?? 0;
+  const wantLeft = wantBox?.left ?? 0;
   (0, import_react25.useEffect)(() => {
-    if (!hoverPos || wantW === 0 || hoverPos.width === wantW) return;
-    setHoverPos({ ...hoverPos, width: wantW });
-  }, [wantW]);
+    if (!hoverPos || wantW === 0) return;
+    if (hoverPos.width === wantW && hoverPos.left === wantLeft) return;
+    setHoverPos({ ...hoverPos, left: wantLeft, width: wantW });
+  }, [wantW, wantLeft]);
   (0, import_react25.useEffect)(() => {
     if (!hoverPos) return;
     let raf2 = 0;
@@ -14251,13 +14257,13 @@ function ControlRoomEntry({ wide }) {
     const vw = window.innerWidth;
     const sideLeft = Math.max(8, sidebarRightOf(btnRef.current) + 8);
     const sheet = needsSheetLayout(vw - sideLeft - 12);
-    const box = sheet ? sheetBox(vw) : { left: sideLeft, width: panelWidth(sideLeft, hoverItems) };
+    const box = sheet ? sheetBox(vw, hoverItems) : { left: sideLeft, width: panelWidth(sideLeft, hoverItems) };
     const mode = sheet ? "sheet" : "side";
     const left = box.left;
     const width = box.width;
     const vh = window.innerHeight;
     if (mode === "sheet") {
-      return { mode, left, width, maxHeight: Math.max(POP_H_MIN, Math.min(vh * 0.76, POP_H_MAX)) };
+      return { mode, left, width, maxHeight: Math.max(POP_H_MIN, Math.min(vh * 0.7, POP_H_MAX)) };
     }
     const cap = Math.min(vh * 0.8, POP_H_MAX);
     const belowSpace = vh - (r.bottom + 6) - 8;

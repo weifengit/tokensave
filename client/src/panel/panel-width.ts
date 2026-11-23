@@ -158,21 +158,40 @@ export function clampPanelWidth(want: number, avail: number): number {
  * 面板被夹成一条贴在右缘的窄条（用户反馈原话：「呼吸灯面板被挤压到右边，
  * 不方便查看和点击」）。
  *
- * 所以：锚点右侧连最窄宽度都放不下时，改用「贴视口」的摆法 —— 水平居中、近全宽。
+ * 所以：锚点右侧连最窄宽度都放不下时，改用「贴视口」的摆法 —— 水平居中。
+ *
+ * 宽度不再等于视口宽：手机摆法只是「不贴侧边栏」，不是「铺满屏幕」。用户反馈
+ * 「浮动面板太大太宽了」—— 手机上仍然按清单最长那条走（与桌面同一套策略），
+ * 只是上限收得更紧（SHEET_MAX_W），两侧留出能看出这是浮层的空白。
  */
-export const SHEET_MARGIN_X = 8
-/* 手机摆法的宽度上限：大屏手机 / 平板竖屏下不铺满整屏，留出视觉呼吸 */
-export const SHEET_MAX_W = 460
+export const SHEET_MARGIN_X = 16
+/* 手机摆法的宽度上限：比桌面（POP_W_MAX）再小一档 —— 手机屏窄，铺满会像整屏抽屉 */
+export const SHEET_MAX_W = 340
 
 /** 锚点右侧放不下最窄面板 → 该用手机摆法（贴视口而不是贴侧边栏右缘） */
 export function needsSheetLayout(sideSpace: number): boolean {
   return !(sideSpace >= POP_W_MIN)
 }
 
-/** 手机摆法的 left/width：水平居中，宽度夹到上限与两侧边距之内 */
-export function sheetBox(viewportW: number): { left: number; width: number } {
+/**
+ * 手机摆法的 left/width：宽度跟清单最长那条走，夹进 [POP_W_MIN, SHEET_MAX_W]，
+ * 水平居中，两侧至少留 SHEET_MARGIN_X。
+ *
+ * 极窄屏（连最窄面板都放不下）边距让位，最多给到 vw - 16（与旧行为一致，
+ * 保证控件不被挤出面板，也不溢出视口）。
+ */
+export function sheetBox(
+  viewportW: number,
+  rows: readonly WidthRow[] = [],
+): { left: number; width: number } {
   const vw = Number.isFinite(viewportW) ? viewportW : 390
-  const width = Math.round(Math.min(SHEET_MAX_W, Math.max(0, vw - SHEET_MARGIN_X * 2)))
+  const room = Math.max(0, vw - SHEET_MARGIN_X * 2)
+  if (room < POP_W_MIN) {
+    const width = Math.round(Math.max(0, vw - 16))
+    return { left: Math.max(8, Math.round((vw - width) / 2)), width }
+  }
+  const want = rows.length === 0 ? 0 : widestRowWidth(rows)
+  const width = Math.round(Math.min(SHEET_MAX_W, room, Math.max(POP_W_MIN, want)))
   return { left: Math.max(SHEET_MARGIN_X, Math.round((vw - width) / 2)), width }
 }
 

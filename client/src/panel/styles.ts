@@ -231,18 +231,12 @@ body.ts-desk-nochat [data-conversation-region="composer"] {
 /* 清单浮层：portal 到 body + position:fixed（top/left 由 JSX 按按钮矩形给），
    所以 rail（56px 收起）与展开态都从按钮右缘飞出，不被侧边栏 overflow 裁剪 */
 .ts-warn-pop { position:fixed; z-index:60; max-width:calc(100vw - 24px); max-height:80vh; display:flex; flex-direction:column; border-radius:12px; border:1px solid var(--ts-pop-line); background:var(--ts-pop-bg); color:var(--ts-pop-fg); box-shadow:var(--ts-pop-shadow); backdrop-filter:blur(12px) saturate(1.2); overflow:hidden; }
-/* 手机摆法：锚点右侧放不下最窄面板 → 贴视口居中（几何在 panel-width.ts 的 sheetBox，
-   由 ControlRoomEntry 加 is-sheet 类）。
-   这里只做两件事：
-   1) z-index 抬到 950。窄屏下侧边栏是浮层抽屉（官方 / 生态插件都在 899~900 这一档），
-      原来的 60 会被它和它的黑纱压在下面 —— 面板既发暗又点不着；950 仍低于官方弹窗
-      (1000) 与菜单 (1100)，不会盖住真正的模态。
-   2) max-width 与 sheetBox 的 vw-16 对齐，免得行内宽度被这里再夹一次。 */
 /* 手机摆法：贴视口顶部、且与触发器脱钩。
    1) z-index 抬到 950。窄屏下侧边栏是浮层抽屉（官方 / 生态插件都在 899~900 这一档），
       原来的 60 会被它和它的黑纱压在下面 —— 面板既发暗又点不着；950 仍低于官方弹窗
       (1000) 与菜单 (1100)，不会盖住真正的模态。
-   2) max-width 与 sheetBox 的 vw-16 对齐，免得行内宽度被这里再夹一次。
+   2) max-width 与「极窄屏回退宽」的 vw-16 对齐 —— 正常手机上 JS 给 272~340，
+      这里只是兜底上界，不会再把面板夹窄。
    3) top 由 CSS 定（含刘海安全区），不在 JS 里跟触发器算：手机上抽屉一收，
       触发器就是 display:none，跟着它算面板会漂移甚至被算到屏外。 */
 .ts-warn-pop.is-sheet { z-index:950; max-width:calc(100vw - 16px); top:calc(env(safe-area-inset-top, 0px) + 12px); bottom:auto; }
@@ -311,8 +305,11 @@ body.ts-desk-nochat [data-conversation-region="composer"] {
 .ts-box-row > label { flex:none; font-size:calc(var(--ts-fs, 12.5px) * 0.84); opacity:.62; letter-spacing:.02em; cursor:help; }
 /* 清单外框：装 .ts-warn-pop-list（它自己管滚动与行间距） */
 .ts-box-list { flex:1 1 auto; display:flex; flex-direction:column; min-height:0; overflow:hidden; padding:3px; }
-/* 清单区内容容器：与提示音 / 自动继续同款外距（0 12px 10px），保证三个外框左右对齐、内距一致 */
-.ts-list-body { flex:1 1 auto; min-height:0; width:100%; box-sizing:border-box; padding:0 12px 10px; }
+/* 清单区内容容器：与提示音 / 自动继续同款外距（0 12px 10px），保证三个外框左右对齐、内距一致。
+   必须是 flex 容器：里面的 .ts-box-list 靠 flex:1 + min-height:0 才能被面板高度压住。
+   否则它会按内容长高（height:auto），清单内部就没有可滚动的空间 —— 会话一多，
+   末尾几条直接被 .ts-warn-pop 的 overflow:hidden 裁掉（用户反馈「下面的会话看不到」）。 */
+.ts-list-body { flex:1 1 auto; min-height:0; width:100%; box-sizing:border-box; padding:0 12px 10px; display:flex; flex-direction:column; }
 /* —— 提示音设置区（内嵌在悬浮面板顶部，与「对话清单」同面板同现）——
    宽度 100%（不再写死 272px）：与自动继续区、清单区严格同宽、同边距。 */
 .ts-sound-body { flex:none; width:100%; box-sizing:border-box; display:flex; flex-direction:column; gap:6px; padding:0 12px 10px; }
@@ -347,7 +344,7 @@ body.ts-desk-nochat [data-conversation-region="composer"] {
 .ts-cont-num { flex:none; width:46px; height:22px; box-sizing:border-box; border:1px solid rgba(127,127,127,.35); border-radius:6px; background:rgba(127,127,127,.1); color:inherit; font-family:inherit; font-size:calc(var(--ts-fs, 12.5px) * 0.84); line-height:1; padding:0 5px; text-align:center; -moz-appearance:textfield; appearance:textfield; }
 .ts-cont-num::-webkit-outer-spin-button, .ts-cont-num::-webkit-inner-spin-button { -webkit-appearance:none; appearance:none; margin:0; }
 .ts-cont-unit { flex:none; font-size:calc(var(--ts-fs, 12.5px) * 0.8); opacity:.5; }
-.ts-warn-pop-list { flex:1 1 auto; overflow:auto; overflow-x:hidden; padding:5px; display:flex; flex-direction:column; gap:2px; min-height:32px; }
+.ts-warn-pop-list { flex:1 1 auto; overflow:auto; overflow-x:hidden; overscroll-behavior:contain; -webkit-overflow-scrolling:touch; padding:5px; display:flex; flex-direction:column; gap:2px; min-height:32px; }
 /* 一行 = 条目（点它跳转）+ 右侧操作区。align-items:center 让操作按钮与两行文本居中对齐，
    不再像以前那样贴顶显得歪。 */
 /* padding-right:0 —— 行内三个图标槽位要和标题行的「全部」图标**逐列同中心**：

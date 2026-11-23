@@ -118,20 +118,31 @@ check('低于下限时两种行夹出同一个面板宽度（面板宽度是全�
   check('门限就是 POP_W_MIN（不额外加死数字）',
     m.needsSheetLayout(m.POP_W_MIN - 0.5) !== m.needsSheetLayout(m.POP_W_MIN))
   {
-    const phone = m.sheetBox(390)     // 390×844 主流手机：391-16=374 → 居中 8
-    const small = m.sheetBox(320)     // 320 窄屏：全宽后两侧恰好剩 8
-    const pad = m.sheetBox(834)       // 平板竖屏：封顶 460 并居中
-    check('手机：左右各留 8px 边距，水平居中',
-      phone.left === 8 && phone.width === 390 - 16, `${phone.left}/${phone.width}`)
+    const phone = m.sheetBox(390)        // 390×844 主流手机：空清单取下限 272 → 居中
+    const short = m.sheetBox(390, [row('短')])
+    const long = m.sheetBox(390, [row('很长的一个标题'.repeat(20))])
+    const small = m.sheetBox(320)        // 320 窄屏：两侧边距 16 → 宽 272 居中
+    const pad = m.sheetBox(834, [row('很长的一个标题'.repeat(20))])  // 平板竖屏：封顶 SHEET_MAX_W 并居中
+    check('手机：不再铺满屏幕，空清单取下限并水平居中',
+      phone.width === m.POP_W_MIN && phone.left >= m.SHEET_MARGIN_X &&
+      phone.left + phone.width <= 390 - m.SHEET_MARGIN_X, `${phone.left}/${phone.width}`)
+    check('手机：宽度跟清单最长那条走（短标题不撑宽）',
+      short.width === phone.width && long.width > short.width, `${short.width} → ${long.width}`)
+    check('手机：宽标题封顶在 SHEET_MAX_W（比桌面更紧）',
+      long.width === Math.min(m.SHEET_MAX_W, 390 - m.SHEET_MARGIN_X * 2) &&
+      m.SHEET_MAX_W < m.POP_W_MAX, `${long.width}px (max ${m.SHEET_MAX_W}, desktop ${m.POP_W_MAX})`)
     check('窄屏：宽度不会超过视口（不溢出）',
-      small.left >= 8 && small.left + small.width <= 320, `${small.left}+${small.width}`)
+      small.left >= m.SHEET_MARGIN_X && small.left + small.width <= 320, `${small.left}+${small.width}`)
     check('宽屏：宽度封顶 SHEET_MAX_W 且居中',
       pad.width === m.SHEET_MAX_W && pad.left === Math.round((834 - m.SHEET_MAX_W) / 2),
       `${pad.left}/${pad.width}`)
     check('宽度总是整数且为正',
       Number.isInteger(phone.width) && Number.isInteger(phone.left) && phone.width > 0)
+    const tiny = m.sheetBox(280)
+    check('极窄屏：边距让位，退回 vw-16（不溢出）',
+      tiny.width === 280 - 16 && tiny.left === 8, `${tiny.left}/${tiny.width}`)
     check('视口极窄时不产生负宽 / 负数左缘',
-      m.sheetBox(4).width >= 0 && m.sheetBox(4).left >= m.SHEET_MARGIN_X)
+      m.sheetBox(4).width >= 0 && m.sheetBox(4).left >= 8)
     check('NaN 视口宽 → 不产生 NaN（退化成手机默认宽）',
       Number.isFinite(m.sheetBox(NaN).width) && Number.isFinite(m.sheetBox(NaN).left))
   }

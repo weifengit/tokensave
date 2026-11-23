@@ -956,16 +956,22 @@ export function ControlRoomEntry({ wide }: { wide?: boolean }) {
    * 否则会停在「打开那一刻的最长一条」，清单变短了也窄不下来。
    * 用当前面板的 left 算（不是 0）—— 那样会把可用空间算错，宽度直接顶到上限。
    */
-  // 手机摆法（sheet）的宽度由视口定，不跟清单走 —— 否则会被拉回「贴侧边栏」的窄条。
-  const wantW = hoverPos && hoverItems.length > 0 && hoverPos.mode === 'side'
-    ? panelWidth(hoverPos.left, hoverItems)
-    : 0
+  // 手机摆法（sheet）现在也跟清单走：上限更紧（panel-width 的 SHEET_MAX_W），
+  // 并且要一起重算 left —— 窄下来之后不重新居中会贴到左边。
+  const wantBox = hoverPos && hoverItems.length > 0
+    ? hoverPos.mode === 'sheet'
+      ? sheetBox(window.innerWidth, hoverItems)
+      : { left: hoverPos.left, width: panelWidth(hoverPos.left, hoverItems) }
+    : null
+  const wantW = wantBox?.width ?? 0
+  const wantLeft = wantBox?.left ?? 0
   useEffect(() => {
-    if (!hoverPos || wantW === 0 || hoverPos.width === wantW) return
-    setHoverPos({ ...hoverPos, width: wantW })
-    // hoverPos 故意不入依赖：只在算出的宽度真的变了时重算，避免自己触发自己
+    if (!hoverPos || wantW === 0) return
+    if (hoverPos.width === wantW && hoverPos.left === wantLeft) return
+    setHoverPos({ ...hoverPos, left: wantLeft, width: wantW })
+    // hoverPos 故意不入依赖：只在算出的宽度 / 左缘真的变了时重算，避免自己触发自己
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [wantW])
+  }, [wantW, wantLeft])
 
   /**
    * 视口变化（转屏 / 手机上侧边栏抽屉开合 / 软键盘）→ 重算一次。
@@ -1005,8 +1011,8 @@ export function ControlRoomEntry({ wide }: { wide?: boolean }) {
     const vw = window.innerWidth
     const sideLeft = Math.max(8, sidebarRightOf(btnRef.current as HTMLElement) + 8)
     const sheet = needsSheetLayout(vw - sideLeft - 12)
-    // sheet：宽度由视口定（清单最长行走省略号），不随侧边栏宽度漂移
-    const box = sheet ? sheetBox(vw) : { left: sideLeft, width: panelWidth(sideLeft, hoverItems) }
+    // sheet：宽度跟清单最长那条走（上限比桌面更紧），水平居中；不随侧边栏宽度漂移
+    const box = sheet ? sheetBox(vw, hoverItems) : { left: sideLeft, width: panelWidth(sideLeft, hoverItems) }
     const mode: PanelPos['mode'] = sheet ? 'sheet' : 'side'
     const left = box.left
     const width = box.width
@@ -1014,8 +1020,10 @@ export function ControlRoomEntry({ wide }: { wide?: boolean }) {
     // 手机摆法：纵向也与触发器脱钩 —— 位置交给 CSS（top: env(safe-area-inset-top) + 12），
     // 这里只给高度上界。跟着触发器算的话，抽屉一收（触发器 display:none、
     // 或折叠动画中宽度连续变化）面板会跟着漂移甚至被算到屏外。
+    // 高度上限收到 70vh（原来 76vh 几乎铺满一屏，用户反馈「太大」）：清单现在能
+    // 在内部滚动，不需要靠一整屏高度把末尾几条撑出来。
     if (mode === 'sheet') {
-      return { mode, left, width, maxHeight: Math.max(POP_H_MIN, Math.min(vh * 0.76, POP_H_MAX)) }
+      return { mode, left, width, maxHeight: Math.max(POP_H_MIN, Math.min(vh * 0.7, POP_H_MAX)) }
     }
     const cap = Math.min(vh * 0.8, POP_H_MAX)
     const belowSpace = vh - (r.bottom + 6) - 8

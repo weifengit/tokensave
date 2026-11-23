@@ -59,12 +59,13 @@ for (const sel of ['.ts-warn-body', '.ts-warn-title', '.ts-warn-tags', '.ts-warn
 }
 check('宽度改由 panel-width 模块决定（不再写死常量夹紧）',
   tsx.includes("from './panel-width'") &&
-  // 桌面摆法：宽度跟清单最长那条走；手机摆法：宽度由视口定（sheetBox）。
+  // 桌面摆法：宽度跟清单最长那条走；手机摆法也跟清单走，只是上限更紧（sheetBox）。
   // 两条路径都在 panel-width 里，tsx 不写死数字。
-  /panelWidth\(sideLeft, hoverItems\)/.test(tsx) && /sheetBox\(vw\)/.test(tsx))
+  /panelWidth\(sideLeft, hoverItems\)/.test(tsx) && /sheetBox\(vw, hoverItems\)/.test(tsx))
 check('定位不再传 maxWidth，也不再传写死的 width',
   !/setHoverPos\([\s\S]*?maxWidth/.test(tsx) && /left,\s*width/.test(tsx))
-check('清单变化时宽度会跟着重算', tsx.includes('wantW') && /setHoverPos\(\{ \.\.\.hoverPos, width: wantW \}\)/.test(tsx))
+check('清单变化时宽度会跟着重算（手机摆法连 left 一起重新居中）',
+  tsx.includes('wantW') && /setHoverPos\(\{ \.\.\.hoverPos, left: wantLeft, width: wantW \}\)/.test(tsx))
 
 // —— 反馈 3+6：长文本走 title 提示，面板里不出现解释段 ——
 check('面板内已无说明性 hint 块（ts-cont-hint）', !css.includes('ts-cont-hint') && !tsx.includes('ts-cont-hint'))
@@ -298,9 +299,12 @@ check('ROW_PAD_W 与清单行内边距对得上（8×2 + 0 = 16）',
 
 // —— 本轮反馈：对话消息较多时「对话清单显示不全」——
 // 根因：.ts-sec 是 flex:none，面板又 overflow:hidden —— 条目一多总高超过
-// max-height(60vh)，末尾几条直接被面板裁掉，清单内部根本没有可滚动的空间。
+// max-height，末尾几条直接被面板裁掉，清单内部根本没有可滚动的空间。
 // 修法：清单那一个区域允许压缩自己，溢出交给清单内部滚动；高度预算改由 JS
 // 按锚点这一侧真正剩下的空间给（不再写死 60vh）。
+// 后来又补了一层：.ts-list-body 必须是 flex 容器 —— 否则它怀里的 .ts-box-list
+// 按内容长高（height:auto），整条链路传不到面板的高度约束，清单仍然滚不起来
+// （用户反馈：「会话多的时候不能向下滚动，下面的会话看不到」）。
 check('.ts-warn-pop 的 max-height 不再写死 60vh（改 80vh + JS 按空间收紧）',
   /\.ts-warn-pop \{[^}]*max-height:80vh/.test(css) && !/\.ts-warn-pop \{[^}]*max-height:60vh/.test(css))
 check('清单区域用 .ts-sec-list（可被压缩）',
@@ -312,6 +316,11 @@ check('清单区各层都能收缩（否则内部无法滚动）',
   /\.ts-box-list \{[^}]*flex:1 1 auto/.test(css) &&
   /\.ts-warn-pop-list \{[^}]*flex:1 1 auto/.test(css))
 check('清单内部可滚动（overflow:auto 保留）', /\.ts-warn-pop-list \{[^}]*overflow:auto/.test(css))
+check('清单外框链路是 flex 容器（.ts-list-body）—— 否则 .ts-box-list 按内容长高，清单滚不起来',
+  /\.ts-list-body \{[^}]*display:flex/.test(css) &&
+  /\.ts-list-body \{[^}]*flex-direction:column/.test(css))
+check('触屏滚动：overscroll-behavior:contain（滚到底不把背景一起拖动）',
+  /\.ts-warn-pop-list \{[^}]*overscroll-behavior:contain/.test(css))
 check('清单区域的类名已挂上（.ts-sec ts-sec-list）',
   /className="ts-sec ts-sec-list"/.test(tsx))
 check('高度由空间算出而不是写死 POP_H',
@@ -319,6 +328,12 @@ check('高度由空间算出而不是写死 POP_H',
   !/window\.innerHeight - POP_H - 12/.test(tsx) && !/const POP_H = /.test(tsx))
 check('面板 style 真的把 maxHeight 传下去了',
   /style=\{\{[^}]*maxHeight: pos\.maxHeight/.test(tsx))
+check('手机摆法高度收到 70vh（76vh 铺满一屏就被反馈「太大」）',
+  /vh \* 0\.7/.test(tsx) && !/vh \* 0\.76/.test(tsx))
+check('手机摆法宽度跟清单走（不再等于视口宽），上限比桌面更紧',
+  /export const SHEET_MAX_W = 340/.test(widthSrc) &&
+  /rows\.length === 0 \? 0 : widestRowWidth\(rows\)/.test(widthSrc) &&
+  /const box = sheet \? sheetBox\(vw, hoverItems\)/.test(tsx))
 
 // —— 手机端：呼吸灯面板不得被侧边栏抽屉挤成右缘窄条 ——
 // 用户反馈：「手机端要展开左侧栏才能点开呼吸灯，出来的面板被挤压到右边」。
@@ -326,10 +341,11 @@ check('面板 style 真的把 maxHeight 传下去了',
 check('手机摆法：放不下最窄面板时改贴视口（不再贴侧边栏右缘）',
   /needsSheetLayout, panelWidthFor, sheetBox, type WidthRow/.test(tsx) &&
   /const sheet = needsSheetLayout\(vw - sideLeft - 12\)/.test(tsx) &&
-  /sheet \? sheetBox\(vw\) : \{ left: sideLeft/.test(tsx))
+  /sheet \? sheetBox\(vw, hoverItems\) : \{ left: sideLeft/.test(tsx))
 check('摆法标记进 state（清单变化重算宽度时不会被拉回桌面摆法）',
   /mode: 'side' \| 'sheet'/.test(tsx) &&
-  /const wantW = hoverPos && hoverItems\.length > 0 && hoverPos\.mode === 'side'/.test(tsx) &&
+  /const wantW = wantBox\?\.width \?\? 0/.test(tsx) &&
+  /setHoverPos\(\{ \.\.\.hoverPos, left: wantLeft, width: wantW \}\)/.test(tsx) &&
   /const mode: PanelPos\['mode'\] = sheet \? 'sheet' : 'side'/.test(tsx))
 check('手机摆法下 max-width 与 sheetBox 的 vw-16 对齐（不被再夹一次）',
   /\.ts-warn-pop\.is-sheet \{[^}]*z-index:950/.test(css) &&

@@ -96,6 +96,24 @@ check('手机端：相对路径仍按页面 origin 解析（DSH 自带页面不�
   phoneRelative === 'http://10.126.126.13:3080/api/intel/site/console/', phoneRelative)
 check('手机端：非回环的 dev 地址不动（不乱改用户自己的地址）',
   phoneForeign === 'http://192.168.1.5:4000/', phoneForeign)
+
+// —— 呼吸灯浮动面板（手机摆法）的真实几何 ——
+// 宽度不是写死的：用真实策略 sheetBox 算，避免测试与实现各记一套数字。
+const panelWidthBundle = join(tmpRoot, 'panel-width.mjs')
+await build({
+  entryPoints: [join(root, 'client/src/panel/panel-width.ts')],
+  bundle: true, format: 'esm', outfile: panelWidthBundle, platform: 'neutral', logLevel: 'silent',
+})
+const panelWidth = await import(panelWidthBundle)
+/** 长标题 → sheetBox 走宽度上限（手机摆法下最宽的情况） */
+const sheetFor = (width) => panelWidth.sheetBox(width, [{ title: '一个比较长的会话标题'.repeat(8) }])
+/** 18 条会话：足够把清单撑出可滚动高度 */
+const sheetRows = Array.from({ length: 18 }, (_, i) => `
+  <div class="ts-warn-row"><button class="ts-warn-item" type="button">
+    <span class="ts-warn-icon"></span>
+    <span class="ts-warn-body"><span class="ts-warn-title">会话标题 ${i + 1}：一个比较长的会话标题用于验证省略号与滚动</span>
+    <span class="ts-warn-tags"><span class="ts-warn-sub">tokensave</span><span class="ts-warn-reason">上下文</span></span></span>
+  </button><div class="ts-warn-actions"><span class="ts-warn-slot"></span><span class="ts-warn-slot"></span><span class="ts-warn-slot"></span></div></div>`).join('')
 /** 内页：项目中心工具条 + 卡片 + 历史会话浮层（只量工具条与浮层，卡片另由 check-card-layout 负责）。 */
 const innerPage = (width) => `<!doctype html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>mobile inner</title>
@@ -134,6 +152,32 @@ ${css}
   <div class="ts-sess-pop-head">历史会话 · 5 个</div>
   <div class="ts-sess-list"><div class="ts-sess-row"><div class="ts-sess-item">一个很长的会话标题，用来把浮层宽度顶到内容宽度上限</div></div></div>
 </div>
+<!-- 呼吸灯浮动面板（手机摆法）：宽度按真实策略给，验「清单能在内部滚、不溢出视口」 -->
+<div class="ts-warn-pop ts-hover-pop is-sheet" id="pulse-pop"
+  style="top:calc(env(safe-area-inset-top, 0px) + 12px); left:${sheetFor(width).left}px; width:${sheetFor(width).width}px; max-height:${Math.round(800 * 0.7)}px">
+  <div class="ts-sec">
+    <div class="ts-sec-head"><span class="ts-sec-title">提示音</span></div>
+    <div class="ts-sound-body"><div class="ts-box">
+      <div class="ts-box-row"><label>音量</label><input class="ts-sound-range" type="range" value="50"></div>
+      <div class="ts-box-row"><label>完成</label><select class="ts-select"><option>轻柔</option></select></div>
+      <div class="ts-box-row"><label>中断</label><select class="ts-select"><option>警报</option></select></div>
+      <div class="ts-box-row"><label>时长</label><select class="ts-select"><option>一声响</option></select></div>
+    </div></div>
+  </div>
+  <div class="ts-sec">
+    <div class="ts-sec-head"><span class="ts-sec-title">自动继续</span></div>
+    <div class="ts-cont-block"><div class="ts-box">
+      <div class="ts-box-row"><label>分类</label><span class="ts-cont-sw-item"><label>截断</label><span class="ts-cont-sw on"><i></i></span></span></div>
+      <div class="ts-box-row"><label>发送上限</label><input class="ts-cont-num" value="3"><span class="ts-cont-unit">次</span></div>
+    </div></div>
+  </div>
+  <div class="ts-sec ts-sec-list">
+    <div class="ts-sec-head"><span class="ts-sec-title">对话清单</span><span class="ts-sec-note">18</span></div>
+    <div class="ts-list-body"><div class="ts-box ts-box-list"><div class="ts-warn-pop-list" id="pulse-list">
+${sheetRows}
+    </div></div></div>
+  </div>
+</div>
 </body></html>`
 
 /** 外页：把内页塞进 iframe（宽度 = 手机宽度），量完写进 #out。 */
@@ -164,6 +208,17 @@ window.addEventListener('load', () => {
       toolbarRight: px(tr.right),
       sortRight: px(sr.right), sortScrollW: sort.scrollWidth, sortClientW: sort.clientWidth,
       popLeft: px(pr.left), popRight: px(pr.right), popW: px(pr.width),
+    }
+    const pulseEl = doc.getElementById('pulse-pop')
+    const pulseList = doc.getElementById('pulse-list')
+    const pulseRect = pulseEl.getBoundingClientRect()
+    const pulseListRect = pulseList.getBoundingClientRect()
+    pulseList.scrollTop = 400
+    d.pulse = {
+      left: px(pulseRect.left), right: px(pulseRect.right), width: px(pulseRect.width),
+      height: px(pulseRect.height), bottom: px(pulseRect.bottom),
+      listBottom: px(pulseListRect.bottom), listClientH: pulseList.clientHeight,
+      listScrollH: pulseList.scrollHeight, listAfterScroll: pulseList.scrollTop,
     }
   } catch (e) { d = { error: String(e) } }
   document.getElementById('out').textContent = JSON.stringify(d)
@@ -234,6 +289,15 @@ if (!browser) {
     check(`${width}px：历史会话浮层不越出视口（左缘不被切）`,
       d.popLeft >= 0 && d.popRight <= d.vw + 0.5,
       `pop left=${d.popLeft} right=${d.popRight} vw=${d.vw}`)
+    check(`${width}px：呼吸灯面板是紧凑浮层（宽度不超 SHEET_MAX_W，两侧留白）`,
+      d.pulse.width <= 342 && d.pulse.left >= 12 && d.pulse.right <= width - 12,
+      `left=${d.pulse.left} right=${d.pulse.right} width=${d.pulse.width}`)
+    check(`${width}px：呼吸灯面板高度不超过 70vh`,
+      d.pulse.height <= 562, `height=${d.pulse.height}（上限 560 + 边框）`)
+    check(`${width}px：清单能在面板内部滚动（末尾会话不再被裁掉）`,
+      d.pulse.listScrollH > d.pulse.listClientH + 4 && d.pulse.listAfterScroll > 0 &&
+      d.pulse.listBottom <= d.pulse.bottom + 0.5,
+      `clientH=${d.pulse.listClientH} scrollH=${d.pulse.listScrollH} scrollTop=${d.pulse.listAfterScroll} bottom=${d.pulse.listBottom}/${d.pulse.bottom}`)
   }
   rmSync(dir, { recursive: true, force: true })
 }
