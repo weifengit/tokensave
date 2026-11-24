@@ -219,6 +219,38 @@ function applySplice(queue, data, time) {
   const items = inserted.map((m) => queuedMsgOf(m, time)).filter(Boolean);
   queue.splice(start, removed, ...items);
 }
+function retryFromEvent(ev) {
+  if (!ev || typeof ev !== "object") return null;
+  if (ev.type !== "llm/retry" && ev.type !== "llm/retry-started") return null;
+  const data = ev.data && typeof ev.data === "object" ? ev.data : {};
+  const retryId = typeof data.retryId === "string" ? data.retryId : "";
+  if (!retryId) return null;
+  const retry = Number(data.retry);
+  const turn = Number(data.turn);
+  const step = Number(data.step);
+  const base = {
+    retryId,
+    turn: Number.isFinite(turn) ? turn : 0,
+    step: Number.isFinite(step) ? step : 0,
+    retry: Number.isFinite(retry) ? retry : 0
+  };
+  if (ev.type === "llm/retry-started") {
+    return { ...base, state: "started", delayMs: 0, failureMessage: "" };
+  }
+  const failure = data.failure && typeof data.failure === "object" ? data.failure : {};
+  const delayMs = Number(data.delayMs);
+  const maxRetries = data.mode === "normal" ? Number(data.maxRetries) : void 0;
+  const failureMessage = typeof failure.message === "string" ? failure.message : "";
+  const failureCode = typeof failure.code === "string" && failure.code ? failure.code : void 0;
+  return {
+    ...base,
+    state: "scheduled",
+    ...Number.isFinite(maxRetries) ? { maxRetries } : {},
+    delayMs: Number.isFinite(delayMs) ? delayMs : 0,
+    failureMessage,
+    ...failureCode ? { failureCode } : {}
+  };
+}
 function noticeFromEvent(ev) {
   if (!ev || typeof ev !== "object") return null;
   const data = ev.data && typeof ev.data === "object" ? ev.data : {};
@@ -298,6 +330,25 @@ function messagesFromWindow(snap) {
       if (changesSeq !== null) out.push({ role: "tool", content: "", type: ev.type, kind: "changes", changesSeq });
       continue;
     }
+    if (ev.type === "llm/retry" || ev.type === "llm/retry-started") {
+      const next = retryFromEvent(ev);
+      if (next) {
+        const prev = out.find((m) => m.retry?.retryId === next.retryId);
+        if (prev?.retry) {
+          prev.retry = next.state === "started" ? { ...prev.retry, state: "started", retry: next.retry } : next;
+        } else if (next.state !== "started") {
+          out.push({
+            role: "system",
+            content: "",
+            time: typeof ev.time === "number" ? ev.time : void 0,
+            type: ev.type,
+            retry: next
+          });
+        }
+      }
+      live = null;
+      continue;
+    }
     if (ev.type === "system/message") continue;
     if (ev.type === "assistant/message") {
       const think = reasoningOf(ev);
@@ -312,6 +363,12 @@ function messagesFromWindow(snap) {
     }
     if (ev.type === "turn/end" || ev.type === "agent/error") {
       const notice = noticeFromEvent(ev);
+      const closedTurn = Number(ev.data?.turn);
+      for (const m of out) {
+        if (m.retry?.state !== "scheduled") continue;
+        if (Number.isFinite(closedTurn) && m.retry.turn !== closedTurn) continue;
+        m.retry = { ...m.retry, state: "cancelled" };
+      }
       live = null;
       if (notice) {
         out.push({
@@ -2430,6 +2487,9 @@ body.ts-desk-nochat [data-conversation-region="composer"] {
 .ts-warn-pop.is-sheet .ts-cont-block { gap:4px; padding:0 8px 7px; }
 .ts-warn-pop.is-sheet .ts-list-body { padding:0 8px 8px; }
 .ts-warn-pop.is-sheet .ts-box-row { box-sizing:border-box; min-height:36px; padding:4px 8px; }
+/* \u6781\u7A84\u5C4F\u515C\u5E95\uFF08\u89C6\u53E3 < POP_W_MIN + 24\uFF09\uFF1A\u666E\u901A\u884C\u6309\u56FA\u5B9A\u63A7\u4EF6\u5E76\u6392\u4F1A\u8D85\u51FA\u5361\u7247\uFF0C
+   \u8FD9\u4E00\u884C\u5141\u8BB8\u6362\u884C \u2014\u2014 \u5B81\u53EF\u591A\u4E00\u884C\uFF0C\u4E5F\u8BA9\u5355\u4F4D\u300C\u79D2\u300D\u7559\u5728\u5361\u7247\u5185\u800C\u4E0D\u662F\u88AB\u88C1\u6389\u3002 */
+.ts-warn-pop.is-sheet .ts-cont-num-row { flex-wrap:wrap; row-gap:4px; }
 .ts-warn-pop.is-sheet .ts-box-row .ts-select,
 .ts-warn-pop.is-sheet .ts-box-row .ts-sound-min { height:28px; font-size:calc(var(--ts-fs, 12.5px) * 0.92); }
 .ts-warn-pop.is-sheet .ts-sound-range { height:22px; }
@@ -2733,6 +2793,20 @@ body.ts-desk-nochat [data-conversation-region="composer"] {
 @media (prefers-reduced-motion: reduce) { .ts-run-dot { animation:none; opacity:.9; } }
 .ts-turn-notice-preview { font-size:calc(var(--ts-fs, 12.5px) * 0.96); opacity:.85; word-break:break-word; }
 .ts-turn-notice-body { font-size:var(--ts-fs, 12.5px); }
+
+/* \u2014\u2014 \u6A21\u578B\u8BF7\u6C42\u91CD\u8BD5\u63D0\u9192\uFF08\u5BF9\u9F50\u5BBF\u4E3B\u539F\u751F\u300C\u5BF9\u8BDD\u300D\u7684 model-retry \u884C\uFF09\u2014\u2014
+   \u8FD0\u884C\u4E2D\u84DD\u8272\u8109\u51B2\uFF1B\u7ED3\u675F\u540E\u53EA\u7559\u4E00\u6761\u5F31\u63D0\u793A\uFF0C\u70B9\u5F00\u770B\u5EF6\u8FDF\u4E0E\u5931\u8D25\u539F\u56E0\u3002 */
+.ts-retries { display:flex; flex-direction:column; gap:4px; align-self:stretch; }
+.ts-retry-row { display:flex; flex-direction:column; gap:4px; align-self:stretch; border:1px solid rgba(96,165,250,.45); background:rgba(96,165,250,.1); border-radius:8px; padding:5px 9px; }
+.ts-retry-row.is-active { border-color:rgba(96,165,250,.72); background:rgba(96,165,250,.16); }
+.ts-retry-head { display:flex; align-items:center; gap:7px; min-width:0; width:100%; padding:0; border:0; background:transparent; color:inherit; font:inherit; text-align:left; cursor:pointer; }
+.ts-retry-dot { flex:none; width:7px; height:7px; border-radius:50%; background:#60a5fa; }
+.ts-retry-row.is-active .ts-retry-dot { background:#38bdf8; box-shadow:0 0 0 3px rgba(56,189,248,.18); animation:ts-pulse-breathe 1.6s ease-in-out infinite; }
+.ts-retry-text { min-width:0; font-size:calc(var(--ts-fs, 12.5px) * 0.96); color:#93c5fd; }
+.ts-retry-row.is-active .ts-retry-text { color:#bfdbfe; }
+.ts-retry-caret { flex:none; margin-left:auto; opacity:.65; font-size:calc(var(--ts-fs, 12.5px) * 0.84); }
+.ts-retry-detail { display:flex; flex-direction:column; gap:2px; padding-left:14px; font-size:calc(var(--ts-fs, 12.5px) * 0.9); opacity:.8; word-break:break-word; }
+.ts-retry-key { opacity:.65; }
 
 /* \u2014\u2014 \u4F1A\u8BDD\u9009\u62E9\u6761\uFF08\u5DE5\u4F5C\u53F0\u9876\u90E8\u7B2C\u4E8C\u884C\uFF09 \u2014\u2014 */
 .ts-bar-sessions { gap:8px; }
@@ -5360,6 +5434,7 @@ function splitTurn(turn) {
   const rest = [];
   const queued = [];
   let notice = null;
+  const retries = [];
   const edits = [];
   let changesSeq = null;
   for (const m of turn) {
@@ -5369,6 +5444,10 @@ function splitTurn(turn) {
     }
     if (m.notice) {
       notice = m;
+      continue;
+    }
+    if (m.retry) {
+      retries.push(m);
       continue;
     }
     if (m.kind === "file-edit" && m.editPath) {
@@ -5392,7 +5471,7 @@ function splitTurn(turn) {
     }
   }
   const proc = rest.filter((m) => m !== answer);
-  return { users, injects, proc, answer, notice, queued, edits, changesSeq };
+  return { users, injects, proc, answer, notice, queued, edits, changesSeq, retries };
 }
 function TurnNoticeRow({ notice }) {
   const [open, setOpen] = (0, import_react8.useState)(false);
@@ -5414,6 +5493,76 @@ function TurnNoticeRow({ notice }) {
       )
     ] }),
     open ? /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("div", { className: "ts-turn-notice-body", children: /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(RichText, { text: notice.message }) }) : /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("div", { className: "ts-turn-notice-preview", children: oneLine(notice.message) })
+  ] });
+}
+function retryFailureText(retry) {
+  switch (retry.failureCode) {
+    case "AUTH":
+      return "API \u5BC6\u94A5\u65E0\u6548";
+    case "QUOTA":
+    case "ACCOUNT_QUOTA":
+      return "\u8D26\u53F7\u989D\u5EA6\u4E0D\u8DB3";
+    default:
+      return retry.failureMessage || "\u8BF7\u6C42\u5931\u8D25";
+  }
+}
+function ModelRetryRow({ retry }) {
+  const [open, setOpen] = (0, import_react8.useState)(false);
+  const active = retry.state === "scheduled";
+  const deadline = (0, import_react8.useMemo)(() => Date.now() + retry.delayMs, [retry.retryId, retry.delayMs]);
+  const [seconds, setSeconds] = (0, import_react8.useState)(() => Math.max(1, Math.ceil(retry.delayMs / 1e3)));
+  (0, import_react8.useEffect)(() => {
+    if (!active) return;
+    const tick = () => {
+      const left = Math.max(1, Math.ceil((deadline - Date.now()) / 1e3));
+      setSeconds(left);
+      return left;
+    };
+    if (tick() === 1) return;
+    const timer = window.setInterval(() => {
+      if (tick() === 1) window.clearInterval(timer);
+    }, 250);
+    return () => window.clearInterval(timer);
+  }, [active, deadline]);
+  const label = active ? "\u6B63\u5728\u91CD\u8BD5\u6A21\u578B\u8BF7\u6C42" : retry.state === "cancelled" ? "\u6A21\u578B\u8BF7\u6C42\u91CD\u8BD5\u5DF2\u53D6\u6D88" : "\u5DF2\u91CD\u8BD5\u6A21\u578B\u8BF7\u6C42";
+  const maximum = retry.maxRetries === void 0 ? "\u221E" : retry.maxRetries;
+  const shownSeconds = active ? seconds : Math.max(1, Math.ceil(retry.delayMs / 1e3));
+  return /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("div", { className: `ts-retry-row${active ? " is-active" : ""}`, children: [
+    /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)(
+      "button",
+      {
+        type: "button",
+        className: "ts-retry-head",
+        onClick: () => setOpen((v) => !v),
+        title: open ? "\u6536\u8D77\u91CD\u8BD5\u8BE6\u60C5" : "\u5C55\u5F00\u91CD\u8BD5\u8BE6\u60C5\uFF08\u5EF6\u8FDF / \u5931\u8D25\u539F\u56E0\uFF09",
+        "aria-expanded": open,
+        children: [
+          /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("span", { className: "ts-retry-dot", "aria-hidden": "true" }),
+          /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("span", { className: "ts-retry-text", role: "status", children: [
+            label,
+            "\uFF08",
+            retry.retry,
+            "/",
+            maximum,
+            "\uFF09 \xB7 ",
+            shownSeconds,
+            "s"
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("span", { className: "ts-retry-caret", "aria-hidden": "true", children: open ? "\u25B4" : "\u25BE" })
+        ]
+      }
+    ),
+    open && /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("div", { className: "ts-retry-detail", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("div", { children: [
+        /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("span", { className: "ts-retry-key", children: "\u91CD\u8BD5\u5EF6\u8FDF\uFF1A" }),
+        Math.round(retry.delayMs),
+        " \u6BEB\u79D2"
+      ] }),
+      /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("div", { children: [
+        /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("span", { className: "ts-retry-key", children: "\u5931\u8D25\u539F\u56E0\uFF1A" }),
+        retryFailureText(retry)
+      ] })
+    ] })
   ] });
 }
 function MsgList({
@@ -5506,12 +5655,13 @@ function MsgList({
       proc: view === "user" ? [] : t.proc,
       answer: view === "user" ? null : t.answer,
       notice: view === "user" ? null : t.notice,
+      retries: view === "user" ? [] : t.retries,
       // 「已编辑 N 个文件」是**模型侧**的产出报告：「我的」视图下不显示
       //（用户反馈：筛选“我的”还能看到文件变动，它应该属于 AI 回复的信息）；
       //  「模型」与「全部」视图照常在轮末展示。
       edits: view === "user" ? [] : t.edits,
       changesSeq: view === "user" ? null : t.changesSeq
-    })).filter((t) => t.users.length > 0 || t.injects.length > 0 || t.proc.length > 0 || !!t.answer || !!t.notice || t.queued.length > 0),
+    })).filter((t) => t.users.length > 0 || t.injects.length > 0 || t.proc.length > 0 || t.retries.length > 0 || !!t.answer || !!t.notice || t.queued.length > 0),
     [parsed, view]
   );
   const visibleKeys = (0, import_react8.useMemo)(
@@ -5775,6 +5925,7 @@ function MsgList({
         ] }, `u${i}`)),
         /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(InjectionRow, { items: t.injects }),
         t.proc.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(ProcessGroup, { items: t.proc, sessionId }),
+        t.retries.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("div", { className: "ts-retries", children: t.retries.map((m, i) => /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(ModelRetryRow, { retry: m.retry }, m.retry?.retryId ?? `retry${i}`)) }),
         t.answer && /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("div", { className: "ts-msg-block ts-msg-block-assistant", children: [
           /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("div", { className: "ts-msg-assistant", children: [
             /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(RichText, { text: t.answer.content }),
@@ -13514,14 +13665,15 @@ var CARD_ROW_CHROME_W = 2 * (12 + 1 + 9);
 var SWITCH_W = 28;
 var NUM_W = 46;
 var GAP_W_SMALL = 6;
-var PAIR_GAP_W = 8;
+var PAIR_GAP_W = GAP_W_SMALL * 2 + 8;
+var SETTINGS_SLACK_W = 4;
 var measureCtx;
 var SETTINGS_MIN_W = Math.max(
   // 第二行：分类 [开关] 截断 [开关] 瞬时 [开关]
   textWidth("\u5206\u7C7B", 10.5) + GAP_W_SMALL + SWITCH_W + GAP_W_SMALL + textWidth("\u622A\u65AD", 10.5) + GAP_W_SMALL + SWITCH_W + GAP_W_SMALL + textWidth("\u77AC\u65F6", 10.5) + GAP_W_SMALL + SWITCH_W,
   // 第三行：发送上限 [数字] 次 ⋯ 冷却基数 [数字] 秒
   textWidth("\u53D1\u9001\u4E0A\u9650", 10.5) + GAP_W_SMALL + NUM_W + GAP_W_SMALL + textWidth("\u6B21", 10) + PAIR_GAP_W + textWidth("\u51B7\u5374\u57FA\u6570", 10.5) + GAP_W_SMALL + NUM_W + GAP_W_SMALL + textWidth("\u79D2", 10)
-) + CARD_ROW_CHROME_W;
+) + CARD_ROW_CHROME_W + SETTINGS_SLACK_W;
 var POP_W_MIN = Math.max(236, Math.ceil(SETTINGS_MIN_W));
 var POP_W_MAX = 360;
 var ROW_PAD_W = 16;
@@ -13572,7 +13724,9 @@ function sheetBox(viewportW, rows = []) {
     return { left: Math.max(8, Math.round((vw - width2) / 2)), width: width2 };
   }
   const want = rows.length === 0 ? 0 : widestRowWidth(rows);
-  const width = Math.round(Math.min(SHEET_MAX_W, room, Math.max(POP_W_MIN, want)));
+  const upper = Math.min(SHEET_MAX_W, room);
+  const lower = Math.min(POP_W_MIN, upper);
+  const width = Math.round(Math.max(lower, Math.min(upper, want)));
   return { left: Math.max(SHEET_MARGIN_X, Math.round((vw - width) / 2)), width };
 }
 function textWidth(text, px, weight = 400) {
@@ -13756,7 +13910,7 @@ function ContinueSettingsBlock() {
           )
         ] })
       ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: "ts-box-row", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: "ts-box-row ts-cont-num-row", children: [
         /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("label", { title: "\u53D1\u9001\u4E0A\u9650\uFF1A\u8FDE\u7EED\u81EA\u52A8\u7EE7\u7EED\u51E0\u6B21\u540E\u5C31\u505C\u4E0B\u6765\u7B49\u4F60\u4ECB\u5165\uFF08\u7528\u6237\u81EA\u5DF1\u53D1\u6D88\u606F\u6216\u624B\u52A8\u70B9\u300C\u7EE7\u7EED\u300D\u4F1A\u91CD\u7F6E\u8FD9\u4E2A\u8BA1\u6570\uFF09", children: "\u53D1\u9001\u4E0A\u9650" }),
         /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
           "input",
@@ -14690,8 +14844,6 @@ var STYLE_ID2 = "tokensave-composer-resize-css";
 var installed = false;
 var current = null;
 var grabber = null;
-var resetChip = null;
-var sizeLabel = null;
 var innerObserver = null;
 var contentObserver = null;
 var seatObserver = null;
@@ -14745,21 +14897,11 @@ function measureContent(el) {
   return Math.max(MIN_CAP, Math.ceil(innerH + padding));
 }
 var CSS2 = `
-.ts-composer-grabber{position:fixed;z-index:60;height:16px;display:flex;align-items:flex-end;cursor:ns-resize;user-select:none;-webkit-user-select:none;touch-action:none}
-/* \u2014\u2014 \u6A2A\u7EBF\u5DF2\u6309\u7528\u6237\u8981\u6C42**\u5F7B\u5E95\u79FB\u9664**\uFF08\u8FDE\u5E26\u6B64\u524D\u62D6\u52A8\u4E2D\u7684\u6A2A\u7EBF\u6B8B\u5F71/\u95EA\u5C4F\u6E90\uFF09\uFF1A
-   \u6293\u624B\u53EA\u4FDD\u7559\u4E00\u6761\u4E0D\u53EF\u89C1\u7684 16px \u547D\u4E2D\u533A\uFF08cursor:ns-resize + title \u63D0\u793A\u53EF\u53D1\u73B0\uFF09\uFF0C
-   \u62D6\u52A8\u53CD\u9988\u53EA\u9760 px \u6570\u5B57\u80F6\u56CA\u4E0E\u60AC\u505C\u6D6E\u51FA\u7684\u300C\u91CD\u7F6E\u300D\u6309\u94AE\u3002 */
-.ts-composer-grabber .ts-composer-size{margin-left:var(--ts-grab-inset,16px);border-radius:99px;padding:0 7px;font-size:calc(var(--ts-fs, 12.5px) * 0.8);line-height:15px;font-variant-numeric:tabular-nums;background:rgba(127,127,127,.25);color:var(--dsw-alias-label-secondary,#9aa0a6);opacity:0;transition:opacity .14s ease;pointer-events:none;transform:translateY(-2px)}
-/* \u56FA\u5B9A\u6001\uFF08\u975E\u62D6\u52A8\uFF09\uFF1A\u6570\u5B57\u80F6\u56CA\u6DE1\u663E + \u300C\u91CD\u7F6E\u300D\u5E38\u663E\u3002
-   \u56FA\u5B9A\u9AD8\u5EA6\u662F\u7528\u6237\u7684\u660E\u786E\u610F\u56FE\uFF0C\u4F46\u5B83\u540C\u65F6\u662F\u300C\u81EA\u52A8\u52A0\u9AD8\u300D\u7684\u5173\u65AD\u5F00\u5173 \u2014\u2014
-   \u5FC5\u987B\u968F\u65F6\u53EF\u89C1\u3001\u53EF\u64A4\u9500\uFF0C\u5426\u5219\u4E00\u6B21\u65E7\u7248\u8BEF\u89E6\u5C31\u628A\u4EBA\u9501\u5728\u6B7B\u9AD8\u5EA6\u91CC\u8FD8\u65E0\u4ECE\u5BDF\u89C9\u3002 */
-.ts-composer-grabber[data-ts-manual="1"]:not([data-ts-dragging="1"]) .ts-composer-size{opacity:.8}
-.ts-composer-grabber[data-ts-manual="1"]:not([data-ts-dragging="1"]) .ts-composer-reset{opacity:1}
-.ts-composer-grabber[data-ts-dragging="1"] .ts-composer-size{opacity:1}
-/* \u91CD\u7F6E\u80F6\u56CA\uFF1A\u60AC\u505C\u624D\u6D6E\u51FA\uFF0C\u53F3\u7AEF\u540C\u6837\u6309\u5706\u89D2\u5185\u7F29\uFF0C\u4E0D\u8D8A\u8FC7\u5361\u7247\u5706\u89D2 */
-.ts-composer-reset{position:absolute;right:var(--ts-grab-inset,16px);top:-11px;height:18px;border-radius:99px;padding:0 8px;border:.5px solid rgba(127,127,127,.4);background:var(--dsw-specific-menu,rgba(30,30,32,.92));color:var(--dsw-alias-label-secondary,#9aa0a6);font-size:calc(var(--ts-fs, 12.5px) * 0.84);line-height:1;cursor:pointer;opacity:0;transition:opacity .14s ease}
-.ts-composer-grabber:hover .ts-composer-reset,.ts-composer-grabber:focus-within .ts-composer-reset{opacity:1}
-.ts-composer-reset:hover{color:var(--dsw-alias-label-primary,#e6e8eb);border-color:rgba(127,127,127,.85)}
+.ts-composer-grabber{position:fixed;z-index:60;height:16px;cursor:ns-resize;user-select:none;-webkit-user-select:none;touch-action:none}
+/* \u2014\u2014 \u6309\u7528\u6237\u8981\u6C42\u5F7B\u5E95\u79FB\u9664\u53EF\u89C6\u5185\u5BB9\uFF08\u6A2A\u7EBF / px \u6570\u5B57\u80F6\u56CA / \u300C\u91CD\u7F6E\u300D\u6309\u94AE\uFF09\uFF1A
+   \u5E26\u56FE\u7247\u9644\u4EF6\u65F6\uFF0C\u6302\u5728 [data-input-scroll] \u4E0A\u6CBF\u7684\u80F6\u56CA\u4F1A\u843D\u5728\u9644\u4EF6\u533A\u91CC\u50CF\u60AC\u7A7A\u3002
+   \u6293\u624B\u53EA\u4FDD\u7559\u4E00\u6761\u4E0D\u53EF\u89C1\u7684 16px \u547D\u4E2D\u533A\uFF08cursor:ns-resize + title \u53EF\u53D1\u73B0\uFF09\uFF1B
+   \u56FA\u5B9A\u9AD8\u5EA6\u4ECD\u53EF\u64A4\u9500\uFF1A\u53CC\u51FB\u6293\u624B\u5373\u4EA4\u8FD8\u81EA\u52A8\u52A0\u9AD8\u3002 */
 body.ts-composer-resizing{cursor:ns-resize}
 `;
 function injectComposerStyles() {
@@ -14806,7 +14948,6 @@ function reflect() {
   const manual = manualCap !== null;
   setDs(grabber, "tsManual", manual ? "1" : "0");
   setDs(grabber, "tsDragging", drag ? "1" : "0");
-  if (resetChip) setStyle(resetChip, "display", manual ? "" : "none");
 }
 function composerSeatShown(el, styleOf = (node) => getComputedStyle(node)) {
   const root = typeof document !== "undefined" ? document.documentElement : null;
@@ -14831,10 +14972,6 @@ function positionHandle() {
   setStyle(grabber, "width", `${Math.round(r.width)}px`);
   setStyle(grabber, "top", `${Math.round(top)}px`);
   setStyle(grabber, "bottom", "auto");
-  const card = el.parentElement;
-  const radius = card ? parseFloat(getComputedStyle(card).borderTopLeftRadius) || 0 : 0;
-  const inset = Math.round(Math.min(Math.max(radius + 2, 10), Math.max(10, r.width / 3)));
-  setStyle(grabber, "--ts-grab-inset", `${inset}px`);
 }
 function onPointerDown(e) {
   const el = current;
@@ -14879,10 +15016,6 @@ function applyDrag() {
   applyLimits(el, px);
   positionHandle();
   reflect();
-  if (sizeLabel && sizeLabel.textContent !== String(px)) {
-    sizeLabel.textContent = String(px);
-    stats.styleWrites++;
-  }
 }
 function onPointerUp(e) {
   if (!drag) return;
@@ -14918,20 +15051,6 @@ function ensureHandle() {
   grabber.setAttribute("aria-orientation", "horizontal");
   grabber.setAttribute("aria-label", "\u62D6\u52A8\u8C03\u6574\u8F93\u5165\u6846\u9AD8\u5EA6");
   grabber.title = "\u62D6\u52A8\u8C03\u6574\u8F93\u5165\u6846\u9AD8\u5EA6 \xB7 \u53CC\u51FB\u6062\u590D\u81EA\u52A8\u9AD8\u5EA6";
-  grabber.innerHTML = '<span class="ts-composer-size"></span>';
-  sizeLabel = grabber.querySelector(".ts-composer-size");
-  resetChip = document.createElement("button");
-  resetChip.type = "button";
-  resetChip.className = "ts-composer-reset";
-  resetChip.textContent = "\u91CD\u7F6E";
-  resetChip.title = "\u6062\u590D\u81EA\u52A8\u52A0\u9AD8";
-  resetChip.style.display = "none";
-  resetChip.addEventListener("pointerdown", (e) => e.stopPropagation());
-  resetChip.addEventListener("click", (e) => {
-    e.stopPropagation();
-    resetManual();
-  });
-  grabber.appendChild(resetChip);
   grabber.addEventListener("pointerdown", onPointerDown);
   grabber.addEventListener("pointermove", onPointerMove);
   grabber.addEventListener("pointerup", onPointerUp);
@@ -14950,8 +15069,6 @@ function hideHandle() {
 function removeHandle() {
   grabber?.remove();
   grabber = null;
-  resetChip = null;
-  sizeLabel = null;
 }
 function detach() {
   stats.detach++;
