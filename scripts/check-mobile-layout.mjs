@@ -105,8 +105,8 @@ await build({
   bundle: true, format: 'esm', outfile: panelWidthBundle, platform: 'neutral', logLevel: 'silent',
 })
 const panelWidth = await import(panelWidthBundle)
-/** 长标题 → sheetBox 走宽度上限（手机摆法下最宽的情况） */
-const sheetFor = (width) => panelWidth.sheetBox(width, [{ title: '一个比较长的会话标题'.repeat(8) }])
+/** 短清单 → sheetBox 退到宽度下限（这也是「秒被裁」发生时的真实宽度） */
+const sheetFor = (width) => panelWidth.sheetBox(width, [{ title: '短标题' }])
 /** 18 条会话：足够把清单撑出可滚动高度 */
 const sheetRows = Array.from({ length: 18 }, (_, i) => `
   <div class="ts-warn-row"><button class="ts-warn-item" type="button">
@@ -168,8 +168,16 @@ ${css}
   <div class="ts-sec">
     <div class="ts-sec-head"><span class="ts-sec-title">自动继续</span></div>
     <div class="ts-cont-block"><div class="ts-box">
-      <div class="ts-box-row"><label>分类</label><span class="ts-cont-sw-item"><label>截断</label><span class="ts-cont-sw on"><i></i></span></span></div>
-      <div class="ts-box-row"><label>发送上限</label><input class="ts-cont-num" value="3"><span class="ts-cont-unit">次</span></div>
+      <div class="ts-box-row ts-cont-sw-row">
+        <div class="ts-cont-sw-item"><label>分类</label><span class="ts-cont-sw on"><i></i></span></div>
+        <div class="ts-cont-sw-item"><label>截断</label><span class="ts-cont-sw on"><i></i></span></div>
+        <div class="ts-cont-sw-item"><label>瞬时</label><span class="ts-cont-sw on"><i></i></span></div>
+      </div>
+      <div class="ts-box-row ts-cont-num-row">
+        <label>发送上限</label><input class="ts-cont-num" type="number" value="8"><span class="ts-cont-unit">次</span>
+        <span class="ts-cont-gap"></span>
+        <label>冷却基数</label><input class="ts-cont-num" type="number" value="20"><span class="ts-cont-unit">秒</span>
+      </div>
     </div></div>
   </div>
 </div>
@@ -228,6 +236,15 @@ window.addEventListener('load', () => {
       listRowH: listRows.length ? Math.max(...listRows.map((r) => px(r.getBoundingClientRect().height))) : 0,
       settingsH: settingsBox ? px(settingsBox.getBoundingClientRect().height) : 0,
     }
+    // 设置行的单位必须落在外框（.ts-box）内；用真实 DOM 量，不估算。
+    const numRow = doc.querySelector('.ts-cont-num-row')
+    const numBox = numRow && numRow.closest('.ts-box')
+    const units = numRow ? [...numRow.querySelectorAll('.ts-cont-unit')] : []
+    const lastUnit = units[units.length - 1]
+    d.pulse.numUnitOverflow = numBox && lastUnit
+      ? px(lastUnit.getBoundingClientRect().right - numBox.getBoundingClientRect().right)
+      : null
+    d.pulse.numRowOverflow = numRow ? px(numRow.scrollWidth - numRow.clientWidth) : null
   } catch (e) { d = { error: String(e) } }
   document.getElementById('out').textContent = JSON.stringify(d)
 })
@@ -306,6 +323,12 @@ if (!browser) {
       d.pulse.left >= panelWidth.SHEET_MARGIN_X - 0.5 &&
       d.pulse.right <= width - panelWidth.SHEET_MARGIN_X + 0.5,
       `left=${d.pulse.left} right=${d.pulse.right} width=${d.pulse.width} (max ${panelWidth.SHEET_MAX_W})`)
+    check(`${width}×${height}px：设置行的单位「秒」在卡片内（最窄宽不再裁字）`,
+      d.pulse.numUnitOverflow !== null && d.pulse.numUnitOverflow <= 0.5,
+      `单位右缘超出卡片 ${d.pulse.numUnitOverflow}px`)
+    check(`${width}×${height}px：设置行不横向溢出（数值/单位都落在行内）`,
+      d.pulse.numRowOverflow === null || d.pulse.numRowOverflow <= 0.5,
+      `row overflow=${d.pulse.numRowOverflow}px`)
     check(`${width}×${height}px：呼吸灯面板高度不超过 70vh（上限按真实视口算）`,
       d.pulse.height <= Math.round(height * 0.7) + 2,
       `height=${d.pulse.height}（上限 ${Math.round(height * 0.7)} + 边框）`)

@@ -17,8 +17,22 @@ const CARD_ROW_CHROME_W = 2 * (12 + 1 + 9)
 const SWITCH_W = 28
 const NUM_W = 46
 const GAP_W_SMALL = 6
-/** 两个「标签+控件」对之间的最小间隔（.ts-cont-gap 的 min-width） */
-const PAIR_GAP_W = 8
+/**
+ * 两个「标签+控件」对之间的最小间隔。
+ *
+ * 不是 .ts-cont-gap 的 8px 本身：`.ts-box-row` 的 gap:6px 会作用在 gap 元素两侧，
+ * 实际间隔 = 6(gap) + 8(.ts-cont-gap min-width) + 6(gap) = 20px。
+ * 以前这里按 8px 算，正好少 12px —— 面板最窄宽被算成 272，而「冷却基数 [20] 秒」
+ * 需要 284，末字「秒」就被卡片右边裁掉了（用户截图反馈）。
+ */
+const PAIR_GAP_W = GAP_W_SMALL * 2 + 8
+/**
+ * 文本宽度的余量：DOM 里的 label 带 letter-spacing:.02em（canvas 量不到），
+ * 字体族回退也可能比 canvas 的 system-ui 略宽。宽度宁可多 4px，也不要「刚好等于」
+ * —— 差 1px 就会让单位字被裁掉。
+ */
+const SETTINGS_SLACK_W = 4
+
 
 /** 量文本宽度用的 canvas（懒建；建不出来就退化成字符估算）。
  *  必须声明在 SETTINGS_MIN_W 之前：那个常量在模块初始化时就会调 textWidth。 */
@@ -40,20 +54,19 @@ export const SETTINGS_MIN_W = Math.max(
   textWidth('发送上限', 10.5) + GAP_W_SMALL + NUM_W + GAP_W_SMALL + textWidth('次', 10)
     + PAIR_GAP_W
     + textWidth('冷却基数', 10.5) + GAP_W_SMALL + NUM_W + GAP_W_SMALL + textWidth('秒', 10),
-) + CARD_ROW_CHROME_W
-
+) + CARD_ROW_CHROME_W + SETTINGS_SLACK_W
 /**
  * 面板最窄：取「设置行必须放得下」的量。
  * 不再写死一个数字 —— 改标签文案 / 控件宽度时它会自己跟着变，
  * 不会出现“改了字面板却还是老宽度、输入框被挤出去”那种事。
  */
 export const POP_W_MIN = Math.max(236, Math.ceil(SETTINGS_MIN_W))
+// —— 宽度区间（唯一的真值，桌面与手机都从这里取） ——
 /**
  * 面板最宽。比 440 收窄了不少 —— 清单是扫一眼用的，
  * 再宽眼睛就要来回移动，不如让标题走省略号。
  */
 export const POP_W_MAX = 360
-
 // —— 行内固定装饰（只在这里加一次）——
 
 /** 行自身的内边距：.ts-warn-item 左右各 8（.ts-warn-row 的右内边距本轮改成 0） */
@@ -192,7 +205,11 @@ export function sheetBox(
     return { left: Math.max(8, Math.round((vw - width) / 2)), width }
   }
   const want = rows.length === 0 ? 0 : widestRowWidth(rows)
-  const width = Math.round(Math.min(SHEET_MAX_W, room, Math.max(POP_W_MIN, want)))
+  // 手机摆法同样受 [POP_W_MIN, SHEET_MAX_W] 约束：
+  // 下限先于上限生效，避免设置区（尤其「冷却基数 [20] 秒」）被裁。
+  const upper = Math.min(SHEET_MAX_W, room)
+  const lower = Math.min(POP_W_MIN, upper)
+  const width = Math.round(Math.max(lower, Math.min(upper, want)))
   return { left: Math.max(SHEET_MARGIN_X, Math.round((vw - width) / 2)), width }
 }
 

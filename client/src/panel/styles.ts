@@ -259,6 +259,9 @@ body.ts-desk-nochat [data-conversation-region="composer"] {
 .ts-warn-pop.is-sheet .ts-cont-block { gap:4px; padding:0 8px 7px; }
 .ts-warn-pop.is-sheet .ts-list-body { padding:0 8px 8px; }
 .ts-warn-pop.is-sheet .ts-box-row { box-sizing:border-box; min-height:36px; padding:4px 8px; }
+/* 极窄屏兜底（视口 < POP_W_MIN + 24）：普通行按固定控件并排会超出卡片，
+   这一行允许换行 —— 宁可多一行，也让单位「秒」留在卡片内而不是被裁掉。 */
+.ts-warn-pop.is-sheet .ts-cont-num-row { flex-wrap:wrap; row-gap:4px; }
 .ts-warn-pop.is-sheet .ts-box-row .ts-select,
 .ts-warn-pop.is-sheet .ts-box-row .ts-sound-min { height:28px; font-size:calc(var(--ts-fs, 12.5px) * 0.92); }
 .ts-warn-pop.is-sheet .ts-sound-range { height:22px; }
