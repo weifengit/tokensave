@@ -162,11 +162,12 @@ export function clampPanelWidth(want: number, avail: number): number {
  *
  * 宽度不再等于视口宽：手机摆法只是「不贴侧边栏」，不是「铺满屏幕」。用户反馈
  * 「浮动面板太大太宽了」—— 手机上仍然按清单最长那条走（与桌面同一套策略），
- * 只是上限收得更紧（SHEET_MAX_W），两侧留出能看出这是浮层的空白。
+ * 只是上限收得更紧（SHEET_MAX_W = 300），两侧留出能看出这是浮层的空白。
  */
-export const SHEET_MARGIN_X = 16
-/* 手机摆法的宽度上限：比桌面（POP_W_MAX）再小一档 —— 手机屏窄，铺满会像整屏抽屉 */
-export const SHEET_MAX_W = 340
+export const SHEET_MARGIN_X = 12
+/* 手机摆法的宽度上限：比桌面（POP_W_MAX）再小一档。340 时手机上接近铺满（393 屏占 87%），
+   用户反馈「太大太宽」；300 仍装得下三个动作槽位与一行省略号标题，视觉上留出浮层感。 */
+export const SHEET_MAX_W = 300
 
 /** 锚点右侧放不下最窄面板 → 该用手机摆法（贴视口而不是贴侧边栏右缘） */
 export function needsSheetLayout(sideSpace: number): boolean {

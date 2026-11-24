@@ -230,40 +230,51 @@ body.ts-desk-nochat [data-conversation-region="composer"] {
 
 /* 清单浮层：portal 到 body + position:fixed（top/left 由 JSX 按按钮矩形给），
    所以 rail（56px 收起）与展开态都从按钮右缘飞出，不被侧边栏 overflow 裁剪 */
-.ts-warn-pop { position:fixed; z-index:60; max-width:calc(100vw - 24px); max-height:80vh; display:flex; flex-direction:column; border-radius:12px; border:1px solid var(--ts-pop-line); background:var(--ts-pop-bg); color:var(--ts-pop-fg); box-shadow:var(--ts-pop-shadow); backdrop-filter:blur(12px) saturate(1.2); overflow:hidden; }
+.ts-warn-pop { position:fixed; z-index:60; box-sizing:border-box; max-width:calc(100vw - 24px); max-height:80vh; display:flex; flex-direction:column; border-radius:12px; border:1px solid var(--ts-pop-line); background:var(--ts-pop-bg); color:var(--ts-pop-fg); box-shadow:var(--ts-pop-shadow); backdrop-filter:blur(12px) saturate(1.2); overflow:hidden; }
 /* 手机摆法：贴视口顶部、且与触发器脱钩。
    1) z-index 抬到 950。窄屏下侧边栏是浮层抽屉（官方 / 生态插件都在 899~900 这一档），
       原来的 60 会被它和它的黑纱压在下面 —— 面板既发暗又点不着；950 仍低于官方弹窗
       (1000) 与菜单 (1100)，不会盖住真正的模态。
-   2) max-width 与「极窄屏回退宽」的 vw-16 对齐 —— 正常手机上 JS 给 272~340，
+   2) max-width 与 sheetBox 的左右各 12px 留白对齐 —— 正常手机上 JS 给 236~300，
       这里只是兜底上界，不会再把面板夹窄。
    3) top 由 CSS 定（含刘海安全区），不在 JS 里跟触发器算：手机上抽屉一收，
       触发器就是 display:none，跟着它算面板会漂移甚至被算到屏外。 */
-.ts-warn-pop.is-sheet { z-index:950; max-width:calc(100vw - 16px); top:calc(env(safe-area-inset-top, 0px) + 12px); bottom:auto; }
+.ts-warn-pop.is-sheet { z-index:950; max-width:calc(100vw - 24px); top:calc(env(safe-area-inset-top, 0px) + 12px); bottom:auto; }
 /* 手机摆法的显式关闭：视觉上是一枚小 ✕，命中区用 ::after 撑到 44×44 */
 .ts-warn-pop.is-sheet .ts-warn-close { position:relative; flex:none; width:26px; height:26px; box-sizing:border-box; margin-left:10px; padding:0; border:1px solid rgba(127,127,127,.4); background:rgba(127,127,127,.14); color:inherit; border-radius:8px; font-size:14px; line-height:1; cursor:pointer; display:inline-flex; align-items:center; justify-content:center; opacity:.85; }
 .ts-warn-pop.is-sheet .ts-warn-close::after { content:''; position:absolute; inset:-9px; }
 /* 命中区 26+9×2 = 44×44；右边距 10px > 左侵 2px + 右侵 9px，与开关的 ::after 不重叠 */
 .ts-warn-pop.is-sheet .ts-warn-close:hover { background:rgba(127,127,127,.3); opacity:1; }
-/* 触屏：手指点得准比排得密重要 —— 清单行、已读/继续、开关与迷你按钮全部抬到 44px 量级。
-   特别地：提示音开关原本只有 28×16，手机上基本点不准（用户反馈：
-   「手机端回消息之类的，也无法关闭提示音」——开关就在面板里，但手点不到）。 */
-@media (pointer: coarse) {
-  .ts-warn-pop.is-sheet .ts-warn-item { min-height:44px; padding:10px 10px; }
-  /* 图标按钮在触屏上要给够热区（22px 太小点不准）：槽位与按钮一起放大到 34px */
-  .ts-warn-pop.is-sheet .ts-warn-icon-btn,
-  .ts-warn-pop.is-sheet .ts-warn-done { width:34px; height:34px; }
-  .ts-warn-pop.is-sheet .ts-warn-slot { width:34px; height:34px; }
-  .ts-warn-pop.is-sheet .ts-warn-headops > .ts-warn-slot { width:34px; }
-  .ts-warn-pop.is-sheet .ts-cont-sw { width:40px; height:22px; }
-  .ts-warn-pop.is-sheet .ts-cont-sw > i { width:18px; height:18px; }
-  .ts-warn-pop.is-sheet .ts-cont-sw::after { content:''; position:absolute; inset:-11px -2px; }
-  .ts-warn-pop.is-sheet .ts-box-row { min-height:44px; padding:8px 10px; }
-  .ts-warn-pop.is-sheet .ts-box-row .ts-select,
-  .ts-warn-pop.is-sheet .ts-box-row .ts-sound-min { height:34px; font-size:14px; }
-  .ts-warn-pop.is-sheet .ts-sound-range { height:28px; }
-  .ts-warn-pop.is-sheet .ts-sound-mini { width:36px; height:36px; font-size:14px; }
-}
+/* 手机摆法（sheet）：一屏高度有限，所有尺寸按「紧凑」排 —— 这是继「面板太大太宽」
+   反馈之后的修法。之前这些规则写成 content-box 的 min-height：44px 的行实际占
+   60px（44 + 上下 padding 16），六行设置就吃掉 360px，清单只剩一条缝（用户反馈
+   「一行都看不全」）。现在：
+     1) 行高按 border-box 定，min-height 就是可见高度；
+     2) 设置行 36px、清单行 44px —— 仍够手指点，但不浪费纵向空间；
+     3) 图标按钮缩到 30px，把横向空间留给标题（面板从 340 收到 300）。 */
+.ts-warn-pop.is-sheet .ts-sec-head { padding:5px 16px 5px 8px; }
+.ts-warn-pop.is-sheet .ts-settings { flex:none; min-height:0; max-height:calc(70vh - 160px); overflow-y:auto; overscroll-behavior:contain; }
+.ts-warn-pop.is-sheet .ts-sec-list { min-height:132px; }
+.ts-warn-pop.is-sheet .ts-sound-body,
+.ts-warn-pop.is-sheet .ts-cont-block { gap:4px; padding:0 8px 7px; }
+.ts-warn-pop.is-sheet .ts-list-body { padding:0 8px 8px; }
+.ts-warn-pop.is-sheet .ts-box-row { box-sizing:border-box; min-height:36px; padding:4px 8px; }
+.ts-warn-pop.is-sheet .ts-box-row .ts-select,
+.ts-warn-pop.is-sheet .ts-box-row .ts-sound-min { height:28px; font-size:calc(var(--ts-fs, 12.5px) * 0.92); }
+.ts-warn-pop.is-sheet .ts-sound-range { height:22px; }
+.ts-warn-pop.is-sheet .ts-sound-mini { width:30px; height:30px; font-size:calc(var(--ts-fs, 12.5px) * 0.84); }
+.ts-warn-pop.is-sheet .ts-cont-sw { width:36px; height:20px; }
+.ts-warn-pop.is-sheet .ts-cont-sw > i { width:16px; height:16px; }
+.ts-warn-pop.is-sheet .ts-cont-sw.on > i { transform:translateX(17px); }
+/* 开关可见高度 20，但命中区撑到 44：手指点得准，行高不浪费 */
+.ts-warn-pop.is-sheet .ts-cont-sw::after { content:''; position:absolute; inset:-12px -2px; }
+.ts-warn-pop.is-sheet .ts-warn-icon-btn,
+.ts-warn-pop.is-sheet .ts-warn-done { width:30px; height:30px; }
+.ts-warn-pop.is-sheet .ts-warn-slot { width:30px; height:30px; }
+.ts-warn-pop.is-sheet .ts-warn-headops > .ts-warn-slot { width:30px; }
+.ts-warn-pop.is-sheet .ts-warn-item { box-sizing:border-box; min-height:44px; padding:5px 6px; }
+.ts-warn-pop.is-sheet .ts-warn-icon { width:24px; height:24px; }
+.ts-warn-pop.is-sheet .ts-warn-pop-list { padding:4px; gap:1px; }
 
 /* 跑马灯悬浮面板：**宽度由 JS 固定给**（见 ControlRoomEntry 的 panelWidth）。
    这里只保证它是个全宽容器 —— 设置区 / 清单区都是 width:100%，
@@ -277,6 +288,9 @@ body.ts-desk-nochat [data-conversation-region="composer"] {
    一刀裁掉，末尾几条直接看不见（用户反馈：消息多时清单显示不全）。 */
 .ts-sec-list { flex:1 1 auto; min-height:0; display:flex; flex-direction:column; }
 .ts-sec + .ts-sec { border-top:1px solid rgba(127,127,127,.22); }
+/* 两块设置合住一个可压缩容器：手机摆法下高度不够时先让设置区自己滚动，
+   而不是把对话清单（用户真正要看的）挤成一条缝。 */
+.ts-settings { flex:none; width:100%; min-height:0; display:flex; flex-direction:column; }
 /* 区域标题行：与「对话清单」原头部同款排版，但中性色（不再是某一区的专属样式） */
 /* 右内距 21px（不是 22）：要跟清单区右缘严格对齐 —— 清单区是 12(区块) + 1(边框) +
    3(ts-box 内距) + 5(ts-warn-pop-list 内距) = 21。差 1px 会让标题行的图标与逐行图标

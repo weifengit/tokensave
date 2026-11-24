@@ -115,13 +115,13 @@ const sheetRows = Array.from({ length: 18 }, (_, i) => `
     <span class="ts-warn-tags"><span class="ts-warn-sub">tokensave</span><span class="ts-warn-reason">上下文</span></span></span>
   </button><div class="ts-warn-actions"><span class="ts-warn-slot"></span><span class="ts-warn-slot"></span><span class="ts-warn-slot"></span></div></div>`).join('')
 /** 内页：项目中心工具条 + 卡片 + 历史会话浮层（只量工具条与浮层，卡片另由 check-card-layout 负责）。 */
-const innerPage = (width) => `<!doctype html>
+const innerPage = (width, height) => `<!doctype html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>mobile inner</title>
 <style>
 :root { --ts-fs: 12.5px; --ts-fg: #e6e8ec; --ts-fg-mute: #94a3b8; --ts-pop-fg: #e6e8ec; --ts-pop-fg-mute: #94a3b8;
         --ts-pop-bg: #22262e; --ts-pop-line: #3a4049; --ts-pop-shadow: 0 8px 30px rgba(0,0,0,.5); }
 html, body { margin: 0; background: #14161b; color: var(--ts-fg); font-family: -apple-system, system-ui, sans-serif; }
-#wrap { width: ${width}px; height: 800px; display: flex; }
+#wrap { width: ${width}px; height: ${height}px; display: flex; }
 #wrap > .ts-center { flex: 1; min-width: 0; }
 ${css}
 </style></head>
@@ -154,7 +154,8 @@ ${css}
 </div>
 <!-- 呼吸灯浮动面板（手机摆法）：宽度按真实策略给，验「清单能在内部滚、不溢出视口」 -->
 <div class="ts-warn-pop ts-hover-pop is-sheet" id="pulse-pop"
-  style="top:calc(env(safe-area-inset-top, 0px) + 12px); left:${sheetFor(width).left}px; width:${sheetFor(width).width}px; max-height:${Math.round(800 * 0.7)}px">
+  style="top:calc(env(safe-area-inset-top, 0px) + 12px); left:${sheetFor(width).left}px; width:${sheetFor(width).width}px; max-height:${Math.round(height * 0.7)}px">
+<div class="ts-settings">
   <div class="ts-sec">
     <div class="ts-sec-head"><span class="ts-sec-title">提示音</span></div>
     <div class="ts-sound-body"><div class="ts-box">
@@ -171,6 +172,7 @@ ${css}
       <div class="ts-box-row"><label>发送上限</label><input class="ts-cont-num" value="3"><span class="ts-cont-unit">次</span></div>
     </div></div>
   </div>
+</div>
   <div class="ts-sec ts-sec-list">
     <div class="ts-sec-head"><span class="ts-sec-title">对话清单</span><span class="ts-sec-note">18</span></div>
     <div class="ts-list-body"><div class="ts-box ts-box-list"><div class="ts-warn-pop-list" id="pulse-list">
@@ -181,11 +183,11 @@ ${sheetRows}
 </body></html>`
 
 /** 外页：把内页塞进 iframe（宽度 = 手机宽度），量完写进 #out。 */
-const outerPage = (width) => `<!doctype html>
+const outerPage = (width, height) => `<!doctype html>
 <html><head><meta charset="utf-8"><title>mobile outer</title>
 <style>html,body{margin:0;background:#000}#f{border:0;display:block}</style></head>
 <body>
-<iframe id="f" src="inner.html" style="width:${width}px;height:800px"></iframe>
+<iframe id="f" src="inner.html" style="width:${width}px;height:${height}px"></iframe>
 <pre id="out"></pre>
 <script>
 window.addEventListener('load', () => {
@@ -213,12 +215,18 @@ window.addEventListener('load', () => {
     const pulseList = doc.getElementById('pulse-list')
     const pulseRect = pulseEl.getBoundingClientRect()
     const pulseListRect = pulseList.getBoundingClientRect()
+    const boxRows = [...doc.querySelectorAll('.ts-warn-pop.is-sheet .ts-box-row')]
+    const listRows = [...doc.querySelectorAll('.ts-warn-pop.is-sheet .ts-warn-row')]
+    const settingsBox = doc.querySelector('.ts-settings')
     pulseList.scrollTop = 400
     d.pulse = {
       left: px(pulseRect.left), right: px(pulseRect.right), width: px(pulseRect.width),
       height: px(pulseRect.height), bottom: px(pulseRect.bottom),
       listBottom: px(pulseListRect.bottom), listClientH: pulseList.clientHeight,
       listScrollH: pulseList.scrollHeight, listAfterScroll: pulseList.scrollTop,
+      boxRowH: boxRows.length ? Math.max(...boxRows.map((r) => px(r.getBoundingClientRect().height))) : 0,
+      listRowH: listRows.length ? Math.max(...listRows.map((r) => px(r.getBoundingClientRect().height))) : 0,
+      settingsH: settingsBox ? px(settingsBox.getBoundingClientRect().height) : 0,
     }
   } catch (e) { d = { error: String(e) } }
   document.getElementById('out').textContent = JSON.stringify(d)
@@ -244,12 +252,16 @@ if (!browser) {
   console.log('      （要跑它：DSH_CHROMIUM=/path/to/chrome node scripts/check-mobile-layout.mjs）')
 } else {
   const dir = tmpRoot
-  writeFileSync(join(dir, 'inner.html'), innerPage(393))
-  // 两种常见手机宽度：iPhone 15 级的 393px 与最窄一档的 320px
-  for (const width of [393, 320]) {
-    writeFileSync(join(dir, 'inner.html'), innerPage(width))
+  // 三种常见手机视口：iPhone 15 级、矮屏、最窄档（矮屏正是「一行都看不全」的重灾区）
+  const cases = [
+    { width: 393, height: 800 },
+    { width: 393, height: 660 },
+    { width: 320, height: 568 },
+  ]
+  for (const { width, height } of cases) {
+    writeFileSync(join(dir, 'inner.html'), innerPage(width, height))
     const file = join(dir, 'outer.html')
-    writeFileSync(file, outerPage(width))
+    writeFileSync(file, outerPage(width, height))
     let out = ''
     // 浏览器启动偶发超时（连着起多个无头实例时容易撞上）：重试两次。
     for (let attempt = 0; attempt < 3 && !out; attempt++) {
@@ -257,7 +269,7 @@ if (!browser) {
         out = execFileSync(browser, [
           '--headless=new', '--disable-gpu', '--no-first-run', '--dump-dom',
           '--allow-file-access-from-files',
-          '--user-data-dir=' + join(dir, 'profile' + width),
+          '--user-data-dir=' + join(dir, `profile${width}x${height}`),
           '--virtual-time-budget=3000',
           'file://' + file,
         ], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 60_000 })
@@ -277,24 +289,35 @@ if (!browser) {
       fail++
       continue
     }
-    check(`${width}px：项目中心内容不横向溢出（没有横向滚动条）`,
+    check(`${width}×${height}px：项目中心内容不横向溢出（没有横向滚动条）`,
       d.innerScrollW <= d.innerClientW + 0.5,
       `inner scrollW=${d.innerScrollW} clientW=${d.innerClientW}`)
-    check(`${width}px：工具条内容不溢出（不撑出外框）`,
+    check(`${width}×${height}px：工具条内容不溢出（不撑出外框）`,
       d.toolbarScrollW <= d.toolbarClientW + 0.5,
       `toolbar scrollW=${d.toolbarScrollW} clientW=${d.toolbarClientW}`)
-    check(`${width}px：排序分组在工具条框内（含「按完成情况」那一档）`,
+    check(`${width}×${height}px：排序分组在工具条框内（含「按完成情况」那一档）`,
       d.sortRight <= d.toolbarRight + 0.5 && d.sortScrollW <= d.sortClientW + 0.5,
       `sort right=${d.sortRight} toolbar right=${d.toolbarRight} sort scrollW=${d.sortScrollW}`)
-    check(`${width}px：历史会话浮层不越出视口（左缘不被切）`,
+    check(`${width}×${height}px：历史会话浮层不越出视口（左缘不被切）`,
       d.popLeft >= 0 && d.popRight <= d.vw + 0.5,
       `pop left=${d.popLeft} right=${d.popRight} vw=${d.vw}`)
-    check(`${width}px：呼吸灯面板是紧凑浮层（宽度不超 SHEET_MAX_W，两侧留白）`,
-      d.pulse.width <= 342 && d.pulse.left >= 12 && d.pulse.right <= width - 12,
-      `left=${d.pulse.left} right=${d.pulse.right} width=${d.pulse.width}`)
-    check(`${width}px：呼吸灯面板高度不超过 70vh`,
-      d.pulse.height <= 562, `height=${d.pulse.height}（上限 560 + 边框）`)
-    check(`${width}px：清单能在面板内部滚动（末尾会话不再被裁掉）`,
+    check(`${width}×${height}px：呼吸灯面板是紧凑浮层（宽度 ≤ SHEET_MAX_W，两侧 12px 留白）`,
+      d.pulse.width <= panelWidth.SHEET_MAX_W + 0.5 &&
+      d.pulse.left >= panelWidth.SHEET_MARGIN_X - 0.5 &&
+      d.pulse.right <= width - panelWidth.SHEET_MARGIN_X + 0.5,
+      `left=${d.pulse.left} right=${d.pulse.right} width=${d.pulse.width} (max ${panelWidth.SHEET_MAX_W})`)
+    check(`${width}×${height}px：呼吸灯面板高度不超过 70vh（上限按真实视口算）`,
+      d.pulse.height <= Math.round(height * 0.7) + 2,
+      `height=${d.pulse.height}（上限 ${Math.round(height * 0.7)} + 边框）`)
+    check(`${width}×${height}px：手机面板行高压实（设置行 ≤38、清单行 ≤48）`,
+      d.pulse.boxRowH > 0 && d.pulse.boxRowH <= 38 &&
+      d.pulse.listRowH > 0 && d.pulse.listRowH <= 48,
+      `boxRow=${d.pulse.boxRowH} listRow=${d.pulse.listRowH}`)
+    check(`${width}×${height}px：设置区不再吃掉半屏（≤340px，矮屏可自滚）`,
+      d.pulse.settingsH > 0 && d.pulse.settingsH <= 340, `settings=${d.pulse.settingsH}`)
+    check(`${width}×${height}px：清单至少露出两整行（≥88px 可视）`,
+      d.pulse.listClientH >= 88, `listClientH=${d.pulse.listClientH}`)
+    check(`${width}×${height}px：清单能在面板内部滚动（末尾会话不再被裁掉）`,
       d.pulse.listScrollH > d.pulse.listClientH + 4 && d.pulse.listAfterScroll > 0 &&
       d.pulse.listBottom <= d.pulse.bottom + 0.5,
       `clientH=${d.pulse.listClientH} scrollH=${d.pulse.listScrollH} scrollTop=${d.pulse.listAfterScroll} bottom=${d.pulse.listBottom}/${d.pulse.bottom}`)

@@ -197,14 +197,26 @@ check('归档走宿主 uiWorkspace.archiveSession（复用 sessions.ts 的封装
   // 归档当前会话后留在本项目工作台（不掉回 Hero）
   /stayInProjectAfterArchive/.test(entrySrc))
 
-check('归档 = 已处理：成功后按会话标已读（与点行内「已读」同一效果）',
-  // 单一归档（含「停止并归档」的重试路径）与全部归档两条成功路径都要标已读
-  /if \(res\.ok\) \{[\s\S]{0,400}?markSessionRead\(it\.sessionId\)/.test(entrySrc) &&
-  /if \(res\.ok\) markSessionRead\(it\.sessionId\)/.test(entrySrc) &&
-  /import \{ markPulseRead, markSessionRead, useActivityPulse, type InterruptKind \} from '\.\/pulse'/.test(entrySrc))
+check('归档 = 已处理：点击就按会话标已读（乐观，不等 RPC），失败再撤回',
+  // 等宿主的 archiveSession RPC 回来才 markSessionRead，就是用户反馈的
+  // 「点了归档，数字角标半天不动」。所以 markSessionRead 必须在 await 之前。
+  /const marked = markSessionRead\(it\.sessionId\)[\s\S]{0,160}?const res = await archiveSession\(it\.sessionId, stopActivity\)/.test(entrySrc) &&
+  // 批量归档同样先整批结清，再逐条发请求
+  /for \(const it of list\) marked\.set\(it\.sessionId, markSessionRead\(it\.sessionId\)\)/.test(entrySrc) &&
+  // RPC 失败（正在运行 / 服务不可用）时把乐观标记撤回
+  /unmarkReadKeys\(marked\)/.test(entrySrc) &&
+  /unmarkReadKeys\(marked\.get\(it\.sessionId\) \?\? \[\]\)/.test(entrySrc) &&
+  /import \{ markPulseRead, markSessionRead, unmarkReadKeys, useActivityPulse, type InterruptKind \} from '\.\/pulse'/.test(entrySrc))
+
+check('unmarkReadKeys：只撤回本次新写的键（不误删更早的已读标注）',
+  /export function unmarkReadKeys\(keys: readonly string\[\]\): void \{/.test(pulseSrc) &&
+  /const added = keys\.filter\(\(k\) => !readMarks\.has\(k\)\)/.test(pulseSrc) &&
+  /function readKeyOfSession\(key: string, sessionId: string\): boolean \{/.test(pulseSrc) &&
+  /export function unmarkReadKeys\(keys: readonly string\[\]\): void \{[\s\S]{0,160}?for \(const k of keys\) \{/.test(pulseSrc) &&
+  /persistReadMarks\(\)[\s\S]{0,80}?notifyOutcome\(\)/.test(pulseSrc))
 
 check('markSessionRead：按 sessionId 覆盖三类未读键，标注后立刻重算呼吸灯',
-  /export function markSessionRead\(sessionId: string\): void \{/.test(pulseSrc) &&
+  /export function markSessionRead\(sessionId: string\): string\[\] \{/.test(pulseSrc) &&
   pulseSrc.includes('w:p:${sessionId}:') &&
   pulseSrc.includes('w:f:${sessionId}:') &&
   pulseSrc.includes('d:${sessionId}:') &&

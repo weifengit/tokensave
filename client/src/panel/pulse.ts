@@ -337,20 +337,50 @@ export function markPulseRead(kind: 'warn' | 'done', key?: string): void {
 }
 
 /**
+ * 一把未读键是否属于该会话：三类前缀（w:p: 待确认 / w:f: 失败那一轮 / d: 完成那一轮）。
+ * 按会话匹配而不是按 item.key：点击到归档完成之间可能又跑完一轮，键会变。
+ */
+function readKeyOfSession(key: string, sessionId: string): boolean {
+  return key.startsWith(`w:p:${sessionId}:`) || key.startsWith(`w:f:${sessionId}:`) || key.startsWith(`d:${sessionId}:`)
+}
+
+/**
  * 把一个会话的全部未读项标为已读（归档时用：归档 = 已处理，效果同点行内的「已读」）。
  *
  * 只靠宿主归档集刷新不够：黄/蓝清单的数据来自 outcomeCache / doneCache，
  * 归档后要等 10s 兜底扫描发现会话不在项目里才会被清掉 —— 这期间数字角标不降、
  * 对话也还挂在清单里（用户反馈「点了归档，角标和清单都没反应」）。
- * 按 sessionId 匹配而不是按 item.key：点击到归档完成之间可能又跑完一轮，键会变。
- * @param sessionId - 刚归档成功的会话
+ * 因此调用方是**点击就标**（乐观），不等 archiveSession 那个异步 RPC 回来；
+ * 归档没成时用 unmarkReadKeys 撤回这次新写的键，角标回到真实状态。
+ * @param sessionId - 要标已读的会话
+ * @returns 这次真正新写入的已读键（回滚只撤这一组，不误删更早的标注）
  */
-export function markSessionRead(sessionId: string): void {
-  if (!sessionId) return
-  const owns = (k: string): boolean =>
-    k.startsWith(`w:p:${sessionId}:`) || k.startsWith(`w:f:${sessionId}:`) || k.startsWith(`d:${sessionId}:`)
-  applyReadKeys([...lastWarnKeys, ...lastDoneKeys].filter(owns))
+export function markSessionRead(sessionId: string): string[] {
+  if (!sessionId) return []
+  const keys = [...lastWarnKeys, ...lastDoneKeys].filter((k) => readKeyOfSession(k, sessionId))
+  const added = keys.filter((k) => !readMarks.has(k))
+  applyReadKeys(keys)
+  return added
 }
+
+/**
+ * 撤回一组乐观写入的已读键（归档请求失败 / 因正在运行被拒时用）。
+ *
+ * 只删调用方手里的那一组，不按 sessionId 全扫：同一会话更早一轮的「已读」
+ * 是用户的真实意图，不能因为这次归档失败被一起清掉。
+ * @param keys - markSessionRead 返回的键
+ */
+export function unmarkReadKeys(keys: readonly string[]): void {
+  let changed = false
+  for (const k of keys) {
+    if (!readMarks.delete(k)) continue
+    changed = true
+  }
+  if (!changed) return
+  persistReadMarks()
+  notifyOutcome()
+}
+
 /** sessionId → 观察到「停止」的本地时刻（负结论新鲜度判定用） */
 const stoppedAt = new Map<string, number>()
 /** 正在即时判定中的会话（防重入） */

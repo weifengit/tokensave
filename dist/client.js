@@ -2401,40 +2401,51 @@ body.ts-desk-nochat [data-conversation-region="composer"] {
 
 /* \u6E05\u5355\u6D6E\u5C42\uFF1Aportal \u5230 body + position:fixed\uFF08top/left \u7531 JSX \u6309\u6309\u94AE\u77E9\u5F62\u7ED9\uFF09\uFF0C
    \u6240\u4EE5 rail\uFF0856px \u6536\u8D77\uFF09\u4E0E\u5C55\u5F00\u6001\u90FD\u4ECE\u6309\u94AE\u53F3\u7F18\u98DE\u51FA\uFF0C\u4E0D\u88AB\u4FA7\u8FB9\u680F overflow \u88C1\u526A */
-.ts-warn-pop { position:fixed; z-index:60; max-width:calc(100vw - 24px); max-height:80vh; display:flex; flex-direction:column; border-radius:12px; border:1px solid var(--ts-pop-line); background:var(--ts-pop-bg); color:var(--ts-pop-fg); box-shadow:var(--ts-pop-shadow); backdrop-filter:blur(12px) saturate(1.2); overflow:hidden; }
+.ts-warn-pop { position:fixed; z-index:60; box-sizing:border-box; max-width:calc(100vw - 24px); max-height:80vh; display:flex; flex-direction:column; border-radius:12px; border:1px solid var(--ts-pop-line); background:var(--ts-pop-bg); color:var(--ts-pop-fg); box-shadow:var(--ts-pop-shadow); backdrop-filter:blur(12px) saturate(1.2); overflow:hidden; }
 /* \u624B\u673A\u6446\u6CD5\uFF1A\u8D34\u89C6\u53E3\u9876\u90E8\u3001\u4E14\u4E0E\u89E6\u53D1\u5668\u8131\u94A9\u3002
    1) z-index \u62AC\u5230 950\u3002\u7A84\u5C4F\u4E0B\u4FA7\u8FB9\u680F\u662F\u6D6E\u5C42\u62BD\u5C49\uFF08\u5B98\u65B9 / \u751F\u6001\u63D2\u4EF6\u90FD\u5728 899~900 \u8FD9\u4E00\u6863\uFF09\uFF0C
       \u539F\u6765\u7684 60 \u4F1A\u88AB\u5B83\u548C\u5B83\u7684\u9ED1\u7EB1\u538B\u5728\u4E0B\u9762 \u2014\u2014 \u9762\u677F\u65E2\u53D1\u6697\u53C8\u70B9\u4E0D\u7740\uFF1B950 \u4ECD\u4F4E\u4E8E\u5B98\u65B9\u5F39\u7A97
       (1000) \u4E0E\u83DC\u5355 (1100)\uFF0C\u4E0D\u4F1A\u76D6\u4F4F\u771F\u6B63\u7684\u6A21\u6001\u3002
-   2) max-width \u4E0E\u300C\u6781\u7A84\u5C4F\u56DE\u9000\u5BBD\u300D\u7684 vw-16 \u5BF9\u9F50 \u2014\u2014 \u6B63\u5E38\u624B\u673A\u4E0A JS \u7ED9 272~340\uFF0C
+   2) max-width \u4E0E sheetBox \u7684\u5DE6\u53F3\u5404 12px \u7559\u767D\u5BF9\u9F50 \u2014\u2014 \u6B63\u5E38\u624B\u673A\u4E0A JS \u7ED9 236~300\uFF0C
       \u8FD9\u91CC\u53EA\u662F\u515C\u5E95\u4E0A\u754C\uFF0C\u4E0D\u4F1A\u518D\u628A\u9762\u677F\u5939\u7A84\u3002
    3) top \u7531 CSS \u5B9A\uFF08\u542B\u5218\u6D77\u5B89\u5168\u533A\uFF09\uFF0C\u4E0D\u5728 JS \u91CC\u8DDF\u89E6\u53D1\u5668\u7B97\uFF1A\u624B\u673A\u4E0A\u62BD\u5C49\u4E00\u6536\uFF0C
       \u89E6\u53D1\u5668\u5C31\u662F display:none\uFF0C\u8DDF\u7740\u5B83\u7B97\u9762\u677F\u4F1A\u6F02\u79FB\u751A\u81F3\u88AB\u7B97\u5230\u5C4F\u5916\u3002 */
-.ts-warn-pop.is-sheet { z-index:950; max-width:calc(100vw - 16px); top:calc(env(safe-area-inset-top, 0px) + 12px); bottom:auto; }
+.ts-warn-pop.is-sheet { z-index:950; max-width:calc(100vw - 24px); top:calc(env(safe-area-inset-top, 0px) + 12px); bottom:auto; }
 /* \u624B\u673A\u6446\u6CD5\u7684\u663E\u5F0F\u5173\u95ED\uFF1A\u89C6\u89C9\u4E0A\u662F\u4E00\u679A\u5C0F \u2715\uFF0C\u547D\u4E2D\u533A\u7528 ::after \u6491\u5230 44\xD744 */
 .ts-warn-pop.is-sheet .ts-warn-close { position:relative; flex:none; width:26px; height:26px; box-sizing:border-box; margin-left:10px; padding:0; border:1px solid rgba(127,127,127,.4); background:rgba(127,127,127,.14); color:inherit; border-radius:8px; font-size:14px; line-height:1; cursor:pointer; display:inline-flex; align-items:center; justify-content:center; opacity:.85; }
 .ts-warn-pop.is-sheet .ts-warn-close::after { content:''; position:absolute; inset:-9px; }
 /* \u547D\u4E2D\u533A 26+9\xD72 = 44\xD744\uFF1B\u53F3\u8FB9\u8DDD 10px > \u5DE6\u4FB5 2px + \u53F3\u4FB5 9px\uFF0C\u4E0E\u5F00\u5173\u7684 ::after \u4E0D\u91CD\u53E0 */
 .ts-warn-pop.is-sheet .ts-warn-close:hover { background:rgba(127,127,127,.3); opacity:1; }
-/* \u89E6\u5C4F\uFF1A\u624B\u6307\u70B9\u5F97\u51C6\u6BD4\u6392\u5F97\u5BC6\u91CD\u8981 \u2014\u2014 \u6E05\u5355\u884C\u3001\u5DF2\u8BFB/\u7EE7\u7EED\u3001\u5F00\u5173\u4E0E\u8FF7\u4F60\u6309\u94AE\u5168\u90E8\u62AC\u5230 44px \u91CF\u7EA7\u3002
-   \u7279\u522B\u5730\uFF1A\u63D0\u793A\u97F3\u5F00\u5173\u539F\u672C\u53EA\u6709 28\xD716\uFF0C\u624B\u673A\u4E0A\u57FA\u672C\u70B9\u4E0D\u51C6\uFF08\u7528\u6237\u53CD\u9988\uFF1A
-   \u300C\u624B\u673A\u7AEF\u56DE\u6D88\u606F\u4E4B\u7C7B\u7684\uFF0C\u4E5F\u65E0\u6CD5\u5173\u95ED\u63D0\u793A\u97F3\u300D\u2014\u2014\u5F00\u5173\u5C31\u5728\u9762\u677F\u91CC\uFF0C\u4F46\u624B\u70B9\u4E0D\u5230\uFF09\u3002 */
-@media (pointer: coarse) {
-  .ts-warn-pop.is-sheet .ts-warn-item { min-height:44px; padding:10px 10px; }
-  /* \u56FE\u6807\u6309\u94AE\u5728\u89E6\u5C4F\u4E0A\u8981\u7ED9\u591F\u70ED\u533A\uFF0822px \u592A\u5C0F\u70B9\u4E0D\u51C6\uFF09\uFF1A\u69FD\u4F4D\u4E0E\u6309\u94AE\u4E00\u8D77\u653E\u5927\u5230 34px */
-  .ts-warn-pop.is-sheet .ts-warn-icon-btn,
-  .ts-warn-pop.is-sheet .ts-warn-done { width:34px; height:34px; }
-  .ts-warn-pop.is-sheet .ts-warn-slot { width:34px; height:34px; }
-  .ts-warn-pop.is-sheet .ts-warn-headops > .ts-warn-slot { width:34px; }
-  .ts-warn-pop.is-sheet .ts-cont-sw { width:40px; height:22px; }
-  .ts-warn-pop.is-sheet .ts-cont-sw > i { width:18px; height:18px; }
-  .ts-warn-pop.is-sheet .ts-cont-sw::after { content:''; position:absolute; inset:-11px -2px; }
-  .ts-warn-pop.is-sheet .ts-box-row { min-height:44px; padding:8px 10px; }
-  .ts-warn-pop.is-sheet .ts-box-row .ts-select,
-  .ts-warn-pop.is-sheet .ts-box-row .ts-sound-min { height:34px; font-size:14px; }
-  .ts-warn-pop.is-sheet .ts-sound-range { height:28px; }
-  .ts-warn-pop.is-sheet .ts-sound-mini { width:36px; height:36px; font-size:14px; }
-}
+/* \u624B\u673A\u6446\u6CD5\uFF08sheet\uFF09\uFF1A\u4E00\u5C4F\u9AD8\u5EA6\u6709\u9650\uFF0C\u6240\u6709\u5C3A\u5BF8\u6309\u300C\u7D27\u51D1\u300D\u6392 \u2014\u2014 \u8FD9\u662F\u7EE7\u300C\u9762\u677F\u592A\u5927\u592A\u5BBD\u300D
+   \u53CD\u9988\u4E4B\u540E\u7684\u4FEE\u6CD5\u3002\u4E4B\u524D\u8FD9\u4E9B\u89C4\u5219\u5199\u6210 content-box \u7684 min-height\uFF1A44px \u7684\u884C\u5B9E\u9645\u5360
+   60px\uFF0844 + \u4E0A\u4E0B padding 16\uFF09\uFF0C\u516D\u884C\u8BBE\u7F6E\u5C31\u5403\u6389 360px\uFF0C\u6E05\u5355\u53EA\u5269\u4E00\u6761\u7F1D\uFF08\u7528\u6237\u53CD\u9988
+   \u300C\u4E00\u884C\u90FD\u770B\u4E0D\u5168\u300D\uFF09\u3002\u73B0\u5728\uFF1A
+     1) \u884C\u9AD8\u6309 border-box \u5B9A\uFF0Cmin-height \u5C31\u662F\u53EF\u89C1\u9AD8\u5EA6\uFF1B
+     2) \u8BBE\u7F6E\u884C 36px\u3001\u6E05\u5355\u884C 44px \u2014\u2014 \u4ECD\u591F\u624B\u6307\u70B9\uFF0C\u4F46\u4E0D\u6D6A\u8D39\u7EB5\u5411\u7A7A\u95F4\uFF1B
+     3) \u56FE\u6807\u6309\u94AE\u7F29\u5230 30px\uFF0C\u628A\u6A2A\u5411\u7A7A\u95F4\u7559\u7ED9\u6807\u9898\uFF08\u9762\u677F\u4ECE 340 \u6536\u5230 300\uFF09\u3002 */
+.ts-warn-pop.is-sheet .ts-sec-head { padding:5px 16px 5px 8px; }
+.ts-warn-pop.is-sheet .ts-settings { flex:none; min-height:0; max-height:calc(70vh - 160px); overflow-y:auto; overscroll-behavior:contain; }
+.ts-warn-pop.is-sheet .ts-sec-list { min-height:132px; }
+.ts-warn-pop.is-sheet .ts-sound-body,
+.ts-warn-pop.is-sheet .ts-cont-block { gap:4px; padding:0 8px 7px; }
+.ts-warn-pop.is-sheet .ts-list-body { padding:0 8px 8px; }
+.ts-warn-pop.is-sheet .ts-box-row { box-sizing:border-box; min-height:36px; padding:4px 8px; }
+.ts-warn-pop.is-sheet .ts-box-row .ts-select,
+.ts-warn-pop.is-sheet .ts-box-row .ts-sound-min { height:28px; font-size:calc(var(--ts-fs, 12.5px) * 0.92); }
+.ts-warn-pop.is-sheet .ts-sound-range { height:22px; }
+.ts-warn-pop.is-sheet .ts-sound-mini { width:30px; height:30px; font-size:calc(var(--ts-fs, 12.5px) * 0.84); }
+.ts-warn-pop.is-sheet .ts-cont-sw { width:36px; height:20px; }
+.ts-warn-pop.is-sheet .ts-cont-sw > i { width:16px; height:16px; }
+.ts-warn-pop.is-sheet .ts-cont-sw.on > i { transform:translateX(17px); }
+/* \u5F00\u5173\u53EF\u89C1\u9AD8\u5EA6 20\uFF0C\u4F46\u547D\u4E2D\u533A\u6491\u5230 44\uFF1A\u624B\u6307\u70B9\u5F97\u51C6\uFF0C\u884C\u9AD8\u4E0D\u6D6A\u8D39 */
+.ts-warn-pop.is-sheet .ts-cont-sw::after { content:''; position:absolute; inset:-12px -2px; }
+.ts-warn-pop.is-sheet .ts-warn-icon-btn,
+.ts-warn-pop.is-sheet .ts-warn-done { width:30px; height:30px; }
+.ts-warn-pop.is-sheet .ts-warn-slot { width:30px; height:30px; }
+.ts-warn-pop.is-sheet .ts-warn-headops > .ts-warn-slot { width:30px; }
+.ts-warn-pop.is-sheet .ts-warn-item { box-sizing:border-box; min-height:44px; padding:5px 6px; }
+.ts-warn-pop.is-sheet .ts-warn-icon { width:24px; height:24px; }
+.ts-warn-pop.is-sheet .ts-warn-pop-list { padding:4px; gap:1px; }
 
 /* \u8DD1\u9A6C\u706F\u60AC\u6D6E\u9762\u677F\uFF1A**\u5BBD\u5EA6\u7531 JS \u56FA\u5B9A\u7ED9**\uFF08\u89C1 ControlRoomEntry \u7684 panelWidth\uFF09\u3002
    \u8FD9\u91CC\u53EA\u4FDD\u8BC1\u5B83\u662F\u4E2A\u5168\u5BBD\u5BB9\u5668 \u2014\u2014 \u8BBE\u7F6E\u533A / \u6E05\u5355\u533A\u90FD\u662F width:100%\uFF0C
@@ -2448,6 +2459,9 @@ body.ts-desk-nochat [data-conversation-region="composer"] {
    \u4E00\u5200\u88C1\u6389\uFF0C\u672B\u5C3E\u51E0\u6761\u76F4\u63A5\u770B\u4E0D\u89C1\uFF08\u7528\u6237\u53CD\u9988\uFF1A\u6D88\u606F\u591A\u65F6\u6E05\u5355\u663E\u793A\u4E0D\u5168\uFF09\u3002 */
 .ts-sec-list { flex:1 1 auto; min-height:0; display:flex; flex-direction:column; }
 .ts-sec + .ts-sec { border-top:1px solid rgba(127,127,127,.22); }
+/* \u4E24\u5757\u8BBE\u7F6E\u5408\u4F4F\u4E00\u4E2A\u53EF\u538B\u7F29\u5BB9\u5668\uFF1A\u624B\u673A\u6446\u6CD5\u4E0B\u9AD8\u5EA6\u4E0D\u591F\u65F6\u5148\u8BA9\u8BBE\u7F6E\u533A\u81EA\u5DF1\u6EDA\u52A8\uFF0C
+   \u800C\u4E0D\u662F\u628A\u5BF9\u8BDD\u6E05\u5355\uFF08\u7528\u6237\u771F\u6B63\u8981\u770B\u7684\uFF09\u6324\u6210\u4E00\u6761\u7F1D\u3002 */
+.ts-settings { flex:none; width:100%; min-height:0; display:flex; flex-direction:column; }
 /* \u533A\u57DF\u6807\u9898\u884C\uFF1A\u4E0E\u300C\u5BF9\u8BDD\u6E05\u5355\u300D\u539F\u5934\u90E8\u540C\u6B3E\u6392\u7248\uFF0C\u4F46\u4E2D\u6027\u8272\uFF08\u4E0D\u518D\u662F\u67D0\u4E00\u533A\u7684\u4E13\u5C5E\u6837\u5F0F\uFF09 */
 /* \u53F3\u5185\u8DDD 21px\uFF08\u4E0D\u662F 22\uFF09\uFF1A\u8981\u8DDF\u6E05\u5355\u533A\u53F3\u7F18\u4E25\u683C\u5BF9\u9F50 \u2014\u2014 \u6E05\u5355\u533A\u662F 12(\u533A\u5757) + 1(\u8FB9\u6846) +
    3(ts-box \u5185\u8DDD) + 5(ts-warn-pop-list \u5185\u8DDD) = 21\u3002\u5DEE 1px \u4F1A\u8BA9\u6807\u9898\u884C\u7684\u56FE\u6807\u4E0E\u9010\u884C\u56FE\u6807
@@ -12235,10 +12249,25 @@ function applyReadKeys(keys) {
 function markPulseRead(kind, key) {
   applyReadKeys(key ? [key] : kind === "warn" ? lastWarnKeys : lastDoneKeys);
 }
+function readKeyOfSession(key, sessionId) {
+  return key.startsWith(`w:p:${sessionId}:`) || key.startsWith(`w:f:${sessionId}:`) || key.startsWith(`d:${sessionId}:`);
+}
 function markSessionRead(sessionId) {
-  if (!sessionId) return;
-  const owns = (k) => k.startsWith(`w:p:${sessionId}:`) || k.startsWith(`w:f:${sessionId}:`) || k.startsWith(`d:${sessionId}:`);
-  applyReadKeys([...lastWarnKeys, ...lastDoneKeys].filter(owns));
+  if (!sessionId) return [];
+  const keys = [...lastWarnKeys, ...lastDoneKeys].filter((k) => readKeyOfSession(k, sessionId));
+  const added = keys.filter((k) => !readMarks.has(k));
+  applyReadKeys(keys);
+  return added;
+}
+function unmarkReadKeys(keys) {
+  let changed = false;
+  for (const k of keys) {
+    if (!readMarks.delete(k)) continue;
+    changed = true;
+  }
+  if (!changed) return;
+  persistReadMarks();
+  notifyOutcome();
 }
 var stoppedAt = /* @__PURE__ */ new Map();
 var inflight = /* @__PURE__ */ new Set();
@@ -13530,8 +13559,8 @@ function clampPanelWidth(want, avail) {
   const w = Number.isFinite(want) ? want : 0;
   return Math.round(Math.max(lower, Math.min(upper, w)));
 }
-var SHEET_MARGIN_X = 16;
-var SHEET_MAX_W = 340;
+var SHEET_MARGIN_X = 12;
+var SHEET_MAX_W = 300;
 function needsSheetLayout(sideSpace) {
   return !(sideSpace >= POP_W_MIN);
 }
@@ -13822,134 +13851,136 @@ function HoverPanel({ pos, panelRef, items, onPick, onHover, onMarkRead, onMarkA
         onMouseEnter: () => onHover(true),
         onMouseLeave: () => onHover(false),
         children: [
-          /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: "ts-sec", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)(SectionHead, { title: "\u63D0\u793A\u97F3", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
-                "button",
-                {
-                  type: "button",
-                  className: `ts-cont-sw${s.enabled ? " on" : ""}`,
-                  title: s.enabled ? "\u7ED3\u5C40\u63D0\u793A\u97F3\uFF1A\u5DF2\u5F00\u542F\uFF08\u5BF9\u8BDD\u6B63\u5E38\u7ED3\u675F / \u88AB\u4E2D\u65AD\u65F6\u54CD\u4E00\u58F0\uFF09\n\u70B9\u51FB\u5173\u95ED" : "\u7ED3\u5C40\u63D0\u793A\u97F3\uFF1A\u5DF2\u5173\u95ED\n\u70B9\u51FB\u5F00\u542F\uFF1A\u6B63\u5E38\u7ED3\u675F / \u88AB\u4E2D\u65AD\u65F6\u54CD\u4E00\u58F0",
-                  role: "switch",
-                  "aria-checked": s.enabled,
-                  onClick: () => update({ enabled: !s.enabled }),
-                  children: /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("i", {})
-                }
-              ),
-              pos.mode === "sheet" && /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
-                "button",
-                {
-                  type: "button",
-                  className: "ts-warn-close",
-                  "aria-label": "\u5173\u95ED\u5BF9\u8BDD\u6E05\u5355",
-                  title: "\u5173\u95ED\u6E05\u5355",
-                  onClick: onClose,
-                  children: "\u2715"
-                }
-              )
+          /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: "ts-settings", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: "ts-sec", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)(SectionHead, { title: "\u63D0\u793A\u97F3", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
+                  "button",
+                  {
+                    type: "button",
+                    className: `ts-cont-sw${s.enabled ? " on" : ""}`,
+                    title: s.enabled ? "\u7ED3\u5C40\u63D0\u793A\u97F3\uFF1A\u5DF2\u5F00\u542F\uFF08\u5BF9\u8BDD\u6B63\u5E38\u7ED3\u675F / \u88AB\u4E2D\u65AD\u65F6\u54CD\u4E00\u58F0\uFF09\n\u70B9\u51FB\u5173\u95ED" : "\u7ED3\u5C40\u63D0\u793A\u97F3\uFF1A\u5DF2\u5173\u95ED\n\u70B9\u51FB\u5F00\u542F\uFF1A\u6B63\u5E38\u7ED3\u675F / \u88AB\u4E2D\u65AD\u65F6\u54CD\u4E00\u58F0",
+                    role: "switch",
+                    "aria-checked": s.enabled,
+                    onClick: () => update({ enabled: !s.enabled }),
+                    children: /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("i", {})
+                  }
+                ),
+                pos.mode === "sheet" && /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
+                  "button",
+                  {
+                    type: "button",
+                    className: "ts-warn-close",
+                    "aria-label": "\u5173\u95ED\u5BF9\u8BDD\u6E05\u5355",
+                    title: "\u5173\u95ED\u6E05\u5355",
+                    onClick: onClose,
+                    children: "\u2715"
+                  }
+                )
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("div", { className: "ts-sound-body", children: /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: "ts-box", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: "ts-box-row", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("label", { title: "\u97F3\u91CF\uFF1A\u63D0\u793A\u97F3\u7684\u97F3\u91CF\u5927\u5C0F", children: "\u97F3\u91CF" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
+                    "input",
+                    {
+                      className: "ts-sound-range",
+                      type: "range",
+                      min: 0,
+                      max: 100,
+                      step: 5,
+                      value: Math.round(s.volume * 100),
+                      title: `\u97F3\u91CF ${Math.round(s.volume * 100)}%`,
+                      onChange: (e) => update({ volume: Number(e.target.value) / 100 })
+                    }
+                  )
+                ] }),
+                /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: "ts-box-row", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("label", { children: "\u5B8C\u6210" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
+                    "select",
+                    {
+                      className: "ts-select",
+                      value: s.doneId,
+                      title: "\u6B63\u5E38\u7ED3\u675F\u65F6\u7684\u63D0\u793A\u97F3",
+                      onChange: (e) => update({ doneId: e.target.value }),
+                      children: SOUND_OPTIONS.map((o) => /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("option", { value: o.id, children: o.label }, o.id))
+                    }
+                  ),
+                  /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
+                    "button",
+                    {
+                      type: "button",
+                      className: "ts-sound-mini",
+                      title: "\u8BD5\u542C\u5B8C\u6210\u97F3\u6548",
+                      onClick: () => void playRole("done", true),
+                      children: "\u25B6"
+                    }
+                  )
+                ] }),
+                /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: "ts-box-row", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("label", { children: "\u4E2D\u65AD" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
+                    "select",
+                    {
+                      className: "ts-select",
+                      value: s.failId,
+                      title: "\u88AB\u4E2D\u65AD / \u5931\u8D25 / \u88AB\u622A\u65AD\u65F6\u7684\u63D0\u793A\u97F3",
+                      onChange: (e) => update({ failId: e.target.value }),
+                      children: SOUND_OPTIONS.map((o) => /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("option", { value: o.id, children: o.label }, o.id))
+                    }
+                  ),
+                  /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
+                    "button",
+                    {
+                      type: "button",
+                      className: "ts-sound-mini",
+                      title: "\u8BD5\u542C\u4E2D\u65AD\u97F3\u6548",
+                      onClick: () => void playRole("fail", true),
+                      children: "\u25B6"
+                    }
+                  )
+                ] }),
+                /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: "ts-box-row", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("label", { children: "\u65F6\u957F" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
+                    "select",
+                    {
+                      className: "ts-select",
+                      value: s.duration,
+                      title: "\u6BCF\u6B21\u63D0\u9192\u6301\u7EED\u591A\u4E45\uFF08\u5230\u70B9\u81EA\u52A8\u505C\uFF09",
+                      onChange: (e) => update({ duration: e.target.value }),
+                      children: DURATION_OPTIONS.map((o) => /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("option", { value: o.id, children: o.label }, o.id))
+                    }
+                  ),
+                  s.duration === "custom" && /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
+                    "input",
+                    {
+                      className: "ts-sound-min",
+                      type: "number",
+                      min: 1,
+                      max: 180,
+                      value: s.customMinutes,
+                      title: "\u81EA\u5B9A\u4E49\u5206\u949F\u6570\uFF081\u2013180\uFF09",
+                      onChange: (e) => update({ customMinutes: Number(e.target.value) })
+                    }
+                  ),
+                  s.duration === "custom" && /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { className: "ts-sound-unit", children: "\u5206\u949F" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
+                    "button",
+                    {
+                      type: "button",
+                      className: `ts-sound-mini${playingLabel2 ? " is-playing" : ""}`,
+                      title: playingLabel2 ? `\u505C\u6B62\u6B63\u5728\u54CD\u7684\u300C${playingLabel2}\u300D\u63D0\u793A\u97F3\uFF08\u540C\u65F6\u8BA9\u5176\u5B83\u5DF2\u8FDE\u63A5\u7684\u7AEF\u4E00\u8D77\u9759\u97F3\uFF1B\u5728\u9875\u9762\u5185\u4EFB\u610F\u4EA4\u4E92\uFF1A\u70B9\u51FB / \u6EDA\u52A8 / \u6309\u952E\u4E5F\u4F1A\u81EA\u52A8\u505C\uFF0C250ms \u5BBD\u9650\u671F\uFF09` : "\u505C\u6B62\u63D0\u793A\u97F3\uFF08\u540C\u65F6\u8BA9\u5176\u5B83\u5DF2\u8FDE\u63A5\u7684\u7AEF\u4E00\u8D77\u9759\u97F3\uFF1B\u5728\u9875\u9762\u5185\u4EFB\u610F\u4EA4\u4E92\uFF1A\u70B9\u51FB / \u6EDA\u52A8 / \u6309\u952E\u4E5F\u4F1A\u81EA\u52A8\u505C\uFF0C250ms \u5BBD\u9650\u671F\uFF09",
+                      onClick: () => stopSoundEverywhere(),
+                      children: "\u25A0"
+                    }
+                  )
+                ] })
+              ] }) })
             ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("div", { className: "ts-sound-body", children: /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: "ts-box", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: "ts-box-row", children: [
-                /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("label", { title: "\u97F3\u91CF\uFF1A\u63D0\u793A\u97F3\u7684\u97F3\u91CF\u5927\u5C0F", children: "\u97F3\u91CF" }),
-                /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
-                  "input",
-                  {
-                    className: "ts-sound-range",
-                    type: "range",
-                    min: 0,
-                    max: 100,
-                    step: 5,
-                    value: Math.round(s.volume * 100),
-                    title: `\u97F3\u91CF ${Math.round(s.volume * 100)}%`,
-                    onChange: (e) => update({ volume: Number(e.target.value) / 100 })
-                  }
-                )
-              ] }),
-              /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: "ts-box-row", children: [
-                /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("label", { children: "\u5B8C\u6210" }),
-                /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
-                  "select",
-                  {
-                    className: "ts-select",
-                    value: s.doneId,
-                    title: "\u6B63\u5E38\u7ED3\u675F\u65F6\u7684\u63D0\u793A\u97F3",
-                    onChange: (e) => update({ doneId: e.target.value }),
-                    children: SOUND_OPTIONS.map((o) => /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("option", { value: o.id, children: o.label }, o.id))
-                  }
-                ),
-                /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
-                  "button",
-                  {
-                    type: "button",
-                    className: "ts-sound-mini",
-                    title: "\u8BD5\u542C\u5B8C\u6210\u97F3\u6548",
-                    onClick: () => void playRole("done", true),
-                    children: "\u25B6"
-                  }
-                )
-              ] }),
-              /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: "ts-box-row", children: [
-                /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("label", { children: "\u4E2D\u65AD" }),
-                /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
-                  "select",
-                  {
-                    className: "ts-select",
-                    value: s.failId,
-                    title: "\u88AB\u4E2D\u65AD / \u5931\u8D25 / \u88AB\u622A\u65AD\u65F6\u7684\u63D0\u793A\u97F3",
-                    onChange: (e) => update({ failId: e.target.value }),
-                    children: SOUND_OPTIONS.map((o) => /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("option", { value: o.id, children: o.label }, o.id))
-                  }
-                ),
-                /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
-                  "button",
-                  {
-                    type: "button",
-                    className: "ts-sound-mini",
-                    title: "\u8BD5\u542C\u4E2D\u65AD\u97F3\u6548",
-                    onClick: () => void playRole("fail", true),
-                    children: "\u25B6"
-                  }
-                )
-              ] }),
-              /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: "ts-box-row", children: [
-                /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("label", { children: "\u65F6\u957F" }),
-                /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
-                  "select",
-                  {
-                    className: "ts-select",
-                    value: s.duration,
-                    title: "\u6BCF\u6B21\u63D0\u9192\u6301\u7EED\u591A\u4E45\uFF08\u5230\u70B9\u81EA\u52A8\u505C\uFF09",
-                    onChange: (e) => update({ duration: e.target.value }),
-                    children: DURATION_OPTIONS.map((o) => /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("option", { value: o.id, children: o.label }, o.id))
-                  }
-                ),
-                s.duration === "custom" && /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
-                  "input",
-                  {
-                    className: "ts-sound-min",
-                    type: "number",
-                    min: 1,
-                    max: 180,
-                    value: s.customMinutes,
-                    title: "\u81EA\u5B9A\u4E49\u5206\u949F\u6570\uFF081\u2013180\uFF09",
-                    onChange: (e) => update({ customMinutes: Number(e.target.value) })
-                  }
-                ),
-                s.duration === "custom" && /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { className: "ts-sound-unit", children: "\u5206\u949F" }),
-                /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
-                  "button",
-                  {
-                    type: "button",
-                    className: `ts-sound-mini${playingLabel2 ? " is-playing" : ""}`,
-                    title: playingLabel2 ? `\u505C\u6B62\u6B63\u5728\u54CD\u7684\u300C${playingLabel2}\u300D\u63D0\u793A\u97F3\uFF08\u540C\u65F6\u8BA9\u5176\u5B83\u5DF2\u8FDE\u63A5\u7684\u7AEF\u4E00\u8D77\u9759\u97F3\uFF1B\u5728\u9875\u9762\u5185\u4EFB\u610F\u4EA4\u4E92\uFF1A\u70B9\u51FB / \u6EDA\u52A8 / \u6309\u952E\u4E5F\u4F1A\u81EA\u52A8\u505C\uFF0C250ms \u5BBD\u9650\u671F\uFF09` : "\u505C\u6B62\u63D0\u793A\u97F3\uFF08\u540C\u65F6\u8BA9\u5176\u5B83\u5DF2\u8FDE\u63A5\u7684\u7AEF\u4E00\u8D77\u9759\u97F3\uFF1B\u5728\u9875\u9762\u5185\u4EFB\u610F\u4EA4\u4E92\uFF1A\u70B9\u51FB / \u6EDA\u52A8 / \u6309\u952E\u4E5F\u4F1A\u81EA\u52A8\u505C\uFF0C250ms \u5BBD\u9650\u671F\uFF09",
-                    onClick: () => stopSoundEverywhere(),
-                    children: "\u25A0"
-                  }
-                )
-              ] })
-            ] }) })
+            /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("div", { className: "ts-sec", children: /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(ContinueSettingsBlock, {}) })
           ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("div", { className: "ts-sec", children: /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(ContinueSettingsBlock, {}) }),
           /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: "ts-sec ts-sec-list", children: [
             /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(SectionHead, { title: "\u5BF9\u8BDD\u6E05\u5355", note: String(items.length), children: /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("span", { className: "ts-warn-headops", children: [
               /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { className: "ts-warn-slot", "aria-hidden": "true" }),
@@ -14133,11 +14164,12 @@ function ControlRoomEntry({ wide }) {
     }
   };
   const doArchive = async (it, stopActivity = false) => {
+    setArchiveError("");
     setArchivingId(it.sessionId);
+    const marked = markSessionRead(it.sessionId);
     const res = await archiveSession(it.sessionId, stopActivity);
     setArchivingId("");
     if (res.ok) {
-      markSessionRead(it.sessionId);
       setHoverPos(null);
       try {
         const project = loadProjects().find((p) => p.id === it.projectId);
@@ -14147,6 +14179,7 @@ function ControlRoomEntry({ wide }) {
       }
       return;
     }
+    unmarkReadKeys(marked);
     if (res.active) {
       setPendingArchive(it);
       return;
@@ -14160,14 +14193,15 @@ function ControlRoomEntry({ wide }) {
     const list = hoverItems.filter((it) => it.sessionId);
     if (list.length === 0) return;
     setArchiveError("");
+    const marked = /* @__PURE__ */ new Map();
+    for (const it of list) marked.set(it.sessionId, markSessionRead(it.sessionId));
     let failed = 0;
     for (const it of list) {
       const res = await archiveSession(it.sessionId, false);
-      if (res.ok) markSessionRead(it.sessionId);
-      else {
-        failed++;
-        if (res.active) setPendingArchive(it);
-      }
+      if (res.ok) continue;
+      unmarkReadKeys(marked.get(it.sessionId) ?? []);
+      failed++;
+      if (res.active) setPendingArchive(it);
     }
     if (failed > 0) setArchiveError(`\u6709 ${failed} \u6761\u5F52\u6863\u5931\u8D25\uFF08\u53EF\u80FD\u6B63\u5728\u8FD0\u884C\uFF0C\u9700\u5148\u505C\u6B62\uFF09`);
     if (failed < list.length) setHoverPos(null);

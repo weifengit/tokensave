@@ -50,7 +50,7 @@ import {
   activeHostPanelId, archiveSession, enterProjectWorkbench, getLiveScreen, onRequestProjectList, onRequestWorkbench, openControlRoom,
   sendToSession, stayInProjectAfterArchive,
 } from './sessions'
-import { markPulseRead, markSessionRead, useActivityPulse, type InterruptKind } from './pulse'
+import { markPulseRead, markSessionRead, unmarkReadKeys, useActivityPulse, type InterruptKind } from './pulse'
 import { iconSvg } from './icons'
 import { injectProjectCenterStyles } from './styles'
 import { loadProjects } from './store'
@@ -478,6 +478,7 @@ function HoverPanel({ pos, panelRef, items, onPick, onHover, onMarkRead, onMarkA
        * 开关放在**标题行**（用户要求：把原来「提醒」后面那颗开关挪到上面）；
        * 下面四行（音量 / 完成 / 中断 / 时长）用一张 card 包起来，表示它们是子内容。
        */}
+      <div className="ts-settings">
       <div className="ts-sec">
         <SectionHead title="提示音">
           <button
@@ -606,6 +607,7 @@ function HoverPanel({ pos, panelRef, items, onPick, onHover, onMarkRead, onMarkA
       {/* 区域二：自动继续（标题行 + 主开关都在 ContinueSettingsBlock 里） */}
       <div className="ts-sec">
         <ContinueSettingsBlock />
+      </div>
       </div>
 
       {/* 区域三：对话清单（标题行 + 右侧「全部已读」，条目也用 card 包住） */}
@@ -834,14 +836,14 @@ export function ControlRoomEntry({ wide }: { wide?: boolean }) {
    * 因此归档后必须显式留在本项目工作台（stayInProjectAfterArchive）。
    */
   const doArchive = async (it: PopItem, stopActivity = false) => {
+    setArchiveError('')
     setArchivingId(it.sessionId)
+    // 先本地结清再发请求：归档走宿主异步 RPC，等它回来才降角标就是「点了没反应」。
+    // 归档 = 已处理（与行内「已读」同一效果）；失败时用 unmarkReadKeys 撤回这次新写的键。
+    const marked = markSessionRead(it.sessionId)
     const res = await archiveSession(it.sessionId, stopActivity)
     setArchivingId('')
     if (res.ok) {
-      // 归档 = 已处理：与行内「已读」同一效果 —— 立刻降角标、从清单移除。
-      // 只靠宿主归档集刷新不够：黄/蓝清单来自 outcome / done 缓存，要等 10s 兜底扫描
-      // 才会把已归档会话清掉，这段时间角标与清单都停在旧状态（用户反馈）。
-      markSessionRead(it.sessionId)
       setHoverPos(null)
       // 归档的若是当前会话 → 留在本项目工作台，不掉回 Hero
       try {
@@ -852,6 +854,8 @@ export function ControlRoomEntry({ wide }: { wide?: boolean }) {
       }
       return
     }
+    // 归档没成 → 撤回乐观标记，角标 / 清单回到真实状态
+    unmarkReadKeys(marked)
     if (res.active) {
       // 正在运行：问用户要不要先停下来
       setPendingArchive(it)
@@ -870,15 +874,17 @@ export function ControlRoomEntry({ wide }: { wide?: boolean }) {
     const list = hoverItems.filter((it) => it.sessionId)
     if (list.length === 0) return
     setArchiveError('')
+    // 整批先结清，角标与清单一次降完；逐条 RPC 失败再把那一条的键删回去（同上：不等 RPC）。
+    const marked = new Map<string, string[]>()
+    for (const it of list) marked.set(it.sessionId, markSessionRead(it.sessionId))
     let failed = 0
     for (const it of list) {
       const res = await archiveSession(it.sessionId, false)
-      if (res.ok) markSessionRead(it.sessionId)
-      else {
-        failed++
-        // 正在运行的那条：停下来问用户（其余先归档完）
-        if (res.active) setPendingArchive(it)
-      }
+      if (res.ok) continue
+      unmarkReadKeys(marked.get(it.sessionId) ?? [])
+      failed++
+      // 正在运行的那条：停下来问用户（其余先归档完）
+      if (res.active) setPendingArchive(it)
     }
     if (failed > 0) setArchiveError(`有 ${failed} 条归档失败（可能正在运行，需先停止）`)
     if (failed < list.length) setHoverPos(null)

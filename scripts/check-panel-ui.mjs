@@ -331,7 +331,8 @@ check('面板 style 真的把 maxHeight 传下去了',
 check('手机摆法高度收到 70vh（76vh 铺满一屏就被反馈「太大」）',
   /vh \* 0\.7/.test(tsx) && !/vh \* 0\.76/.test(tsx))
 check('手机摆法宽度跟清单走（不再等于视口宽），上限比桌面更紧',
-  /export const SHEET_MAX_W = 340/.test(widthSrc) &&
+  /export const SHEET_MAX_W = 300/.test(widthSrc) &&
+  /export const SHEET_MARGIN_X = 12/.test(widthSrc) &&
   /rows\.length === 0 \? 0 : widestRowWidth\(rows\)/.test(widthSrc) &&
   /const box = sheet \? sheetBox\(vw, hoverItems\)/.test(tsx))
 
@@ -347,18 +348,26 @@ check('摆法标记进 state（清单变化重算宽度时不会被拉回桌面�
   /const wantW = wantBox\?\.width \?\? 0/.test(tsx) &&
   /setHoverPos\(\{ \.\.\.hoverPos, left: wantLeft, width: wantW \}\)/.test(tsx) &&
   /const mode: PanelPos\['mode'\] = sheet \? 'sheet' : 'side'/.test(tsx))
-check('手机摆法下 max-width 与 sheetBox 的 vw-16 对齐（不被再夹一次）',
+check('手机摆法下 max-width 与 sheetBox 的 vw-24（左右各 12px 留白）对齐',
   /\.ts-warn-pop\.is-sheet \{[^}]*z-index:950/.test(css) &&
-  /\.ts-warn-pop\.is-sheet \{[^}]*max-width:calc\(100vw - 16px\)/.test(css) &&
+  /\.ts-warn-pop\.is-sheet \{[^}]*max-width:calc\(100vw - 24px\)/.test(css) &&
   /pos\.mode === 'sheet' \? ' is-sheet' : ''/.test(tsx))
 check('窄屏层级压过抽屉/黑纱（899~900），但不盖官方弹窗(1000)/菜单(1100)',
   /z-index:950/.test(css) && 950 < 1000 && 950 > 900)
-check('触屏给足热区（清单行≥44px、图标按钮与槽位放大到 34px）',
-  /@media \(pointer: coarse\)/.test(css) &&
-  /\.ts-warn-pop\.is-sheet \.ts-warn-item \{[^}]*min-height:44px/.test(css) &&
-  // 图标按钮在触屏上放大到 34px（22px 太小点不准），槽位同步放大以保持对齐
-  /\.ts-warn-pop\.is-sheet \.ts-warn-icon-btn,[\s\S]{0,120}?ts-warn-done \{ width:34px; height:34px/.test(css) &&
-  /\.ts-warn-pop\.is-sheet \.ts-warn-slot \{ width:34px; height:34px/.test(css))
+check('手机摆法：紧凑行高（设置 36px / 清单 44px，border-box 不再虚胖）',
+  /\.ts-warn-pop\.is-sheet \.ts-box-row \{[^}]*box-sizing:border-box[^}]*min-height:36px/.test(css) &&
+  /\.ts-warn-pop\.is-sheet \.ts-warn-item \{[^}]*box-sizing:border-box[^}]*min-height:44px/.test(css) &&
+  // 图标按钮 30px：面板收窄到 300 后仍给标题留下可读宽度，槽位同步以保持对齐
+  /\.ts-warn-pop\.is-sheet \.ts-warn-icon-btn,[\s\S]{0,120}?ts-warn-done \{ width:30px; height:30px/.test(css) &&
+  /\.ts-warn-pop\.is-sheet \.ts-warn-slot \{ width:30px; height:30px/.test(css))
+check('手机摆法：设置区限高（超出先自己滚，不挤清单）',
+  /className="ts-settings"/.test(tsx) &&
+  /\.ts-settings \{[^}]*display:flex/.test(css) &&
+  /\.ts-warn-pop\.is-sheet \.ts-settings \{[^}]*flex:none/.test(css) &&
+  /\.ts-warn-pop\.is-sheet \.ts-settings \{[^}]*max-height:calc\(70vh - 160px\)/.test(css) &&
+  /\.ts-warn-pop\.is-sheet \.ts-settings \{[^}]*overflow-y:auto/.test(css))
+check('手机摆法：清单保底 132px（会话再多也至少看得到两行完整条目）',
+  /\.ts-warn-pop\.is-sheet \.ts-sec-list \{[^}]*min-height:132px/.test(css))
 check('视口变化（转屏/抽屉开合）重算位置',
   /const computePanelPos = \(\): PanelPos \| null/.test(tsx) &&
   /window\.addEventListener\('resize', onResize\)/.test(tsx) &&
@@ -383,11 +392,11 @@ check('手机摆法纵向与触发器脱钩（top 交给 CSS，含刘海安全�
   /if \(mode === 'sheet'\) \{\s*return \{ mode, left, width, maxHeight/.test(tsx) &&
   /\.ts-warn-pop\.is-sheet \{[^}]*top:calc\(env\(safe-area-inset-top, 0px\) \+ 12px\)/.test(css) &&
   /\.ts-warn-pop\.is-sheet \{[^}]*bottom:auto/.test(css))
-check('触屏：提示音开关与迷你按钮抬到可点尺寸（原来 28×16 点不准）',
-  /\.ts-warn-pop\.is-sheet \.ts-cont-sw \{[^}]*width:40px[^}]*height:22px/.test(css) &&
-  /\.ts-warn-pop\.is-sheet \.ts-cont-sw::after \{[^}]*inset:-11px -2px/.test(css) &&
-  /\.ts-warn-pop\.is-sheet \.ts-sound-mini \{[^}]*height:36px/.test(css) &&
-  /\.ts-warn-pop\.is-sheet \.ts-box-row \.ts-select,[\s\S]{0,80}?height:34px/.test(css))
+check('手机摆法：开关与迷你按钮尺寸适合手指点（命中区仍 44px）',
+  /\.ts-warn-pop\.is-sheet \.ts-cont-sw \{[^}]*width:36px[^}]*height:20px/.test(css) &&
+  /\.ts-warn-pop\.is-sheet \.ts-cont-sw::after \{[^}]*inset:-12px -2px/.test(css) &&
+  /\.ts-warn-pop\.is-sheet \.ts-sound-mini \{[^}]*height:30px/.test(css) &&
+  /\.ts-warn-pop\.is-sheet \.ts-box-row \.ts-select,[\s\S]{0,80}?height:28px/.test(css))
 
 console.log(fail === 0 ? '\nALL PASS' : `\n${fail} FAILED`)
 process.exitCode = fail === 0 ? 0 : 1
