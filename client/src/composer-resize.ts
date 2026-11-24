@@ -13,11 +13,12 @@
  *  2. **手动拉高**：输入区上沿是一条抓手，按住上下拖可把盒子**固定**到任意高度；
  *     松手后固定并写入 localStorage（`tokensave:composer-height.v1`），刷新后仍在，
  *     且内容变少也不会自动收回（固定高度是用户的明确意图）；
- *     抓手右侧的「重置」（或双击抓手）把高度交还给自动加高。
+ *     双击抓手把高度交还给自动加高（抓手右侧不再显示 px 数字胶囊与「重置」按钮：
+ *     带图片附件时它们会悬空压在附件区上，用户要求直接去掉）。
  *     误触防护（2026-10-30）：位移超过 3px 才算拖动，按下 / 单击不改变任何高度 ——
  *     抓手是隐形命中区，旧版「按下即固定」让一次无意点击把输入框钉死在
  *     一行高并持久化（用户报的就是它：「输入框不会随内容自动变高」）；
- *     固定态现在随时可见（数字胶囊淡显 + 「重置」常显），一眼可发现、一键可撤销。
+ *     固定态不再有可视胶囊 —— 抓手本身就是唯一入口（双击恢复自动高度）。
  *
  * 关键：手动高度必须**同时写 min-height 与 max-height**（固定盒）。
  * 只写 max-height 时，内容比目标矮的盒子不会变高——空输入框往上拖毫无反应。
@@ -66,8 +67,6 @@ let installed = false
 /** 当前接管中的滚动口（页面上常驻一个 composer；换元素时重新绑定）。 */
 let current: HTMLElement | null = null
 let grabber: HTMLDivElement | null = null
-let resetChip: HTMLButtonElement | null = null
-let sizeLabel: HTMLSpanElement | null = null
 let innerObserver: ResizeObserver | null = null
 let contentObserver: MutationObserver | null = null
 let seatObserver: MutationObserver | null = null
@@ -150,23 +149,13 @@ function measureContent(el: HTMLElement): number {
   return Math.max(MIN_CAP, Math.ceil(innerH + padding))
 }
 
-/** 抓手与「重置」按钮的样式（一次性注入，id 幂等）。 */
+/** 抓手命中区的样式（一次性注入，id 幂等）。 */
 const CSS = `
-.ts-composer-grabber{position:fixed;z-index:60;height:16px;display:flex;align-items:flex-end;cursor:ns-resize;user-select:none;-webkit-user-select:none;touch-action:none}
-/* —— 横线已按用户要求**彻底移除**（连带此前拖动中的横线残影/闪屏源）：
-   抓手只保留一条不可见的 16px 命中区（cursor:ns-resize + title 提示可发现），
-   拖动反馈只靠 px 数字胶囊与悬停浮出的「重置」按钮。 */
-.ts-composer-grabber .ts-composer-size{margin-left:var(--ts-grab-inset,16px);border-radius:99px;padding:0 7px;font-size:calc(var(--ts-fs, 12.5px) * 0.8);line-height:15px;font-variant-numeric:tabular-nums;background:rgba(127,127,127,.25);color:var(--dsw-alias-label-secondary,#9aa0a6);opacity:0;transition:opacity .14s ease;pointer-events:none;transform:translateY(-2px)}
-/* 固定态（非拖动）：数字胶囊淡显 + 「重置」常显。
-   固定高度是用户的明确意图，但它同时是「自动加高」的关断开关 ——
-   必须随时可见、可撤销，否则一次旧版误触就把人锁在死高度里还无从察觉。 */
-.ts-composer-grabber[data-ts-manual="1"]:not([data-ts-dragging="1"]) .ts-composer-size{opacity:.8}
-.ts-composer-grabber[data-ts-manual="1"]:not([data-ts-dragging="1"]) .ts-composer-reset{opacity:1}
-.ts-composer-grabber[data-ts-dragging="1"] .ts-composer-size{opacity:1}
-/* 重置胶囊：悬停才浮出，右端同样按圆角内缩，不越过卡片圆角 */
-.ts-composer-reset{position:absolute;right:var(--ts-grab-inset,16px);top:-11px;height:18px;border-radius:99px;padding:0 8px;border:.5px solid rgba(127,127,127,.4);background:var(--dsw-specific-menu,rgba(30,30,32,.92));color:var(--dsw-alias-label-secondary,#9aa0a6);font-size:calc(var(--ts-fs, 12.5px) * 0.84);line-height:1;cursor:pointer;opacity:0;transition:opacity .14s ease}
-.ts-composer-grabber:hover .ts-composer-reset,.ts-composer-grabber:focus-within .ts-composer-reset{opacity:1}
-.ts-composer-reset:hover{color:var(--dsw-alias-label-primary,#e6e8eb);border-color:rgba(127,127,127,.85)}
+.ts-composer-grabber{position:fixed;z-index:60;height:16px;cursor:ns-resize;user-select:none;-webkit-user-select:none;touch-action:none}
+/* —— 按用户要求彻底移除可视内容（横线 / px 数字胶囊 / 「重置」按钮）：
+   带图片附件时，挂在 [data-input-scroll] 上沿的胶囊会落在附件区里像悬空。
+   抓手只保留一条不可见的 16px 命中区（cursor:ns-resize + title 可发现）；
+   固定高度仍可撤销：双击抓手即交还自动加高。 */
 body.ts-composer-resizing{cursor:ns-resize}
 `
 
@@ -221,13 +210,12 @@ function apply(): void {
   reflect()
 }
 
-/** 抓手与「重置」按钮的显隐/状态（全程差量写）。 */
+/** 抓手的状态标记（全程差量写；不再有可视胶囊需要刷新）。 */
 function reflect(): void {
   if (!grabber) return
   const manual = manualCap !== null
   setDs(grabber, 'tsManual', manual ? '1' : '0')
   setDs(grabber, 'tsDragging', drag ? '1' : '0')
-  if (resetChip) setStyle(resetChip, 'display', manual ? '' : 'none')
 }
 
 /**
@@ -274,11 +262,6 @@ function positionHandle(): void {
   setStyle(grabber, 'width', `${Math.round(r.width)}px`)
   setStyle(grabber, 'top', `${Math.round(top)}px`)
   setStyle(grabber, 'bottom', 'auto')
-  // 两端按输入卡圆角半径内缩（px 胶囊与「重置」胶囊吃这个变量），不越过圆角
-  const card = el.parentElement
-  const radius = card ? parseFloat(getComputedStyle(card).borderTopLeftRadius) || 0 : 0
-  const inset = Math.round(Math.min(Math.max(radius + 2, 10), Math.max(10, r.width / 3)))
-  setStyle(grabber, '--ts-grab-inset', `${inset}px`)
 }
 
 /** 手势起点：先把上限设为「当前实际高度」，再按指针位移跟随（第一下不跳变）。 */
@@ -346,10 +329,6 @@ function applyDrag(): void {
   applyLimits(el, px)
   positionHandle()
   reflect()
-  if (sizeLabel && sizeLabel.textContent !== String(px)) {
-    sizeLabel.textContent = String(px)
-    stats.styleWrites++
-  }
 }
 
 function onPointerUp(e: PointerEvent): void {
@@ -373,7 +352,7 @@ function onPointerUp(e: PointerEvent): void {
   // 只有真的拖过才落盘固定；误触（未超过阈值）不改变任何高度、也不落盘
   if (dragged && manualCap !== null) writeManualCap(manualCap)
   // 松手即固定：这次拖出来的高度是用户的明确意图（“就固定在这个高度”），
-  // 不做自动收回；抓手右侧的「重置」或双击抓手指它交还自动加高。
+  // 不做自动收回；双击抓手（无按钮）交还自动加高。
   if (el && el.isConnected) apply()
   else reflect()
 }
@@ -396,21 +375,6 @@ function ensureHandle(): void {
   grabber.setAttribute('aria-orientation', 'horizontal')
   grabber.setAttribute('aria-label', '拖动调整输入框高度')
   grabber.title = '拖动调整输入框高度 · 双击恢复自动高度'
-  grabber.innerHTML = '<span class="ts-composer-size"></span>'
-  sizeLabel = grabber.querySelector('.ts-composer-size') as HTMLSpanElement
-
-  resetChip = document.createElement('button')
-  resetChip.type = 'button'
-  resetChip.className = 'ts-composer-reset'
-  resetChip.textContent = '重置'
-  resetChip.title = '恢复自动加高'
-  resetChip.style.display = 'none'
-  resetChip.addEventListener('pointerdown', (e) => e.stopPropagation())
-  resetChip.addEventListener('click', (e) => {
-    e.stopPropagation()
-    resetManual()
-  })
-  grabber.appendChild(resetChip)
 
   grabber.addEventListener('pointerdown', onPointerDown)
   grabber.addEventListener('pointermove', onPointerMove)
@@ -437,8 +401,6 @@ function hideHandle(): void {
 function removeHandle(): void {
   grabber?.remove()
   grabber = null
-  resetChip = null
-  sizeLabel = null
 }
 
 /** 解绑当前滚动口（宿主写在行内样式里的上限值不动，宿主自己会接管）。 */

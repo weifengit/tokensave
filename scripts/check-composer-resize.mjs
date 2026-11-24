@@ -15,8 +15,8 @@
  *   1. 纯函数 —— 位移 ≥ DRAG_START_PX(3) 才升级为拖动；未升级不改变任何高度；
  *   2. 时机 —— pointerdown 不再写 manualCap（按下即固定的旧写法必须消失）；
  *      只有拖动后的 pointerup 才落盘；
- *   3. 可见性 —— 固定态（data-ts-manual=1 且非拖动）数字胶囊淡显、「重置」常显，
- *      固定随时可发现、可撤销；
+ *   3. 可视性 —— 按用户要求移除 px 数字胶囊与「重置」按钮（带图片附件时
+ *      它们会悬空压在附件区）；固定高度仍可撤销：双击抓手交还自动加高；
  *   4. 口径 —— 自动模式上限仍是 --dsh-composer-text-max-height（宿主规则为
  *      var() 引用，行内覆盖有效）。
  */
@@ -77,11 +77,13 @@ try {
       body.includes('const dragged = drag.moved') && /if \(dragged && manualCap !== null\) writeManualCap\(manualCap\)/.test(body))
   }
 
-  // —— 3. 固定态可见 ——
-  check('固定态数字胶囊淡显（随时可见）',
-    src.includes('[data-ts-manual="1"]:not([data-ts-dragging="1"]) .ts-composer-size{opacity:.8}'))
-  check('固定态「重置」常显（随时可撤销）',
-    src.includes('[data-ts-manual="1"]:not([data-ts-dragging="1"]) .ts-composer-reset{opacity:1}'))
+  // —— 3. 可视胶囊按用户要求移除（带图片附件时会悬空在附件区）——
+  check('不再注入 px 数字胶囊（输入框高度数字）',
+    !src.includes('ts-composer-size') && !src.includes('sizeLabel'))
+  check('不再注入「重置」按钮（重置胶囊）',
+    !src.includes('ts-composer-reset') && !src.includes('resetChip'))
+  check('固定高度仍可撤销：双击抓手交还自动加高',
+    /addEventListener\('dblclick'[\s\S]{0,80}?resetManual\(\)/.test(src))
 
   // —— 4. 口径：自动上限仍是宿主变量 ——
   check('上限仍写宿主的 --dsh-composer-text-max-height（行内覆盖 var() 规则）',
@@ -89,7 +91,7 @@ try {
   check('自动模式 cap 来自视口（manualCap ?? autoCap）', /manualCap \?\? autoCap\(\)/.test(src))
 
   // —— 5. 抓手跟随输入条座位显隐（后台标签不浮在别的窗口上）——
-  // 用户反馈：「预览和主对话同组时，激活预览还能看到主对话的重置 / 高度数值」。
+  // 用户反馈：「预览和主对话同组时，激活预览还能看到主对话的浮层控件」。
   // 抓手是 body 上的 fixed 浮层，必须自己查座位显隐，不能只看 rect（隐藏座位也有 rect）。
   {
     const normal = { display: 'block', visibility: 'visible', opacity: '1' }
