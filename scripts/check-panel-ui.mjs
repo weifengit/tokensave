@@ -330,10 +330,11 @@ check('面板 style 真的把 maxHeight 传下去了',
   /style=\{\{[^}]*maxHeight: pos\.maxHeight/.test(tsx))
 check('手机摆法高度收到 70vh（76vh 铺满一屏就被反馈「太大」）',
   /vh \* 0\.7/.test(tsx) && !/vh \* 0\.76/.test(tsx))
-check('手机摆法宽度跟清单走（不再等于视口宽），上限比桌面更紧',
-  /export const SHEET_MAX_W = 300/.test(widthSrc) &&
+check('手机摆法宽度跟清单走（不再等于视口宽），上限比桌面更紧，并随字号下限自适应',
+  /export const SHEET_MAX_W = 320/.test(widthSrc) &&
   /export const SHEET_MARGIN_X = 12/.test(widthSrc) &&
-  /rows\.length === 0 \? 0 : widestRowWidth\(rows\)/.test(widthSrc) &&
+  /rows\.length === 0 \? 0 : widestRowWidth\(rows, fs\)/.test(widthSrc) &&
+  /const cap = Math\.max\(SHEET_MAX_W, need\)/.test(widthSrc) &&
   /const box = sheet \? sheetBox\(vw, hoverItems\)/.test(tsx))
 
 // —— 手机端：呼吸灯面板不得被侧边栏抽屉挤成右缘窄条 ——

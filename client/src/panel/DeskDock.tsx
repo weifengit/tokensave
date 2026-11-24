@@ -61,6 +61,7 @@ import {
 } from './skins'
 import { startThemeWatch } from './theme'
 import { THEME_MODES, THEME_MODE_LABEL, THEME_MODE_HINT, readThemeMode, readActiveScheme, writeThemeMode, subscribeThemeMode, type ThemeMode } from './theme-mode'
+import { FONT_LEVELS, DEFAULT_FONT_ID, fontSizeOf, type FontId } from './font-levels'
 import { installSkinLayerCss } from './skin-layer'
 import { getClientContext, subscribeSession, subscribeSessionMetrics } from '../session-subscribe'
 import { KINDS, paneId, parsePaneId, paneTitle, paneIcon, type Kind } from './desk-panes'
@@ -215,11 +216,11 @@ const DOCK_CSS = `
 /* 皮肤不画在 .ts-dock 上：它已由 skin-layer.ts 铺在整页（body，fixed 附着）。
    画在这里会与页面级渐变几何不一致 —— 台面内的渐变以自己的盒子重新起算，
    标签行与台面之间就会露出一道接缝（用户反映的「只有 tab 下面那块变了」）。 */
-.ts-dock { position: absolute; inset: 0; display: grid; grid-template-rows: 42px minmax(0,1fr) auto; grid-template-columns: minmax(0,var(--ts-side-l,220px)) minmax(0,1fr) minmax(0,var(--ts-side-r,260px)); grid-template-areas: "title title title" "left center right" "status status status"; color: var(--ts-fg); font-size:var(--ts-fs, 12.5px); font-family:var(--ts-font, inherit); background: transparent; }
+.ts-dock { position: absolute; inset: 0; display: grid; grid-template-rows: 42px minmax(0,1fr) auto; grid-template-columns: minmax(0,var(--ts-side-l,220px)) minmax(0,1fr) minmax(0,var(--ts-side-r,260px)); grid-template-areas: "title title title" "left center right" "status status status"; color: var(--ts-fg); font-size:var(--ts-fs, 13.5px); font-family:var(--ts-font, inherit); background: transparent; }
 /* 皮肤格子里的「无皮肤」+ 分组标题 */
 .ts-skin-none { flex: 1 1 100%; min-width: 0; }
 .ts-skin-group { flex: 1 1 100%; display: flex; flex-direction: column; gap: 4px; margin-top: 2px; }
-.ts-skin-glabel { font-size: calc(var(--ts-fs, 12.5px) * 0.8); color: var(--ts-fg-mute); letter-spacing: .04em; }
+.ts-skin-glabel { font-size: calc(var(--ts-fs, 13.5px) * 0.8); color: var(--ts-fg-mute); letter-spacing: .04em; }
 /* 皮肤列表：限高 + 内部滚动。22 套皮全展开有 695px 高，而设置面板一屏只有 ~415px，
    不限高的话下面「字体」块要被顶出面板，得滚很久才找得到。 */
 /* 皮肤列表：限高 + 内部滚动。22 套皮全展开有 695px 高，而设置面板一屏只有 ~415px，
@@ -258,10 +259,10 @@ const DOCK_CSS = `
 .ts-tg--region[data-on] { color: inherit; border-color: transparent; background: 0 0; }
 .ts-tg--region[data-on]:hover { background: rgba(127,127,127,.16); border-color: rgba(127,127,127,.28); }
 /* 探索者设置：图标按钮 + 右上角一个小计数徽标 */
-.ts-tg-badge { position: absolute; top: -2px; right: -3px; min-width: 12px; height: 12px; padding: 0 3px; border-radius: 999px; background: #4f8ef7; color: #0b0e14; font-size:calc(var(--ts-fs, 12.5px) * 0.68); font-weight: 700; line-height: 12px; text-align: center; }
+.ts-tg-badge { position: absolute; top: -2px; right: -3px; min-width: 12px; height: 12px; padding: 0 3px; border-radius: 999px; background: #4f8ef7; color: #0b0e14; font-size:calc(var(--ts-fs, 13.5px) * 0.68); font-weight: 700; line-height: 12px; text-align: center; }
 .ts-tg-wrap { position: relative; display: inline-flex; }
 .ts-tg-sep { width: 1px; height: 16px; background: rgba(127,127,127,.24); margin: 0 2px; }
-.ts-closed-chip { display: inline-flex; align-items: center; gap: 4px; border: 1px solid rgba(127,127,127,.28); border-radius: 999px; background: rgba(127,127,127,.1); color: inherit; font: inherit; font-size:calc(var(--ts-fs, 12.5px) * 0.92); padding: 2px 8px; cursor: pointer; white-space: nowrap; flex: none; }
+.ts-closed-chip { display: inline-flex; align-items: center; gap: 4px; border: 1px solid rgba(127,127,127,.28); border-radius: 999px; background: rgba(127,127,127,.1); color: inherit; font: inherit; font-size:calc(var(--ts-fs, 13.5px) * 0.92); padding: 2px 8px; cursor: pointer; white-space: nowrap; flex: none; }
 .ts-closed-chip:hover { border-color: #4f8ef7; }
 /* ── 标题栏位置：顶部（默认）/ 左侧 / 右侧 ──────────────────────────
    为什么做这件事：顶部那整整一行（42px）拿掉后，省下的高度就是**一整行内容** ——
@@ -302,7 +303,7 @@ const DOCK_CSS = `
 .ts-dock[data-chrome="right"] .ts-tg-sep { width: 18px; height: 1px; margin: 3px 0; }
 /* 项目名竖排（横向只要 15px）：44px 的轨里横排一定被截成「受…」，竖排是唯一不截断的写法 */
 .ts-dock[data-chrome="left"] .ts-title-proj,
-.ts-dock[data-chrome="right"] .ts-title-proj { writing-mode: vertical-rl; font-size: calc(var(--ts-fs, 12.5px) * 1.06); letter-spacing: .18em; line-height: 1; max-height: 34vh; overflow: hidden; text-overflow: ellipsis; }
+.ts-dock[data-chrome="right"] .ts-title-proj { writing-mode: vertical-rl; font-size: calc(var(--ts-fs, 13.5px) * 1.06); letter-spacing: .18em; line-height: 1; max-height: 34vh; overflow: hidden; text-overflow: ellipsis; }
 /* 项目切换按钮只留图标：小箭头在 44px 里会把按钮撑出轨宽（被 overflow:hidden 裁掉） */
 .ts-dock[data-chrome="left"] .ts-title-switch .ts-title-caret,
 .ts-dock[data-chrome="right"] .ts-title-switch .ts-title-caret { display: none; }
@@ -377,14 +378,14 @@ body.ts-resizing { cursor: col-resize !important; user-select: none !important; 
 .ts-projsw-row[data-on] { border-color: rgba(79,142,247,.5); background: rgba(79,142,247,.12); }
 .ts-projsw-top { display: flex; align-items: center; gap: 6px; }
 .ts-projsw-name { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ts-projsw-cur { flex: none; margin-left: auto; color: #4f8ef7; font-size: calc(var(--ts-fs, 12.5px) * 0.8); }
-.ts-projsw-meta { color: var(--ts-fg-mute); font-size: calc(var(--ts-fs, 12.5px) * 0.82); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ts-projsw-cur { flex: none; margin-left: auto; color: #4f8ef7; font-size: calc(var(--ts-fs, 13.5px) * 0.8); }
+.ts-projsw-meta { color: var(--ts-fg-mute); font-size: calc(var(--ts-fs, 13.5px) * 0.82); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* 行首状态圆点：绿 = 有对话在跑，黄 = 有对话等你确认，灰 = 都闲着 */
 .ts-projsw-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: rgba(127,127,127,.55); }
 .ts-projsw-dot.is-run { background: #3fb950; box-shadow: 0 0 0 2px rgba(63,185,80,.20); }
 .ts-projsw-dot.is-wait { background: #f5c451; box-shadow: 0 0 0 2px rgba(245,196,81,.20); }
 /* 标签行：运行中 / 待确认 / 无进行中 + 更新时间 */
-.ts-projsw-tags { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: calc(var(--ts-fs, 12.5px) * 0.8); }
+.ts-projsw-tags { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: calc(var(--ts-fs, 13.5px) * 0.8); }
 .ts-projsw-tag { border-radius: 999px; padding: 1px 7px; border: 1px solid transparent; }
 .ts-projsw-tag.run { color: #7ee787; border-color: rgba(63,185,80,.45); background: rgba(63,185,80,.14); }
 .ts-projsw-tag.wait { color: #f5c451; border-color: rgba(245,196,81,.45); background: rgba(245,196,81,.14); }
@@ -393,19 +394,19 @@ body.ts-resizing { cursor: col-resize !important; user-select: none !important; 
 /* 有对话在跑的项目：整行左边加一条绿竖线，扫一眼就能分辨（用户要求） */
 .ts-projsw-row[data-busy] { box-shadow: inset 2px 0 0 0 #3fb950; }
 .ts-set-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 4px 2px; }
-.ts-set-title { font-size:calc(var(--ts-fs, 12.5px) * 0.88); font-weight: 600; color: var(--ts-fg-dim); letter-spacing: .02em; }
-.ts-set-hint { font-size:calc(var(--ts-fs, 12.5px) * 0.84); color: var(--ts-fg-mute); }
+.ts-set-title { font-size:calc(var(--ts-fs, 13.5px) * 0.88); font-weight: 600; color: var(--ts-fg-dim); letter-spacing: .02em; }
+.ts-set-hint { font-size:calc(var(--ts-fs, 13.5px) * 0.84); color: var(--ts-fg-mute); }
 .ts-set-grid { display: flex; flex-wrap: wrap; gap: 6px; padding: 2px 4px; }
 .ts-set-row { display: flex; align-items: center; gap: 8px; padding: 3px 4px; }
-.ts-set-k { flex: none; width: 62px; color: var(--ts-fg-dim); font-size:calc(var(--ts-fs, 12.5px) * 0.88); }
+.ts-set-k { flex: none; width: 62px; color: var(--ts-fg-dim); font-size:calc(var(--ts-fs, 13.5px) * 0.88); }
 .ts-set-seg { display: inline-flex; flex-wrap: wrap; gap: 4px; }
 /* 占满一整行、三枚等分（主题块用）：238px 面板里再排「标签 + 三枚」会换行 */
 .ts-set-seg--fill { display: flex; flex: 1; flex-wrap: nowrap; }
 .ts-set-seg--fill > .ts-set-opt { flex: 1; min-width: 0; padding: 2px 4px; white-space: nowrap; }
-.ts-set-opt { border: 1px solid rgba(127,127,127,.3); border-radius: 6px; background: rgba(127,127,127,.08); color: inherit; font: inherit; font-size:calc(var(--ts-fs, 12.5px) * 0.88); padding: 2px 9px; cursor: pointer; }
+.ts-set-opt { border: 1px solid rgba(127,127,127,.3); border-radius: 6px; background: rgba(127,127,127,.08); color: inherit; font: inherit; font-size:calc(var(--ts-fs, 13.5px) * 0.88); padding: 2px 9px; cursor: pointer; }
 .ts-set-opt:hover { border-color: rgba(127,127,127,.55); }
 .ts-set-opt[data-on] { color: #4f8ef7; border-color: rgba(79,142,247,.5); background: rgba(79,142,247,.15); }
-.ts-pop-all { border: 1px solid rgba(127,127,127,.3); border-radius: 6px; background: rgba(127,127,127,.1); color: inherit; font: inherit; font-size:calc(var(--ts-fs, 12.5px) * 0.92); padding: 2px 8px; cursor: pointer; }
+.ts-pop-all { border: 1px solid rgba(127,127,127,.3); border-radius: 6px; background: rgba(127,127,127,.1); color: inherit; font: inherit; font-size:calc(var(--ts-fs, 13.5px) * 0.92); padding: 2px 8px; cursor: pointer; }
 .ts-pop-all:hover { border-color: #4f8ef7; }
 /* 状态栏里的会话控件：与其它状态栏按钮同款字体/间距；图标内联对齐 */
 .ts-sb-btn .ts-sess-ico, .ts-sess-btn .ts-sess-ico, .ts-sess-new .ts-sess-ico { display: inline-flex; align-items: center; margin-right: 5px; vertical-align: middle; }
@@ -421,7 +422,7 @@ body.ts-resizing { cursor: col-resize !important; user-select: none !important; 
 /* 实时提示最多占状态栏一半（用户要求）：剩下的一半留给右侧会话/布局控件。 */
 .ts-statusbar .ts-sb-grow { flex: 0 1 50%; min-width: 0; }
 /* 一体化：状态栏不画上边线；左侧实时提示与右侧会话控件之间留出空白（用户反馈贴太近）。 */
-.ts-statusbar { grid-area: status; display: flex; align-items: center; gap: 10px; padding: 0 10px; font-size:calc(var(--ts-fs, 12.5px) * 0.92); color: var(--ts-fg-dim); overflow: hidden;
+.ts-statusbar { grid-area: status; display: flex; align-items: center; gap: 10px; padding: 0 10px; font-size:calc(var(--ts-fs, 13.5px) * 0.92); color: var(--ts-fg-dim); overflow: hidden;
   /* **真实占一行**（同 info_report 的 grid-template-rows: ... auto）：状态栏就是网格第三行，
      不是浮在内容之上的覆盖层 —— 旧版把这行塔成 0px 再把它 absolute 贴底，看着是悬浮了，
      但三个区域（主侧栏 / 编辑区面板区 / 辅助侧栏）的「脚跟」会被它盖住（用户反馈）。
@@ -438,7 +439,7 @@ body.ts-resizing { cursor: col-resize !important; user-select: none !important; 
 .ts-sb-group--right { margin-left: auto; }
 .ts-sb-item { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ts-sb-sep { width: 1px; height: 12px; background: rgba(127,127,127,.24); flex: none; }
-.ts-sb-btn { display: inline-flex; align-items: center; gap: 5px; border: 1px solid transparent; border-radius: 6px; background: 0 0; color: inherit; font: inherit; font-size:calc(var(--ts-fs, 12.5px) * 0.92); padding: 2px 7px; cursor: pointer; white-space: nowrap; }
+.ts-sb-btn { display: inline-flex; align-items: center; gap: 5px; border: 1px solid transparent; border-radius: 6px; background: 0 0; color: inherit; font: inherit; font-size:calc(var(--ts-fs, 13.5px) * 0.92); padding: 2px 7px; cursor: pointer; white-space: nowrap; }
 .ts-sb-btn:hover { background: rgba(127,127,127,.16); border-color: rgba(127,127,127,.28); }
 .ts-sb-btn[data-dirty] { color: #f5c451; border-color: rgba(245,158,11,.6); background: rgba(245,158,11,.14); }
 .ts-dock-pane { height: 100%; min-height: 0; display: flex; flex-direction: column; }
@@ -453,8 +454,8 @@ body.ts-resizing { cursor: col-resize !important; user-select: none !important; 
    dragover/drop，dockview 的落点浮层在 iframe 上方不显示（预览面板是全插件唯一的 iframe，
    落点浮层恰好总在它上方）；松手后的实际搬运自 dragend 兜底，不受影响。 */
 body.ts-dock-dragging iframe { pointer-events: none !important; }
-.ts-dock-empty { position: absolute; inset: 0; display: grid; place-items: center; color: var(--ts-fg-mute); font-size:calc(var(--ts-fs, 12.5px) * 1.04); }
-.ts-dock-watermark { color: var(--ts-fg-mute); font-size:calc(var(--ts-fs, 12.5px) * 0.96); }
+.ts-dock-empty { position: absolute; inset: 0; display: grid; place-items: center; color: var(--ts-fg-mute); font-size:calc(var(--ts-fs, 13.5px) * 1.04); }
+.ts-dock-watermark { color: var(--ts-fg-mute); font-size:calc(var(--ts-fs, 13.5px) * 0.96); }
 .ts-pop { position: fixed; z-index: 110; right: auto; min-width: 268px; max-height: 72vh; overflow: auto; border: 1px solid var(--ts-pop-line); border-radius: 10px; background: var(--ts-pop-bg); color: var(--ts-pop-fg); backdrop-filter: blur(8px); box-shadow: var(--ts-pop-shadow); padding: 6px; }
 /* 旧版 ⋯ / 皮肤两个浮层已并入 .ts-set（.ts-pop-* 的通用部分保留） */
 .ts-pop-item { display: flex; align-items: center; gap: 8px; padding: 4px 6px; border-radius: 7px; }
@@ -468,7 +469,7 @@ body.ts-dock-dragging iframe { pointer-events: none !important; }
 /* 设置面板里的窗口名：可点 = 跳到那个窗口（窄屏下会最大化） */
 .ts-pop-name--jump { border: 0; background: 0 0; color: inherit; font: inherit; padding: 0; cursor: pointer; text-align: left; }
 .ts-pop-name--jump:hover { color: #4f8ef7; text-decoration: underline; }
-.ts-pop-btn { display: flex; width: 100%; align-items: center; gap: 6px; border: 0; border-radius: 7px; background: 0 0; color: inherit; font: inherit; font-size:calc(var(--ts-fs, 12.5px) * 0.96); padding: 6px; cursor: pointer; text-align: left; }
+.ts-pop-btn { display: flex; width: 100%; align-items: center; gap: 6px; border: 0; border-radius: 7px; background: 0 0; color: inherit; font: inherit; font-size:calc(var(--ts-fs, 13.5px) * 0.96); padding: 6px; cursor: pointer; text-align: left; }
 .ts-pop-btn:hover { background: rgba(127,127,127,.14); }
 /* 皮肤格子（现在是设置面板里的一个区块） */
 /* 皮肤格子（设置面板里的一个区块）。
@@ -480,11 +481,11 @@ body.ts-dock-dragging iframe { pointer-events: none !important; }
    两列 → 一列的切换由**容器查询**（container-type:inline-size）驱动：
    面板被压窄（低分辨率 / 侧置标题栏 / 窄视口）时自动改成一列，
    而不是一律两列（用户反馈「低分辨率电脑里一行显示 2 个」）。 */
-.ts-skin-cell { flex: 1 1 46%; min-width: 0; height: 40px; border: 1px solid rgba(127,127,127,.32); border-radius: 7px; background: rgba(127,127,127,.08); color: var(--ts-fg); font: inherit; font-size:calc(var(--ts-fs, 12.5px) * 0.92); cursor: pointer; }
+.ts-skin-cell { flex: 1 1 46%; min-width: 0; height: 40px; border: 1px solid rgba(127,127,127,.32); border-radius: 7px; background: rgba(127,127,127,.08); color: var(--ts-fg); font: inherit; font-size:calc(var(--ts-fs, 13.5px) * 0.92); cursor: pointer; }
 .ts-skin-cell[data-on] { border-color: #4f8ef7; box-shadow: inset 0 0 0 1px rgba(79,142,247,.5); }
 .dv-intel { background: transparent; }
 .dv-intel .dv-dockview, .dv-intel .dv-groupview { background: transparent; border-radius: 0; }
-.dv-intel .dv-tabs-and-actions-container { background: transparent !important; height: 33px; font-size:var(--ts-fs, 12.5px); }
+.dv-intel .dv-tabs-and-actions-container { background: transparent !important; height: 33px; font-size:var(--ts-fs, 13.5px); }
 .dv-intel .dv-tab { background: transparent !important; border-radius: 0 !important; opacity: .5; transition: opacity .12s; }
 /* 激活的标签**不画底色**（用户反馈「标题行区域还有背景色」）：只把图标提亮。 */
 .dv-intel .dv-tab.dv-active-tab { background: transparent !important; color: var(--ts-fg) !important; opacity: 1; }
@@ -504,10 +505,10 @@ body.ts-dock-dragging iframe { pointer-events: none !important; }
   width: auto; min-width: 13px; height: 13px; padding: 0 3px; border-radius: 7px;
   display: grid; place-items: center;
   background: #3fb950; color: #04140a;
-  font-size: calc(var(--ts-fs, 12.5px) * 0.72); font-weight: 700; line-height: 1;
+  font-size: calc(var(--ts-fs, 13.5px) * 0.72); font-weight: 700; line-height: 1;
 }
 /* 协作对话标题行里的「全部停止」与结果提示 */
-.ts-talk-note { font-size: calc(var(--ts-fs, 12.5px) * 0.86); color: #7ee787; white-space: nowrap; }
+.ts-talk-note { font-size: calc(var(--ts-fs, 13.5px) * 0.86); color: #7ee787; white-space: nowrap; }
 
 .dv-intel .dv-separator, .dv-intel .dv-sash { border-color: transparent !important; }
 .dv-intel .dv-sash.dv-active-sash { background: #4f8ef7 !important; }
@@ -523,7 +524,7 @@ body.ts-dock-dragging iframe { pointer-events: none !important; }
   background: var(--ts-pop-bg); color: var(--ts-pop-fg);
   border: 1px solid var(--ts-pop-line);
   box-shadow: var(--ts-pop-shadow); backdrop-filter: blur(8px);
-  font-size: calc(var(--ts-fs, 12.5px) * 0.96);
+  font-size: calc(var(--ts-fs, 13.5px) * 0.96);
   font-family: var(--ts-font, inherit);
 }
 .dv-context-menu[data-ts-hoisted="1"] .dv-context-menu-item {
@@ -571,7 +572,7 @@ body.ts-dock-dragging iframe { pointer-events: none !important; }
   .ts-dock .ts-resizer { display: none !important; }
   /* 标题行：字号收一档、按钮放大到能点中（≥ 32px） */
   .ts-titlebar { padding: 0 6px; gap: 6px; height: 46px; }
-  .ts-title-proj { font-size: calc(var(--ts-fs, 12.5px) * 1.12); }
+  .ts-title-proj { font-size: calc(var(--ts-fs, 13.5px) * 1.12); }
   .ts-title-switch { padding: 5px 7px; }
   .ts-tg { width: 34px; height: 32px; }
   .ts-tg-badge { top: 0; right: 0; }
@@ -631,14 +632,6 @@ function readInitialHiddenRegions(projectId: string): Region[] {
 
 
 /* readSkin/SKIN_KEY 已搬到 skins.ts（工作台与项目中心共用同一套皮肤目录） */
-/** 界面字号档位（真的改字号，不是只看画）。 */
-const FONT_LEVELS = [
-  { id: 's', label: '小', size: 11.5 },
-  { id: 'm', label: '标准', size: 12.5 },
-  { id: 'l', label: '大', size: 14 },
-  { id: 'xl', label: '特大', size: 15.5 },
-] as const
-type FontId = (typeof FONT_LEVELS)[number]['id']
 /** 字族：默认（跟宿主）/ 黑体（无衬线）/ 等宽。 */
 const FONT_FAMILIES = [
   { id: 'default', label: '默认', css: '' },
@@ -671,9 +664,9 @@ function writeClosed(projectId: string, ids: Iterable<string>): void {
 function readFont(): FontId {
   try {
     const raw = window.localStorage.getItem(FONT_KEY)
-    return (FONT_LEVELS.find((f) => f.id === raw)?.id ?? 'm') as FontId
+    return (FONT_LEVELS.find((f) => f.id === raw)?.id ?? DEFAULT_FONT_ID) as FontId
   } catch {
-    return 'm'
+    return DEFAULT_FONT_ID
   }
 }
 function readFontFamily(): FontFamilyId {
@@ -687,12 +680,12 @@ function readFontFamily(): FontFamilyId {
 
 /**
  * 字号/字族写到 `:root`：插件所有视图（项目中心 + 工作台）共用一套变量，
- * 各条 CSS 用 `calc(var(--ts-fs, 12.5px) * 比例)` 取尺寸。
+ * 各条 CSS 用 `calc(var(--ts-fs, 13.5px) * 比例)` 取尺寸。
  * 写 `:root` 而不是写 .ts-dock：项目中心不在 .ts-dock 里，也得跟着变。
  */
 function applyFont(font: FontId, family: FontFamilyId): void {
   if (typeof document === 'undefined') return
-  const size = FONT_LEVELS.find((f) => f.id === font)?.size ?? 12.5
+  const size = fontSizeOf(font)
   const fam = FONT_FAMILIES.find((f) => f.id === family)?.css ?? ''
   const root = document.documentElement.style
   root.setProperty('--ts-fs', `${size}px`)

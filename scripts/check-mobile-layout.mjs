@@ -118,7 +118,7 @@ const sheetRows = Array.from({ length: 18 }, (_, i) => `
 const innerPage = (width, height) => `<!doctype html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>mobile inner</title>
 <style>
-:root { --ts-fs: 12.5px; --ts-fg: #e6e8ec; --ts-fg-mute: #94a3b8; --ts-pop-fg: #e6e8ec; --ts-pop-fg-mute: #94a3b8;
+:root { --ts-fs: 13.5px; --ts-fg: #e6e8ec; --ts-fg-mute: #94a3b8; --ts-pop-fg: #e6e8ec; --ts-pop-fg-mute: #94a3b8;
         --ts-pop-bg: #22262e; --ts-pop-line: #3a4049; --ts-pop-shadow: 0 8px 30px rgba(0,0,0,.5); }
 html, body { margin: 0; background: #14161b; color: var(--ts-fg); font-family: -apple-system, system-ui, sans-serif; }
 #wrap { width: ${width}px; height: ${height}px; display: flex; }
@@ -318,11 +318,15 @@ if (!browser) {
     check(`${width}×${height}px：历史会话浮层不越出视口（左缘不被切）`,
       d.popLeft >= 0 && d.popRight <= d.vw + 0.5,
       `pop left=${d.popLeft} right=${d.popRight} vw=${d.vw}`)
-    check(`${width}×${height}px：呼吸灯面板是紧凑浮层（宽度 ≤ SHEET_MAX_W，两侧 12px 留白）`,
+    // 字号上调后下限涨到约 297：320 视口放不下 12px 留白，按实现让位到 8px。
+    const pulseMargin = width - panelWidth.SHEET_MARGIN_X * 2 < panelWidth.POP_W_MIN
+      ? 8
+      : panelWidth.SHEET_MARGIN_X
+    check(`${width}×${height}px：呼吸灯面板是紧凑浮层（宽度 ≤ SHEET_MAX_W，放不下时限边距让位）`,
       d.pulse.width <= panelWidth.SHEET_MAX_W + 0.5 &&
-      d.pulse.left >= panelWidth.SHEET_MARGIN_X - 0.5 &&
-      d.pulse.right <= width - panelWidth.SHEET_MARGIN_X + 0.5,
-      `left=${d.pulse.left} right=${d.pulse.right} width=${d.pulse.width} (max ${panelWidth.SHEET_MAX_W})`)
+      d.pulse.left >= pulseMargin - 0.5 &&
+      d.pulse.right <= width - pulseMargin + 0.5,
+      `left=${d.pulse.left} right=${d.pulse.right} width=${d.pulse.width} margin=${pulseMargin} (max ${panelWidth.SHEET_MAX_W})`)
     check(`${width}×${height}px：设置行的单位「秒」在卡片内（最窄宽不再裁字）`,
       d.pulse.numUnitOverflow !== null && d.pulse.numUnitOverflow <= 0.5,
       `单位右缘超出卡片 ${d.pulse.numUnitOverflow}px`)
@@ -332,9 +336,10 @@ if (!browser) {
     check(`${width}×${height}px：呼吸灯面板高度不超过 70vh（上限按真实视口算）`,
       d.pulse.height <= Math.round(height * 0.7) + 2,
       `height=${d.pulse.height}（上限 ${Math.round(height * 0.7)} + 边框）`)
-    check(`${width}×${height}px：手机面板行高压实（设置行 ≤38、清单行 ≤48）`,
+    check(`${width}×${height}px：手机面板行高压实（设置行 ≤38、清单行 ≤54）`,
       d.pulse.boxRowH > 0 && d.pulse.boxRowH <= 38 &&
-      d.pulse.listRowH > 0 && d.pulse.listRowH <= 48,
+      // 字号整体上调后清单行约 51px（仍高于 44px 触点下限）；阈值按 13.5 档放宽。
+      d.pulse.listRowH > 0 && d.pulse.listRowH <= 54,
       `boxRow=${d.pulse.boxRowH} listRow=${d.pulse.listRowH}`)
     check(`${width}×${height}px：设置区不再吃掉半屏（≤340px，矮屏可自滚）`,
       d.pulse.settingsH > 0 && d.pulse.settingsH <= 340, `settings=${d.pulse.settingsH}`)

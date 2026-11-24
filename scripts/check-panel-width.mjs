@@ -131,11 +131,22 @@ check('低于下限时两种行夹出同一个面板宽度（面板宽度是全�
     check('手机：宽标题封顶在 SHEET_MAX_W（比桌面更紧）',
       long.width === Math.min(m.SHEET_MAX_W, 390 - m.SHEET_MARGIN_X * 2) &&
       m.SHEET_MAX_W < m.POP_W_MAX, `${long.width}px (max ${m.SHEET_MAX_W}, desktop ${m.POP_W_MAX})`)
-    check('窄屏：宽度不会超过视口（不溢出）',
-      small.left >= m.SHEET_MARGIN_X && small.left + small.width <= 320, `${small.left}+${small.width}`)
+    check('窄屏：宽度不会超过视口（放不下下限时边距让位到 8px）',
+      small.left >= (320 - m.SHEET_MARGIN_X * 2 < m.POP_W_MIN ? 8 : m.SHEET_MARGIN_X)
+      && small.left + small.width <= 320, `${small.left}+${small.width}`)
     check('宽屏：宽度封顶 SHEET_MAX_W 且居中',
       pad.width === m.SHEET_MAX_W && pad.left === Math.round((834 - m.SHEET_MAX_W) / 2),
       `${pad.left}/${pad.width}`)
+    // —— 字号档：最窄宽度必须跟着 --ts-fs 变，否则调大字号后「秒」又会被裁 ——
+    check('字号调大 → 设置区最窄宽度跟着变大',
+      m.settingsMinWidth(17) > m.settingsMinWidth(13.5) + 8,
+      `${Math.round(m.settingsMinWidth(13.5))} → ${Math.round(m.settingsMinWidth(17))}`)
+    check('字号调大 → 手机面板让出硬下限（不被 SHEET_MAX_W 压回）',
+      m.sheetBox(390, [], 17).width >= Math.ceil(m.settingsMinWidth(17)),
+      `${m.sheetBox(390, [], 17).width} vs need ${Math.ceil(m.settingsMinWidth(17))}`)
+    check('clamp 在字号很大时也不压到最窄宽度以下',
+      m.clampPanelWidth(0, 1200, 17) >= Math.ceil(m.settingsMinWidth(17)),
+      `${m.clampPanelWidth(0, 1200, 17)} vs need ${Math.ceil(m.settingsMinWidth(17))}`)
     check('宽度总是整数且为正',
       Number.isInteger(phone.width) && Number.isInteger(phone.left) && phone.width > 0)
     const tiny = m.sheetBox(280)

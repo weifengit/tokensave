@@ -25,6 +25,7 @@ const check = (label, ok, detail = '') => {
 
 const panes = readFileSync(join(root, 'client/src/panel/desk-panes.ts'), 'utf8')
 const dock = readFileSync(join(root, 'client/src/panel/DeskDock.tsx'), 'utf8')
+const fontLevels = readFileSync(join(root, 'client/src/panel/font-levels.ts'), 'utf8')
 const composerDock = readFileSync(join(root, 'client/src/panel/composer-dock.ts'), 'utf8')
 const chatView = readFileSync(join(root, 'client/src/panel/chat-view.ts'), 'utf8')
 const mainChat = readFileSync(join(root, 'client/src/panel/MainChat.tsx'), 'utf8')
@@ -310,10 +311,16 @@ check('右上角「设置」浮层分五块：窗口 · 标题栏 · 主题 · �
   /data-desk-set-block="font"/.test(dock) &&
   /data-desk-font=\{f\.id\}/.test(dock) &&
   /data-desk-font-family=\{f\.id\}/.test(dock))
-check('字体调控：字号档位 + 字族写到 :root 变量（各条 CSS 用 var(--ts-fs)）',
-  /const FONT_LEVELS = \[/.test(dock) && /const FONT_FAMILIES = \[/.test(dock) &&
+check('字体调控：字号档位（4 档整体上调）+ 字族写到 :root 变量（各条 CSS 用 var(--ts-fs)）',
+  /import \{ FONT_LEVELS, DEFAULT_FONT_ID, fontSizeOf, type FontId \} from '\.\/font-levels'/.test(dock) &&
+  /export const FONT_LEVELS = \[/.test(fontLevels) &&
+  // 本次 4 档整体 +1px：小 12.5 / 标准 13.5 / 大 15 / 特大 16.5
+  /size: 12\.5/.test(fontLevels) && /size: 13\.5/.test(fontLevels) &&
+  /size: 15\b/.test(fontLevels) && /size: 16\.5/.test(fontLevels) &&
+  /const FONT_FAMILIES = \[/.test(dock) &&
   /const FONT_KEY = 'tokensave:desk-font\.v1'/.test(dock) &&
   /function applyFont\(font: FontId, family: FontFamilyId\): void \{/.test(dock) &&
+  /const size = fontSizeOf\(font\)/.test(dock) &&
   /root\.setProperty\('--ts-fs'/.test(dock) && /root\.setProperty\('--ts-font'/.test(dock) &&
   /font-family:var\(--ts-font, inherit\)/.test(dock))
 check('项目切换面板：列出全部项目 + 标注哪些项目有进行中的对话',

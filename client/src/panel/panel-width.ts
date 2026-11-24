@@ -10,9 +10,23 @@
  *      `clampPanelWidth` 里又加了一遍 → 每行凭空多 150px，很快又顶到上限。
  *      现在**只在一处**加装饰（见 `rowOuterWidth`），clamp 只负责夹紧。
  */
+import { DEFAULT_FONT_SIZE } from './font-levels'
 
 /** 外框里一行的水平开销：.ts-sound-body 12 + .ts-box 边框 1 + .ts-box-row 内距 9，两侧 */
 const CARD_ROW_CHROME_W = 2 * (12 + 1 + 9)
+
+/**
+ * 当前界面字号（`--ts-fs`，由设置里的 4 档写到 :root）。
+ *
+ * 面板宽度必须跟着字号走：字号调大后 label / 单位字变宽，若仍按默认档量宽，
+ * 「冷却基数 [20] 秒」的末字又会被卡片裁掉。node 自检（没有 DOM）退到默认档。
+ */
+export function currentFontSize(): number {
+  if (typeof document === 'undefined') return DEFAULT_FONT_SIZE
+  const raw = getComputedStyle(document.documentElement).getPropertyValue('--ts-fs').trim()
+  const px = Number.parseFloat(raw)
+  return Number.isFinite(px) && px >= 8 ? px : DEFAULT_FONT_SIZE
+}
 /** 一个开关 / 数值输入的宽度、行内间隔 */
 const SWITCH_W = 28
 const NUM_W = 46
@@ -44,23 +58,37 @@ let measureCtx: CanvasRenderingContext2D | null | undefined
  * 这两行是**固定控件**（开关、输入框都不缩），不像清单行可以靠省略号收编 ——
  * 所以面板最窄宽度必须不小于它们，否则输入框会被挤出外框。
  * 面板宽度是跟着清单最长那行走的，清单很短时就会退到这个下限。
+ *
+ * 随界面字号缩放（fs 缺省读当前 --ts-fs）；控件宽度与行内间距是固定 px。
  */
-export const SETTINGS_MIN_W = Math.max(
-  // 第二行：分类 [开关] 截断 [开关] 瞬时 [开关]
-  textWidth('分类', 10.5) + GAP_W_SMALL + SWITCH_W
-    + GAP_W_SMALL + textWidth('截断', 10.5) + GAP_W_SMALL + SWITCH_W
-    + GAP_W_SMALL + textWidth('瞬时', 10.5) + GAP_W_SMALL + SWITCH_W,
-  // 第三行：发送上限 [数字] 次 ⋯ 冷却基数 [数字] 秒
-  textWidth('发送上限', 10.5) + GAP_W_SMALL + NUM_W + GAP_W_SMALL + textWidth('次', 10)
-    + PAIR_GAP_W
-    + textWidth('冷却基数', 10.5) + GAP_W_SMALL + NUM_W + GAP_W_SMALL + textWidth('秒', 10),
-) + CARD_ROW_CHROME_W + SETTINGS_SLACK_W
+export function settingsMinWidth(fs: number = currentFontSize()): number {
+  const labelPx = fs * 0.84
+  const unitPx = fs * 0.8
+  return Math.max(
+    // 第二行：分类 [开关] 截断 [开关] 瞬时 [开关]
+    textWidth('分类', labelPx) + GAP_W_SMALL + SWITCH_W
+      + GAP_W_SMALL + textWidth('截断', labelPx) + GAP_W_SMALL + SWITCH_W
+      + GAP_W_SMALL + textWidth('瞬时', labelPx) + GAP_W_SMALL + SWITCH_W,
+    // 第三行：发送上限 [数字] 次 ⋯ 冷却基数 [数字] 秒
+    textWidth('发送上限', labelPx) + GAP_W_SMALL + NUM_W + GAP_W_SMALL + textWidth('次', unitPx)
+      + PAIR_GAP_W
+      + textWidth('冷却基数', labelPx) + GAP_W_SMALL + NUM_W + GAP_W_SMALL + textWidth('秒', unitPx),
+  ) + CARD_ROW_CHROME_W + SETTINGS_SLACK_W
+}
+
+/** 默认档的最窄宽度（自检与首帧量宽的参考值）。 */
+export const SETTINGS_MIN_W = settingsMinWidth(DEFAULT_FONT_SIZE)
 /**
- * 面板最窄：取「设置行必须放得下」的量。
- * 不再写死一个数字 —— 改标签文案 / 控件宽度时它会自己跟着变，
+ * 面板最窄：取「设置行必须放得下」的量（随当前字号）。
+ * 不再写死一个数字 —— 改标签文案 / 控件宽度 / 字号档时它会自己跟着变，
  * 不会出现“改了字面板却还是老宽度、输入框被挤出去”那种事。
  */
-export const POP_W_MIN = Math.max(236, Math.ceil(SETTINGS_MIN_W))
+export function panelWidthMin(fs: number = currentFontSize()): number {
+  return Math.max(236, Math.ceil(settingsMinWidth(fs)))
+}
+
+/** 默认档的最窄宽度（自检与无 DOM 环境用）。 */
+export const POP_W_MIN = panelWidthMin(DEFAULT_FONT_SIZE)
 // —— 宽度区间（唯一的真值，桌面与手机都从这里取） ——
 /**
  * 面板最宽。比 440 收窄了不少 —— 清单是扫一眼用的，
@@ -122,26 +150,26 @@ export interface WidthRow {
  * 一行所需的**内容**宽度（不含面板内边距）：标题行与标签行取较宽者。
  * 只算文本与胶囊本身，装饰由 `rowOuterWidth` 加。
  */
-export function rowContentWidth(r: WidthRow): number {
-  const titleW = textWidth(r.title, 12.5)
-  const subW = r.sub ? textWidth(r.sub, 10.5) + PILL_CHROME_W : 0
-  const reasonW = r.shortReason ? textWidth(r.shortReason, 10) + PILL_CHROME_W : 0
+export function rowContentWidth(r: WidthRow, fs: number = currentFontSize()): number {
+  const titleW = textWidth(r.title, fs)
+  const subW = r.sub ? textWidth(r.sub, fs * 0.84) + PILL_CHROME_W : 0
+  const reasonW = r.shortReason ? textWidth(r.shortReason, fs * 0.8) + PILL_CHROME_W : 0
   const tagsW = subW + reasonW + (subW > 0 && reasonW > 0 ? TAGS_GAP_W : 0)
   // 标题与标签各占一行 → 取较宽者
   return Math.max(titleW, tagsW)
 }
 
 /** 一行的整体外宽（内容 + 行内装饰 + 面板内边距） */
-export function rowOuterWidth(r: WidthRow): number {
+export function rowOuterWidth(r: WidthRow, fs: number = currentFontSize()): number {
   // 操作区宽度与 canContinue 无关：三个槽位恒定占位（见 ACTIONS_W 的注释）
-  return rowContentWidth(r) + ROW_PAD_W + ICON_W + ROW_GAP_W + ACTIONS_W + PANEL_PAD_W
+  return rowContentWidth(r, fs) + ROW_PAD_W + ICON_W + ROW_GAP_W + ACTIONS_W + PANEL_PAD_W
 }
 
 /** 清单里最长那一行需要多宽（空清单 → 0） */
-export function widestRowWidth(rows: readonly WidthRow[]): number {
+export function widestRowWidth(rows: readonly WidthRow[], fs: number = currentFontSize()): number {
   let widest = 0
   for (const r of rows) {
-    const w = rowOuterWidth(r)
+    const w = rowOuterWidth(r, fs)
     if (w > widest) widest = w
   }
   return widest
@@ -155,10 +183,12 @@ export function widestRowWidth(rows: readonly WidthRow[]): number {
  * 可用空间比下限还小时下限让位（`lower = min(MIN, upper)`）——
  * 否则窄窗口下会返回 MIN，面板直接溢出到窗口外。
  */
-export function clampPanelWidth(want: number, avail: number): number {
+export function clampPanelWidth(want: number, avail: number, fs: number = currentFontSize()): number {
   const room = Number.isFinite(avail) ? Math.max(0, avail) : POP_W_MAX
-  const upper = Math.min(POP_W_MAX, room)
-  const lower = Math.min(POP_W_MIN, upper)
+  // 需要的最小宽随字号变；放不下时下限让位，但上限绝不压到下限以下。
+  const need = Math.min(panelWidthMin(fs), room)
+  const upper = Math.max(need, Math.min(POP_W_MAX, room))
+  const lower = Math.min(need, upper)
   const w = Number.isFinite(want) ? want : 0
   return Math.round(Math.max(lower, Math.min(upper, w)))
 }
@@ -179,12 +209,13 @@ export function clampPanelWidth(want: number, avail: number): number {
  */
 export const SHEET_MARGIN_X = 12
 /* 手机摆法的宽度上限：比桌面（POP_W_MAX）再小一档。340 时手机上接近铺满（393 屏占 87%），
-   用户反馈「太大太宽」；300 仍装得下三个动作槽位与一行省略号标题，视觉上留出浮层感。 */
-export const SHEET_MAX_W = 300
+   用户反馈「太大太宽」；字号整体上调后下限涨到约 297，300 会压住设置区，取 320（393 屏约占 81%）
+   仍留出浮层感；字号档更大时以 panelWidthMin 为硬下限。 */
+export const SHEET_MAX_W = 320
 
 /** 锚点右侧放不下最窄面板 → 该用手机摆法（贴视口而不是贴侧边栏右缘） */
-export function needsSheetLayout(sideSpace: number): boolean {
-  return !(sideSpace >= POP_W_MIN)
+export function needsSheetLayout(sideSpace: number, fs: number = currentFontSize()): boolean {
+  return !(sideSpace >= panelWidthMin(fs))
 }
 
 /**
@@ -197,18 +228,21 @@ export function needsSheetLayout(sideSpace: number): boolean {
 export function sheetBox(
   viewportW: number,
   rows: readonly WidthRow[] = [],
+  fs: number = currentFontSize(),
 ): { left: number; width: number } {
   const vw = Number.isFinite(viewportW) ? viewportW : 390
+  const need = panelWidthMin(fs)
   const room = Math.max(0, vw - SHEET_MARGIN_X * 2)
-  if (room < POP_W_MIN) {
+  if (room < need) {
     const width = Math.round(Math.max(0, vw - 16))
     return { left: Math.max(8, Math.round((vw - width) / 2)), width }
   }
-  const want = rows.length === 0 ? 0 : widestRowWidth(rows)
-  // 手机摆法同样受 [POP_W_MIN, SHEET_MAX_W] 约束：
-  // 下限先于上限生效，避免设置区（尤其「冷却基数 [20] 秒」）被裁。
-  const upper = Math.min(SHEET_MAX_W, room)
-  const lower = Math.min(POP_W_MIN, upper)
+  const want = rows.length === 0 ? 0 : widestRowWidth(rows, fs)
+  // 手机摆法同样受 [panelWidthMin(fs), SHEET_MAX_W] 约束：
+  // 字号调大时硬下限可能超过 SHEET_MAX_W，此时以上限让位于下限。
+  const cap = Math.max(SHEET_MAX_W, need)
+  const upper = Math.min(cap, room)
+  const lower = Math.min(need, upper)
   const width = Math.round(Math.max(lower, Math.min(upper, want)))
   return { left: Math.max(SHEET_MARGIN_X, Math.round((vw - width) / 2)), width }
 }
@@ -251,7 +285,7 @@ export function textWidth(text: string, px: number, weight = 400): number {
  * @param rows - 当前清单（空清单 → 取下限，面板保持窄）
  * @param left - 面板左缘（从侧边栏右缘算起），px
  */
-export function panelWidthFor(rows: readonly WidthRow[], left: number): number {
+export function panelWidthFor(rows: readonly WidthRow[], left: number, fs: number = currentFontSize()): number {
   const avail = (typeof window === 'undefined' ? 1280 : window.innerWidth) - left - 12
-  return clampPanelWidth(rows.length === 0 ? 0 : widestRowWidth(rows), avail)
+  return clampPanelWidth(rows.length === 0 ? 0 : widestRowWidth(rows, fs), avail, fs)
 }

@@ -72,19 +72,25 @@ check('按钮点击不冒泡（不触发外层折叠/跳转）',
 const btn = block('.ts-copy-btn')
 check('按钮常显（display 不是 none）',
   /display:inline-flex/.test(btn) && !/display:none/.test(btn))
-check('去掉背景色（background:transparent）',
-  /background:transparent/.test(btn))
-check('去掉边框',
-  /border:none/.test(btn))
-check('与时间同字号（同一个 --ts-fs 系数 0.84）',
-  /font-size:calc\(var\(--ts-fs, 12\.5px\) \* 0\.84\)/.test(btn) &&
-  /\.ts-msg-time \{[^}]*font-size:calc\(var\(--ts-fs, 12\.5px\) \* 0\.84\)/.test(styles))
-check('与时间的间距拉大到 10px',
-  /margin-left:10px/.test(btn))
+check('无边框；悬停给淡底（可点反馈）',
+  /border:none/.test(btn) && /background:rgba\(127,127,127,\.18\)/.test(styles))
+check('时间与复制按钮整体放大（时间 0.96 档、复制 1.0 档）',
+  /font-size:calc\(var\(--ts-fs, 13\.5px\) \* 1\.0\)/.test(btn) &&
+  /\.ts-msg-time \{[^}]*font-size:calc\(var\(--ts-fs, 13\.5px\) \* 0\.96\)/.test(styles))
+check('按钮加 3px 内距（命中面积不再只有图标大小）',
+  /padding:3px 5px/.test(btn))
+check('与时间的间距收到 8px',
+  /margin-left:8px/.test(btn))
 check('图标尺寸跟字号走，不写死 px',
   /width:1em; height:1em/.test(block('.ts-copy-btn svg')))
-check('悬停只提不透明度，不加底色',
-  /\.ts-copy-btn:hover[^{]*\{[^}]*opacity:1[^}]*background:transparent/.test(styles))
+check('悬停提不透明度 + 淡底',
+  /\.ts-copy-btn:hover[^{]*\{[^}]*opacity:1[^}]*background:rgba/.test(styles))
+check('时间/复制向屏幕中心内移（user 右 14 / assistant 左 14）',
+  /padding-right:14px/.test(block('.ts-msg-block-user .ts-msg-time')) &&
+  /padding-left:14px/.test(block('.ts-msg-block-assistant .ts-msg-time')))
+check('正文宽度把手完全移到内容列外侧（-9px），不再压住复制按钮',
+  /- 9px/.test(block('.ts-chat-w--left')) && /- 9px/.test(block('.ts-chat-w--right')) &&
+  /width:9px/.test(block('.ts-chat-w')))
 
 // —— 根因 4：容器 opacity 会把按钮一起乘半（0.5 × 0.5 = 0.25，等于看不见）——
 const timeBlock = block('.ts-msg-time')
