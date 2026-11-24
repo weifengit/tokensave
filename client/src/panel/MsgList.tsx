@@ -7,6 +7,8 @@
  *     - 上下文注入       → 折叠成一行「上下文注入 ▸」，点开才看正文（见 InjectionRow）
  *     - 其余（中间过程） → 折叠成一行「过程 N 步 · 工具 M 次」，点开才看细节
  *     - 该轮**最后一条** assistant 文本 → 视为最终回答，Markdown 渲染并展开
+ *     - 模型请求重试     → 独立蓝色提示行（第几次/上限 + 倒计时 + 失败原因），
+ *                          不进「过程」折叠（运行中要能一眼看到是否卡在重试）
  *   这样工具调用与中间过程不再一股脑铺满界面，与「对话」里的观感一致。
  *
  * 注入消息（运行时上下文快照 / 技能目录 system-reminder 等）事件类型同为
@@ -18,7 +20,7 @@
  * 拉一页更早的历史（见 MainChat 的 onLoadOlder），并在内容变高后把视口钉回原处。
  */
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import type { StreamMsg } from '../session-subscribe'
+import type { ModelRetryNotice, StreamMsg } from '../session-subscribe'
 import { RichText, stripMarkdown } from './RichText'
 import type { ChatView } from './chat-view'
 import { ChangesCard } from './changes-card'
@@ -334,6 +336,8 @@ interface Turn {
   injects: StreamMsg[]
   /** 本轮异常结束的提示（turn/end 的 reason / agent/error）；正常结束为 null */
   notice: StreamMsg | null
+  /** 本轮的模型请求重试链（llm/retry 聚合，恒显在过程折叠外，便于跟进） */
+  retries: StreamMsg[]
   /** 本轮被编辑的文件（write/edit/str_replace_editor，按出现顺序去重） */
   edits: string[]
   /**
@@ -356,6 +360,7 @@ function splitTurn(turn: StreamMsg[]): Turn {
   const rest: StreamMsg[] = []
   const queued: StreamMsg[] = []
   let notice: StreamMsg | null = null
+  const retries: StreamMsg[] = []
   const edits: string[] = []
   // 变更档案：宿主每轮结束发一条 workspace/changes（可能要等轮结束后才到），
   // 取本轮**最后**一条的 seq——同一轮重跑/补充时以最新档案为准。
@@ -368,6 +373,9 @@ function splitTurn(turn: StreamMsg[]): Turn {
     // 异常结局单独收口：它既不是用户消息，也不该被埋进「过程」折叠里——
     // 用户必须一眼看到「这轮挂了」（以前 turn/end 被丢弃，工作台看不出来）。
     if (m.notice) { notice = m; continue }
+    // 重试链也不埋进「过程」：宿主原生「对话」会把重试当实时提醒显示，
+    // 折进过程后用户只能看到「过程 N 步」，无法判断是不是卡在重试。
+    if (m.retry) { retries.push(m); continue }
     // 文件编辑标记不进过程折叠，也不进任何气泡：只按轮收集，轮末一行报告
     if (m.kind === 'file-edit' && m.editPath) {
       if (!edits.includes(m.editPath)) edits.push(m.editPath)
@@ -394,7 +402,7 @@ function splitTurn(turn: StreamMsg[]): Turn {
     }
   }
   const proc = rest.filter((m) => m !== answer)
-  return { users, injects, proc, answer, notice, queued, edits, changesSeq }
+  return { users, injects, proc, answer, notice, queued, edits, changesSeq, retries }
 }
 
 interface MsgListProps {
@@ -466,6 +474,73 @@ function TurnNoticeRow({ notice }: { notice: NonNullable<StreamMsg['notice']> })
       {open
         ? <div className="ts-turn-notice-body"><RichText text={notice.message} /></div>
         : <div className="ts-turn-notice-preview">{oneLine(notice.message)}</div>}
+    </div>
+  )
+}
+
+/** 失败码 → 人话（与宿主原生「对话」tab 的 failureMessage 同口径的常见项）。 */
+function retryFailureText(retry: ModelRetryNotice): string {
+  switch (retry.failureCode) {
+    case 'AUTH': return 'API 密钥无效'
+    case 'QUOTA':
+    case 'ACCOUNT_QUOTA': return '账号额度不足'
+    default: return retry.failureMessage || '请求失败'
+  }
+}
+
+/**
+ * 模型请求重试行（对齐宿主原生「对话」tab 的 model-retry 节点）。
+ *
+ * 为什么独立成行、且不放进「过程」折叠：重试是运行中的实时状态，
+ * 用户要能直接看到「第几次 / 还有几秒 / 为什么失败」，折起来就失去提醒意义。
+ * 倒计时从**首次渲染**起算（宿主事件时间与本机时钟可能不同源，与宿主同一口径）。
+ */
+function ModelRetryRow({ retry }: { retry: ModelRetryNotice }) {
+  const [open, setOpen] = useState(false)
+  const active = retry.state === 'scheduled'
+  const deadline = useMemo(() => Date.now() + retry.delayMs, [retry.retryId, retry.delayMs])
+  const [seconds, setSeconds] = useState(() => Math.max(1, Math.ceil(retry.delayMs / 1000)))
+  useEffect(() => {
+    if (!active) return
+    const tick = () => {
+      const left = Math.max(1, Math.ceil((deadline - Date.now()) / 1000))
+      setSeconds(left)
+      return left
+    }
+    if (tick() === 1) return
+    const timer = window.setInterval(() => {
+      if (tick() === 1) window.clearInterval(timer)
+    }, 250)
+    return () => window.clearInterval(timer)
+  }, [active, deadline])
+  const label = active
+    ? '正在重试模型请求'
+    : retry.state === 'cancelled'
+      ? '模型请求重试已取消'
+      : '已重试模型请求'
+  const maximum = retry.maxRetries === undefined ? '∞' : retry.maxRetries
+  const shownSeconds = active ? seconds : Math.max(1, Math.ceil(retry.delayMs / 1000))
+  return (
+    <div className={`ts-retry-row${active ? ' is-active' : ''}`}>
+      <button
+        type="button"
+        className="ts-retry-head"
+        onClick={() => setOpen((v) => !v)}
+        title={open ? '收起重试详情' : '展开重试详情（延迟 / 失败原因）'}
+        aria-expanded={open}
+      >
+        <span className="ts-retry-dot" aria-hidden="true" />
+        <span className="ts-retry-text" role="status">
+          {label}（{retry.retry}/{maximum}） · {shownSeconds}s
+        </span>
+        <span className="ts-retry-caret" aria-hidden="true">{open ? '▴' : '▾'}</span>
+      </button>
+      {open && (
+        <div className="ts-retry-detail">
+          <div><span className="ts-retry-key">重试延迟：</span>{Math.round(retry.delayMs)} 毫秒</div>
+          <div><span className="ts-retry-key">失败原因：</span>{retryFailureText(retry)}</div>
+        </div>
+      )}
     </div>
   )
 }
@@ -637,6 +712,7 @@ export function MsgList({
         proc: view === 'user' ? [] : t.proc,
         answer: view === 'user' ? null : t.answer,
         notice: view === 'user' ? null : t.notice,
+        retries: view === 'user' ? [] : t.retries,
         // 「已编辑 N 个文件」是**模型侧**的产出报告：「我的」视图下不显示
         //（用户反馈：筛选“我的”还能看到文件变动，它应该属于 AI 回复的信息）；
         //  「模型」与「全部」视图照常在轮末展示。
@@ -644,7 +720,7 @@ export function MsgList({
         changesSeq: view === 'user' ? null : t.changesSeq,
       }))
       .filter((t) => t.users.length > 0 || t.injects.length > 0
-        || t.proc.length > 0 || !!t.answer || !!t.notice || t.queued.length > 0),
+        || t.proc.length > 0 || t.retries.length > 0 || !!t.answer || !!t.notice || t.queued.length > 0),
     [parsed, view],
   )
   /**
@@ -1118,6 +1194,14 @@ export function MsgList({
             ))}
             <InjectionRow items={t.injects} />
             {t.proc.length > 0 && <ProcessGroup items={t.proc} sessionId={sessionId} />}
+            {/* 模型重试提醒：与原生对话同口径，但恒显在过程折叠外（见 ModelRetryRow） */}
+            {t.retries.length > 0 && (
+              <div className="ts-retries">
+                {t.retries.map((m, i) => (
+                  <ModelRetryRow key={m.retry?.retryId ?? `retry${i}`} retry={m.retry!} />
+                ))}
+              </div>
+            )}
             {t.answer && (
               <div className="ts-msg-block ts-msg-block-assistant">
                 <div className="ts-msg-assistant">

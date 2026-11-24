@@ -566,6 +566,20 @@ body.ts-desk-nochat [data-conversation-region="composer"] {
 .ts-turn-notice-preview { font-size:calc(var(--ts-fs, 12.5px) * 0.96); opacity:.85; word-break:break-word; }
 .ts-turn-notice-body { font-size:var(--ts-fs, 12.5px); }
 
+/* —— 模型请求重试提醒（对齐宿主原生「对话」的 model-retry 行）——
+   运行中蓝色脉冲；结束后只留一条弱提示，点开看延迟与失败原因。 */
+.ts-retries { display:flex; flex-direction:column; gap:4px; align-self:stretch; }
+.ts-retry-row { display:flex; flex-direction:column; gap:4px; align-self:stretch; border:1px solid rgba(96,165,250,.45); background:rgba(96,165,250,.1); border-radius:8px; padding:5px 9px; }
+.ts-retry-row.is-active { border-color:rgba(96,165,250,.72); background:rgba(96,165,250,.16); }
+.ts-retry-head { display:flex; align-items:center; gap:7px; min-width:0; width:100%; padding:0; border:0; background:transparent; color:inherit; font:inherit; text-align:left; cursor:pointer; }
+.ts-retry-dot { flex:none; width:7px; height:7px; border-radius:50%; background:#60a5fa; }
+.ts-retry-row.is-active .ts-retry-dot { background:#38bdf8; box-shadow:0 0 0 3px rgba(56,189,248,.18); animation:ts-pulse-breathe 1.6s ease-in-out infinite; }
+.ts-retry-text { min-width:0; font-size:calc(var(--ts-fs, 12.5px) * 0.96); color:#93c5fd; }
+.ts-retry-row.is-active .ts-retry-text { color:#bfdbfe; }
+.ts-retry-caret { flex:none; margin-left:auto; opacity:.65; font-size:calc(var(--ts-fs, 12.5px) * 0.84); }
+.ts-retry-detail { display:flex; flex-direction:column; gap:2px; padding-left:14px; font-size:calc(var(--ts-fs, 12.5px) * 0.9); opacity:.8; word-break:break-word; }
+.ts-retry-key { opacity:.65; }
+
 /* —— 会话选择条（工作台顶部第二行） —— */
 .ts-bar-sessions { gap:8px; }
 .ts-sess { position:relative; display:inline-flex; align-items:center; gap:8px; }

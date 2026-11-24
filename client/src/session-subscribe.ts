@@ -66,6 +66,14 @@ export interface StreamMsg {
    * tab 里可见，工作台里与正常结束长得一模一样（用户反馈）。
    */
   notice?: TurnNotice
+  /**
+   * 模型请求重试链（`llm/retry` / `llm/retry-started`）。
+   *
+   * 以前这两个事件被直接丢掉，工作台里一次失败重试「看起来像卡住了」；
+   * 宿主原生「对话」tab 会显示「正在重试模型请求（2/3）· 5s」。
+   * 这里归一化成一行，由 MsgList 渲染（同一 retryId 聚合成一条）。
+   */
+  retry?: ModelRetryNotice
 
   /**
    * 该 tool/call 是一次**文件编辑**（write / edit / str_replace_editor，与宿主
@@ -440,6 +448,62 @@ export interface TurnNotice {
 }
 
 /**
+ * 模型请求重试链（对齐宿主 dsh-client-ui-chat 的 model-retry 节点）。
+ *
+ * 同一 retryId 的多次尝试聚合成一条：attempts 只保留最新一次，
+ * 生命周期按宿主事件推进 scheduled → started；回合关闭仍 scheduled → cancelled。
+ * delayMs / failure 在 started 之后继续保留，供展开详情查看。
+ */
+export interface ModelRetryNotice {
+  retryId: string
+  turn: number
+  step: number
+  state: 'scheduled' | 'started' | 'cancelled'
+  /** 当前是第几次重试（1 起） */
+  retry: number
+  /** mode='normal' 时的上限；缺省 = always（无限重试） */
+  maxRetries?: number
+  /** 等待时长（ms）；started / cancelled 保留最近一次的数值供详情 */
+  delayMs: number
+  failureMessage: string
+  failureCode?: string
+}
+
+/** 把一条宿主重试事件归一化成 ModelRetryNotice；缺 retryId 的脏数据不产出。 */
+function retryFromEvent(ev: any): ModelRetryNotice | null {
+  if (!ev || typeof ev !== 'object') return null
+  if (ev.type !== 'llm/retry' && ev.type !== 'llm/retry-started') return null
+  const data = ev.data && typeof ev.data === 'object' ? ev.data : {}
+  const retryId = typeof data.retryId === 'string' ? data.retryId : ''
+  if (!retryId) return null
+  const retry = Number(data.retry)
+  const turn = Number(data.turn)
+  const step = Number(data.step)
+  const base = {
+    retryId,
+    turn: Number.isFinite(turn) ? turn : 0,
+    step: Number.isFinite(step) ? step : 0,
+    retry: Number.isFinite(retry) ? retry : 0,
+  }
+  if (ev.type === 'llm/retry-started') {
+    return { ...base, state: 'started', delayMs: 0, failureMessage: '' }
+  }
+  const failure = data.failure && typeof data.failure === 'object' ? data.failure : {}
+  const delayMs = Number(data.delayMs)
+  const maxRetries = data.mode === 'normal' ? Number(data.maxRetries) : undefined
+  const failureMessage = typeof failure.message === 'string' ? failure.message : ''
+  const failureCode = typeof failure.code === 'string' && failure.code ? failure.code : undefined
+  return {
+    ...base,
+    state: 'scheduled',
+    ...(Number.isFinite(maxRetries) ? { maxRetries } : {}),
+    delayMs: Number.isFinite(delayMs) ? delayMs : 0,
+    failureMessage,
+    ...(failureCode ? { failureCode } : {}),
+  }
+}
+
+/**
  * 从 `turn/end`（或 `agent/error`）里抽出「本轮为何结束」的可读说明。
  * @returns 需要提示时返回说明；正常结束 / 用户主动停止返回 null
  */
@@ -545,6 +609,31 @@ export function messagesFromWindow(snap: any): StreamMsg[] {
       if (changesSeq !== null) out.push({ role: 'tool', content: '', type: ev.type, kind: 'changes', changesSeq })
       continue
     }
+    // 模型请求重试（宿主原生「对话」tab 会显示的提醒）：
+    // 同一个 retryId 在一条链里会反复发 llm/retry（每次尝试前）+ llm/retry-started，
+    // 这里聚合成一条消息（见 retryFromEvent），attempt 更新时覆盖当前值。
+    if (ev.type === 'llm/retry' || ev.type === 'llm/retry-started') {
+      const next = retryFromEvent(ev)
+      if (next) {
+        const prev = out.find((m) => m.retry?.retryId === next.retryId)
+        if (prev?.retry) {
+          // started 只推进生命周期：delay / failure 留着给详情用
+          prev.retry = next.state === 'started'
+            ? { ...prev.retry, state: 'started', retry: next.retry }
+            : next
+        } else if (next.state !== 'started') {
+          out.push({
+            role: 'system',
+            content: '',
+            time: typeof ev.time === 'number' ? ev.time : undefined,
+            type: ev.type,
+            retry: next,
+          })
+        }
+      }
+      live = null
+      continue
+    }
     if (ev.type === 'system/message') continue
     // durable assistant 消息可能同时带 reasoning 与 text 块：
     // 拆成两条（思考在前），呈现上才能分别折叠/展开（见 MsgList）。
@@ -563,6 +652,14 @@ export function messagesFromWindow(snap: any): StreamMsg[] {
     // 本轮的异常结局：必须显式呈现，否则工作台里「中断」与「正常结束」无从分辨。
     if (ev.type === 'turn/end' || ev.type === 'agent/error') {
       const notice = noticeFromEvent(ev)
+      // 回合已关闭：还没等到 started 的重试不会再发生 → 标记取消
+      // （与宿主 model-retry 节点的 isClosed 判定同口径）
+      const closedTurn = Number(ev.data?.turn)
+      for (const m of out) {
+        if (m.retry?.state !== 'scheduled') continue
+        if (Number.isFinite(closedTurn) && m.retry.turn !== closedTurn) continue
+        m.retry = { ...m.retry, state: 'cancelled' }
+      }
       live = null
       if (notice) {
         out.push({
