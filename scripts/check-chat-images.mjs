@@ -61,6 +61,20 @@ check('队列里图片-only 的消息不被丢掉', byName('q.png')?.queued === 
 check('形状不完整的 image 块被丢弃而不是抛错',
   messagesFromWindow({ entries: [{ type: 'event', event: { type: 'user/message', seq: 1, data: { role: 'user', content: [{ type: 'image', attachment: { mediaType: 'image/png' } }] } } }] }).length === 0)
 
+// 轮次号：图片闪烁的根因是「尾部指纹」每多一步过程就变 key → 整轮 remount。
+const turnMsgs = messagesFromWindow({
+  entries: [
+    { type: 'event', event: { type: 'turn/start', seq: 10, time: 10, data: { turn: 7 } } },
+    { type: 'event', event: { type: 'user/message', seq: 11, time: 11, data: { role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: '看图' }] } } },
+    { type: 'event', event: { type: 'assistant/message', seq: 12, time: 12, data: { turn: 7, step: 1, message: { role: 'assistant', content: [{ type: 'text', text: '收到' }] } } } },
+  ],
+})
+check('投影带轮次号：user 消息沿用 turn/start（自身不带 turn）',
+  turnMsgs.length === 2 && turnMsgs.every((m) => m.turn === 7),
+  JSON.stringify(turnMsgs.map((m) => m.turn)))
+check('轮 key 优先用 turn（过程增长不重挂整轮，图片不回到「载入中…」）',
+  /if \(typeof last\.turn === 'number' && last\.turn > 0\) return `t\$\{last\.turn\}`/.test(msgList))
+
 console.log('— 2. 呈现层：四处渲染 + 授权读取 —')
 
 check('用户气泡渲染图片（靠右）',

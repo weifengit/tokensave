@@ -82,6 +82,8 @@ check('轮 key 取**尾**消息（回翻只往轮头插，尾不动；取头会�
   /const last = t\.answer \?\? t\.proc\[t\.proc\.length - 1\]/.test(src) &&
   /data-turn-key=\{visibleKeys\[ti\]\}/.test(src) &&
   /key=\{visibleKeys\[ti\] \?\? ti\}/.test(src))
+check('轮 key 优先用宿主轮次号（过程步骤增长时整轮不重挂，图片不闪）',
+  /if \(typeof last\.turn === 'number' && last\.turn > 0\) return `t\$\{last\.turn\}`/.test(src))
 check('锚循环每帧按 key 重解析节点（索引 key 会按位复用，只有 key 跟内容）',
   /const cur = a\.key \? box\.querySelector\(`\[data-turn-key="\$\{a\.key\}"\]`\) : a\.node/.test(src))
 check('逐帧平移：把锚节点偏移拉回 nodeTop（下方内容不动）',

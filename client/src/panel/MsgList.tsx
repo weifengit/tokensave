@@ -732,10 +732,14 @@ export function MsgList({
   const visibleKeys = useMemo(
     () =>
       visible.map((t) => {
-        // Take the **tail** message of the turn: on rewind, older content is only inserted at the head of the turn, the tail never moves;
-        // taking the head would cause the key of the boundary turn to change the moment the window expands to include its true beginning (measured pitfall).
+        // 优先用宿主轮次号（StreamMsg.turn）：流式追加过程步骤时它不变，整轮不会重挂。
+        // 旧实现用「尾部 time+content 指纹」：每多一步过程就换 key，整轮 remount ——
+        // 过程里的图片会重新走一遍「载入中…」，肉眼看到一闪一闪（用户反馈）。
         const last = t.answer ?? t.proc[t.proc.length - 1] ?? t.injects[t.injects.length - 1] ?? t.users[t.users.length - 1]
         if (!last) return 'e'
+        if (typeof last.turn === 'number' && last.turn > 0) return `t${last.turn}`
+        // 回退（窗口从轮中段开始、还没见到带 turn 的事件）：保留尾部 time+content 指纹。
+        // 回翻时更早内容只插在**轮头**，尾部不动，所以这个回退 key 在回翻时仍是稳的。
         let h = 0
         const s = (last.content || '').slice(0, 64)
         for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0

@@ -32,6 +32,12 @@ export interface StreamMsg {
   images?: StreamImageAttachment[]
   /** 事件时间（Unix ms，来自 SessionEvent.time）；窗口重建时保留，供时间轴/计时使用 */
   time?: number
+  /**
+   * 事件所属轮次（宿主 turn/step 事件里的 turn）。
+   * 轮次稳定 key 用它：流式追加过程步骤时轮次号不变，整轮不会重挂，
+   * 过程里的图片也就不会反复回到「载入中…」。
+   */
+  turn?: number
   /** 该条消息的 token 用量（assistant/message.usage）；主 agent 与探索者同源可用 */
   usage?: { inputTokens?: number; outputTokens?: number; reasoningTokens?: number }
   /** 事件类型原文（如 assistant/message、tool/result），需要精确分类时用 */
@@ -153,6 +159,8 @@ export function readService<T = any>(ctx: any, name: string): T | undefined {
 interface Channel {
   /** 当前消息列表（从事件窗口全量重建，非增量追加） */
   msgs: StreamMsg[]
+  /** 增量路径的当前轮次（由带 turn 的事件推进；窗口路径在 messagesFromWindow 自己维护） */
+  turn?: number
   subs: Set<Listener>
   metrics: SessionMetrics
   metricSubs: Set<MetricsListener>
@@ -562,9 +570,14 @@ export function messagesFromWindow(snap: any): StreamMsg[] {
   let live: StreamMsg | null = null
   let liveAttempt = ''
   let liveSlot = ''
+  /** 当前轮次：由 turn/start、step/start、assistant/message 等带 turn 的事件推进 */
+  let currentTurn = 0
+  const turnTag = () => (currentTurn > 0 ? { turn: currentTurn } : {})
   for (const e of entries) {
     if (e?.type === 'transient') {
       const ev = e.event
+      const chunkTurn = Number(ev?.data?.turn)
+      if (Number.isFinite(chunkTurn) && chunkTurn > 0) currentTurn = chunkTurn
       if (ev?.type !== 'assistant/live-chunk') continue
       const chunk = ev?.data?.chunk
       const ct = chunk?.type
@@ -578,7 +591,7 @@ export function messagesFromWindow(snap: any): StreamMsg[] {
       // 思考与正文要分开累积（各自一条消息），否则会混成一段。
       const slot = isReasoning ? 'reasoning' : 'text'
       if (!live || liveAttempt !== id || liveSlot !== slot) {
-        live = { role: 'assistant', content: '', kind: isReasoning ? 'reasoning' : undefined }
+        live = { role: 'assistant', content: '', kind: isReasoning ? 'reasoning' : undefined, ...turnTag() }
         liveAttempt = id
         liveSlot = slot
         out.push(live)
@@ -588,6 +601,10 @@ export function messagesFromWindow(snap: any): StreamMsg[] {
     }
     const ev = e?.event
     if (!ev || typeof ev.type !== 'string') continue
+    // 轮次号先于消息更新：turn/start / step/start / tool/call 等都带 turn，
+    // 后续 user/message（本身不带 turn）沿用它 —— 这是轮次稳定 key 的依据。
+    const eventTurn = Number(ev.data?.turn)
+    if (Number.isFinite(eventTurn) && eventTurn > 0) currentTurn = eventTurn
     if (ev.type === 'agent/inbox/spliced') {
       // 忙时发的消息先进收件箱队列（还不是 user/message）——折叠进队列尾部，
       // 否则主对话卡里「发出去了却看不见」（宿主 QueueDock 有、我们以前丢了）
@@ -598,7 +615,7 @@ export function messagesFromWindow(snap: any): StreamMsg[] {
     // 折叠成一条不渲染的标记消息，供 MsgList 按轮统计「已编辑 N 个文件」。
     if (ev.type === 'tool/call') {
       const p = fileEditOf(ev.data?.name, ev.data?.arguments)
-      if (p) out.push({ role: 'tool', content: '', type: 'tool/call', kind: 'file-edit', editPath: p })
+      if (p) out.push({ role: 'tool', content: '', type: 'tool/call', kind: 'file-edit', editPath: p, ...turnTag() })
       continue
     }
     // 轮末变更档案：宿主在每轮结束追加一条 workspace/changes（data 只有 turn），
@@ -606,7 +623,7 @@ export function messagesFromWindow(snap: any): StreamMsg[] {
     // 与原生对话 tab 同款的「已编辑 N 个文件」卡（含 +N/-M 与悬浮预览）。
     if (ev.type === 'workspace/changes') {
       const changesSeq = changesSeqOf(ev)
-      if (changesSeq !== null) out.push({ role: 'tool', content: '', type: ev.type, kind: 'changes', changesSeq })
+      if (changesSeq !== null) out.push({ role: 'tool', content: '', type: ev.type, kind: 'changes', changesSeq, ...turnTag() })
       continue
     }
     // 模型请求重试（宿主原生「对话」tab 会显示的提醒）：
@@ -628,6 +645,7 @@ export function messagesFromWindow(snap: any): StreamMsg[] {
             time: typeof ev.time === 'number' ? ev.time : undefined,
             type: ev.type,
             retry: next,
+            ...turnTag(),
           })
         }
       }
@@ -644,8 +662,8 @@ export function messagesFromWindow(snap: any): StreamMsg[] {
       const t = typeof ev.time === 'number' ? ev.time : undefined
       const u = ev?.data?.usage
       live = null
-      if (think) out.push({ role: 'assistant', content: think, kind: 'reasoning', time: t, type: ev.type })
-      if (text || imgs.length > 0) out.push({ role: 'assistant', content: text, time: t, usage: u, type: ev.type, ...(imgs.length > 0 ? { images: imgs } : {}) })
+      if (think) out.push({ role: 'assistant', content: think, kind: 'reasoning', time: t, type: ev.type, ...turnTag() })
+      if (text || imgs.length > 0) out.push({ role: 'assistant', content: text, time: t, usage: u, type: ev.type, ...(imgs.length > 0 ? { images: imgs } : {}), ...turnTag() })
       // 思考、正文、图片都空（例如只含 tool-call）时不产出行
       continue
     }
@@ -668,6 +686,7 @@ export function messagesFromWindow(snap: any): StreamMsg[] {
           time: typeof ev.time === 'number' ? ev.time : undefined,
           type: ev.type,
           notice,
+          ...turnTag(),
         })
       }
       continue
@@ -683,6 +702,7 @@ export function messagesFromWindow(snap: any): StreamMsg[] {
       time: typeof ev.time === 'number' ? ev.time : undefined,
       usage: ev?.data?.usage,
       type: ev.type,
+      ...turnTag(),
       ...(images.length > 0 ? { images } : {}),
       ...inj.injected ? { injected: true, injectKind: inj.kind } : {},
     })
@@ -781,6 +801,11 @@ function publish(ch: Channel): void {
 function emitEvent(ch: Channel, x: any): void {
   const ev = x && typeof x === 'object' && x.event ? x.event : x
   if (!ev || typeof ev.type !== 'string') return
+  // 轮次号：turn/start / step/start / tool/call / assistant 等都带 turn；
+  // 后续 user/message（本身不带 turn）沿用它。
+  const eventTurn = Number(ev.data?.turn)
+  if (Number.isFinite(eventTurn) && eventTurn > 0) ch.turn = eventTurn
+  const turnTag = ch.turn ? { turn: ch.turn } : {}
   if (ev.type === 'agent/inbox/spliced') {
     // 增量路径没有可重放的窗口，队列状态在通道上就地维护：
     // 队列消息恒在流末尾，先摘出来 splice 完再拼回去
@@ -795,7 +820,7 @@ function emitEvent(ch: Channel, x: any): void {
   if (ev.type === 'tool/call') {
     const p = fileEditOf(ev.data?.name, ev.data?.arguments)
     if (p) {
-      ch.msgs = ch.msgs.concat({ role: 'tool', content: '', type: 'tool/call', kind: 'file-edit', editPath: p })
+      ch.msgs = ch.msgs.concat({ role: 'tool', content: '', type: 'tool/call', kind: 'file-edit', editPath: p, ...turnTag })
       publish(ch)
     }
     return
@@ -804,8 +829,35 @@ function emitEvent(ch: Channel, x: any): void {
   if (ev.type === 'workspace/changes') {
     const changesSeq = changesSeqOf(ev)
     if (changesSeq !== null) {
-      ch.msgs = ch.msgs.concat({ role: 'tool', content: '', type: ev.type, kind: 'changes', changesSeq })
+      ch.msgs = ch.msgs.concat({ role: 'tool', content: '', type: ev.type, kind: 'changes', changesSeq, ...turnTag })
       publish(ch)
+    }
+    return
+  }
+  // 逐事件路径同样要带上模型重试提醒（与 messagesFromWindow 同口径）
+  if (ev.type === 'llm/retry' || ev.type === 'llm/retry-started') {
+    const next = retryFromEvent(ev)
+    if (next) {
+      const idx = ch.msgs.findIndex((m) => m.retry?.retryId === next.retryId)
+      if (idx >= 0) {
+        const prev = ch.msgs[idx]
+        const merged = next.state === 'started' && prev.retry
+          ? { ...prev.retry, state: 'started' as const, retry: next.retry }
+          : next
+        ch.msgs = ch.msgs.slice()
+        ch.msgs[idx] = { ...prev, retry: merged }
+        publish(ch)
+      } else if (next.state !== 'started') {
+        ch.msgs = ch.msgs.concat({
+          role: 'system',
+          content: '',
+          time: typeof ev.time === 'number' ? ev.time : undefined,
+          type: ev.type,
+          retry: next,
+          ...turnTag,
+        })
+        publish(ch)
+      }
     }
     return
   }
@@ -813,6 +865,14 @@ function emitEvent(ch: Channel, x: any): void {
   // 逐事件订阅路径同样要带上异常结局（与 messagesFromWindow 保持同口径）
   if (ev.type === 'turn/end' || ev.type === 'agent/error') {
     const notice = noticeFromEvent(ev)
+    // 回合关闭：还没等到 started 的重试不会再发生 → 标记取消（同 messagesFromWindow）
+    const closedTurn = Number(ev.data?.turn)
+    ch.msgs = ch.msgs.map((m) => {
+      const retry = m.retry
+      if (!retry || retry.state !== 'scheduled') return m
+      if (Number.isFinite(closedTurn) && retry.turn !== closedTurn) return m
+      return { ...m, retry: { ...retry, state: 'cancelled' as const } }
+    })
     if (notice) {
       ch.msgs = ch.msgs.concat({
         role: 'system',
@@ -820,7 +880,11 @@ function emitEvent(ch: Channel, x: any): void {
         time: typeof ev.time === 'number' ? ev.time : undefined,
         type: ev.type,
         notice,
+        ...turnTag,
       })
+      publish(ch)
+    } else {
+      // 没有 notice 也要发布：上面的重试取消状态已经改了 ch.msgs。
       publish(ch)
     }
     return
@@ -835,6 +899,7 @@ function emitEvent(ch: Channel, x: any): void {
     time: typeof ev.time === 'number' ? ev.time : undefined,
     usage: ev?.data?.usage,
     type: ev.type,
+    ...turnTag,
     ...(images.length > 0 ? { images } : {}),
     ...inj.injected ? { injected: true, injectKind: inj.kind } : {},
   })
