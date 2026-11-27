@@ -110,6 +110,50 @@ try {
       msgs.find((x) => x.retry)?.retry?.state === 'scheduled')
   }
 
+  // —— 3b. 连上即隐藏（用户要求：模型连上了之后就隐藏这条提醒）——
+  {
+    const started = ev('llm/retry-started', { retryId: 'retry-1', turn: 3, step: 2, retry: 1 })
+    const reply = ev('assistant/message', { turn: 3, step: 2, message: { role: 'assistant', content: [{ type: 'text', text: '好了' }] } })
+    const msgs = msgsOf(ev('llm/retry', retryData()), started, reply)
+    check('重试开始后拿到模型回复 → 提醒从流里摘掉',
+      msgs.every((x) => !x.retry))
+  }
+  {
+    const started = ev('llm/retry-started', { retryId: 'retry-1', turn: 3, step: 2, retry: 1 })
+    const chunk = {
+      type: 'transient',
+      event: { type: 'assistant/live-chunk', time: Date.now(), data: { turn: 3, attemptId: 'a1', chunk: { type: 'text-delta', text: '你' } } },
+    }
+    const msgs = msgsOf(ev('llm/retry', retryData()), started, chunk)
+    check('重试开始后先到流式增量也算连上 → 提醒隐藏（正文保留）',
+      msgs.every((x) => !x.retry) && msgs.some((x) => x.content === '你'))
+  }
+  {
+    const started = ev('llm/retry-started', { retryId: 'retry-1', turn: 3, step: 2, retry: 1 })
+    const tool = ev('tool/call', { turn: 3, name: 'read', arguments: '{}' })
+    const msgs = msgsOf(ev('llm/retry', retryData()), started, tool)
+    check('重试开始后只有工具调用（没有正文）也算连上 → 提醒隐藏',
+      msgs.every((x) => !x.retry))
+  }
+  {
+    const started = ev('llm/retry-started', { retryId: 'retry-1', turn: 3, step: 2, retry: 1 })
+    const reply = ev('assistant/message', { turn: 4, step: 1, message: { role: 'assistant', content: [{ type: 'text', text: '下一轮' }] } })
+    const msgs = msgsOf(ev('llm/retry', retryData()), started, reply)
+    check('别的轮的回包不会抹掉本轮的 started 提醒（只看同轮）',
+      msgs.find((x) => x.retry)?.retry?.state === 'started')
+  }
+  {
+    const msgs = msgsOf(
+      ev('llm/retry', retryData()),
+      ev('llm/retry-started', { retryId: 'retry-1', turn: 3, step: 2, retry: 1 }),
+      ev('assistant/message', { turn: 3, step: 2, message: { role: 'assistant', content: [{ type: 'text', text: '好了' }] } }),
+      ev('llm/retry', retryData({ retry: 2, delayMs: 8000 })),
+      ev('llm/retry-started', { retryId: 'retry-1', turn: 3, step: 2, retry: 2 }),
+    )
+    check('连上后又失败重试 → 新的提醒照常出现（按链重新开头）',
+      msgs.find((x) => x.retry)?.retry?.retry === 2)
+  }
+
   // —— 4. 脏数据 / 边界 ——
   {
     check('缺 retryId 的脏事件不产出行',

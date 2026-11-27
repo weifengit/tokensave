@@ -555,6 +555,29 @@ function noticeFromEvent(ev: any): TurnNotice | null {
   return null
 }
 /**
+ * 模型重试提醒的收口：`llm/retry-started` 只证明「重试请求发出去了」，
+ * 是否真的连上要看后续回包。用户要求「模型连接上了之后就隐藏」——收到同轮
+ * 下一条真正的模型产出（流式增量 / 落盘消息 / 工具调用 / 工具结果）时摘掉那一行。
+ *
+ * 还停在 scheduled 的重试（下一次尝试还没开始）保留：那是「正在等重试」，
+ * 用户仍需要看到倒计时。
+ *
+ * 只看同轮：别的轮遗留的 started 行不该被这一轮的回包顺手抹掉。
+ * @returns 真的摘掉了行就返回新数组；没变化返回 null（调用方可据此决定是否 publish）
+ */
+function dropConnectedRetries(msgs: readonly StreamMsg[], turn: number): StreamMsg[] | null {
+  let dropped = false
+  const kept = msgs.filter((m) => {
+    const retry = m.retry
+    if (!retry || retry.state !== 'started') return true
+    if (turn > 0 && retry.turn > 0 && retry.turn !== turn) return true
+    dropped = true
+    return false
+  })
+  return dropped ? kept : null
+}
+
+/**
  * 把 SessionEventWindow 快照重建为消息列表：
  * - durable 事件（{ type:'event', event }）：user/assistant/tool-result 进流，
  *   system/message（渲染后的整份系统提示词）不进流；tool/call 也不进流，
@@ -565,7 +588,7 @@ function noticeFromEvent(ev: any): TurnNotice | null {
  */
 export function messagesFromWindow(snap: any): StreamMsg[] {
   const entries: any[] = Array.isArray(snap?.entries) ? snap.entries : []
-  const out: StreamMsg[] = []
+  let out: StreamMsg[] = []
   const queue: StreamMsg[] = []
   let live: StreamMsg | null = null
   let liveAttempt = ''
@@ -586,6 +609,8 @@ export function messagesFromWindow(snap: any): StreamMsg[] {
       //   reasoning-delta → 思考（thinking）；以前只收 text-delta，
       //                     导致“思考那步看不见”（用户反馈 #1）。
       if ((ct !== 'text-delta' && ct !== 'reasoning-delta') || typeof chunk.text !== 'string' || !chunk.text) continue
+      // 流式增量 = 这次重试真的连上了（模型已经开始吐字）→ 提醒完成使命
+      out = dropConnectedRetries(out, currentTurn) ?? out
       const isReasoning = ct === 'reasoning-delta'
       const id = String(ev?.data?.attemptId ?? '')
       // 思考与正文要分开累积（各自一条消息），否则会混成一段。
@@ -614,6 +639,8 @@ export function messagesFromWindow(snap: any): StreamMsg[] {
     // tool/call 不进消息流（参数 JSON 没有展示价值），但**文件编辑**要留下来：
     // 折叠成一条不渲染的标记消息，供 MsgList 按轮统计「已编辑 N 个文件」。
     if (ev.type === 'tool/call') {
+      // 模型回了工具调用 = 请求连上了（有些回复只有工具、没有正文）
+      out = dropConnectedRetries(out, currentTurn) ?? out
       const p = fileEditOf(ev.data?.name, ev.data?.arguments)
       if (p) out.push({ role: 'tool', content: '', type: 'tool/call', kind: 'file-edit', editPath: p, ...turnTag() })
       continue
@@ -656,6 +683,8 @@ export function messagesFromWindow(snap: any): StreamMsg[] {
     // durable assistant 消息可能同时带 reasoning 与 text 块：
     // 拆成两条（思考在前），呈现上才能分别折叠/展开（见 MsgList）。
     if (ev.type === 'assistant/message') {
+      // 落盘的模型消息 = 这次重试已经成功，重试提醒不再占一行
+      out = dropConnectedRetries(out, currentTurn) ?? out
       const think = reasoningOf(ev)
       const text = visibleTextOf(ev)
       const imgs = imagesOf(ev)
@@ -695,6 +724,8 @@ export function messagesFromWindow(snap: any): StreamMsg[] {
     const images = imagesOf(ev)
     if (!content && images.length === 0) continue
     live = null
+    // 同轮的其它产出（如工具结果）同样证明请求已连上
+    out = dropConnectedRetries(out, currentTurn) ?? out
     const inj = injectionOf(ev)
     out.push({
       role: roleOf(ev.type),
@@ -818,9 +849,15 @@ function emitEvent(ch: Channel, x: any): void {
   }
   // 逐事件路径同样要把文件编辑留下来（与 messagesFromWindow 同口径）
   if (ev.type === 'tool/call') {
+    // 模型回了工具调用 = 重试请求已连上（有些回复只有工具、没有正文）
+    const trimmed = dropConnectedRetries(ch.msgs, ch.turn ?? 0)
+    if (trimmed) ch.msgs = trimmed
     const p = fileEditOf(ev.data?.name, ev.data?.arguments)
     if (p) {
       ch.msgs = ch.msgs.concat({ role: 'tool', content: '', type: 'tool/call', kind: 'file-edit', editPath: p, ...turnTag })
+      publish(ch)
+    } else if (trimmed) {
+      // 没有文件编辑可记，但提醒已经摘掉了，得把新快照推出去
       publish(ch)
     }
     return
@@ -892,6 +929,9 @@ function emitEvent(ch: Channel, x: any): void {
   const content = contentOf(ev)
   const images = imagesOf(ev)
   if (!content && images.length === 0) return
+  // 落盘消息 / 工具结果同轮到达 = 重试已连上 → 摘掉「已重试模型请求」
+  const trimmed = dropConnectedRetries(ch.msgs, ch.turn ?? 0)
+  if (trimmed) ch.msgs = trimmed
   const inj = injectionOf(ev)
   ch.msgs = ch.msgs.concat({
     role: roleOf(ev.type),
