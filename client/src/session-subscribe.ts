@@ -30,6 +30,10 @@ export interface StreamMsg {
    * 读取走宿主 uiConversation 的授权 URL（见 resolveSessionImageUrl）。
    */
   images?: StreamImageAttachment[]
+  /** 队列项 id（宿主 inbox 的 MessageId）：编辑排队消息要用它定位 */
+  queueId?: string
+  /** 队列项含文件附件：文件凭据无法在客户端重放，编辑时拒绝而不是悄悄丢掉 */
+  hasFiles?: boolean
   /** 事件时间（Unix ms，来自 SessionEvent.time）；窗口重建时保留，供时间轴/计时使用 */
   time?: number
   /**
@@ -209,14 +213,131 @@ export async function resolveSessionImageUrl(
   throw new Error('会话图片读取接口不可用')
 }
 
-/** 把图片字节转成 data URL（只用于没有 uiConversation 缓存的兜底路径）。 */
-function bytesToDataUrl(data: Uint8Array, mediaType: string): string {
+/** 图片字节 → base64（分块，避免大体量图片展开参数爆栈）。 */
+function bytesToBase64(data: Uint8Array): string {
   let binary = ''
   const chunk = 0x8000
   for (let i = 0; i < data.length; i += chunk) {
     binary += String.fromCharCode(...data.subarray(i, i + chunk))
   }
-  return `data:${mediaType};base64,${btoa(binary)}`
+  return btoa(binary)
+}
+
+/** 把图片字节转成 data URL（只用于没有 uiConversation 缓存的兜底路径）。 */
+function bytesToDataUrl(data: Uint8Array, mediaType: string): string {
+  return `data:${mediaType};base64,${bytesToBase64(data)}`
+}
+
+/** 编辑排队消息的结果；requeued = 为了保留图片而重新排队（位置会到队尾）。 */
+export interface QueueEditOutcome {
+  ok: boolean
+  requeued?: boolean
+  error?: string
+}
+
+function remoteFailure(error: any): string {
+  if (error && typeof error === 'object') {
+    const message = typeof error.message === 'string' ? error.message : ''
+    const code = typeof error.code === 'string' ? error.code : ''
+    if (message) return code ? `${message}（${code}）` : message
+    if (code) return code
+  }
+  return String(error ?? '队列编辑失败')
+}
+
+/**
+ * 编辑一条还在宿主队列里的消息（face 可注入，方便单测）。
+ *
+ * 宿主 `updateQueue(edit)` 只接受**纯文本**：
+ *   - 文本-only → 原地改，排队位置不变；
+ *   - 带图片 → 直接改会把图片丢掉；先读回图片字节，再移除旧项、以
+ *     「原图片 + 新文字」重新排队。代价是排到队尾（宿主没有保留位置的编辑接口），
+ *     界面上要提前告知；
+ *   - 带文件附件 → 拿不到可重放的文件凭据，直接拒绝，队列不动。
+ *
+ * @param face - 会话 face（有 updateQueue / readAttachment / prompt 的宿主对象）
+ * @param message - 排队消息（queueId 必需）
+ * @param text - 新文字
+ * @returns 成功 / 失败原因；失败时调用方保留输入框里的文字
+ */
+export async function applyQueueTextEdit(
+  face: any,
+  message: Pick<StreamMsg, 'queueId' | 'content' | 'images' | 'hasFiles'>,
+  text: string,
+): Promise<QueueEditOutcome> {
+  const next = text.trim()
+  if (!next) return { ok: false, error: '内容不能为空' }
+  const queueId = message.queueId
+  if (!queueId) return { ok: false, error: '这条消息已不在队列里' }
+  if (message.hasFiles) return { ok: false, error: '含文件附件，暂不支持编辑（重放会丢文件）' }
+  if (!face || typeof face.updateQueue !== 'function') {
+    return { ok: false, error: '宿主队列接口未就绪，稍后再试' }
+  }
+  const resultOf = async (promise: Promise<any>): Promise<{ ok: boolean; error?: string }> => {
+    try {
+      const result = await promise
+      if (result && result.ok === false) return { ok: false, error: remoteFailure(result.error) }
+      return { ok: true }
+    } catch (e) {
+      return { ok: false, error: remoteFailure(e) }
+    }
+  }
+
+  if (!message.images?.length) {
+    return resultOf(face.updateQueue(queueId, { kind: 'edit', content: [{ type: 'text', text: next }] }))
+  }
+
+  if (typeof face.readAttachment !== 'function' || typeof face.prompt !== 'function') {
+    return { ok: false, error: '宿主不支持重放图片，队列未改动' }
+  }
+  const imageParts: any[] = []
+  for (const image of message.images) {
+    try {
+      const result = await face.readAttachment(image)
+      const data = result?.ok ? result.value?.data : undefined
+      if (!(data instanceof Uint8Array)) {
+        return { ok: false, error: `图片读取失败${result?.error?.code ? `（${result.error.code}）` : ''}，队列未改动` }
+      }
+      imageParts.push({
+        type: 'image',
+        mediaType: image.mediaType,
+        data: bytesToBase64(data),
+        ...(image.name ? { name: image.name } : {}),
+      })
+    } catch (e) {
+      return { ok: false, error: `图片读取失败：${remoteFailure(e)}；队列未改动` }
+    }
+  }
+
+  const removed = await resultOf(face.updateQueue(queueId, { kind: 'remove' }))
+  if (!removed.ok) return { ok: false, error: `移除旧排队项失败：${removed.error}` }
+
+  const accepted = await resultOf(face.prompt([...imageParts, { type: 'text', text: next }], 'queue'))
+  if (accepted.ok) return { ok: true, requeued: true }
+
+  // 旧项已经移除：尽最大努力按原文恢复，避免用户的内容彻底消失。
+  const restore = await resultOf(face.prompt(
+    [...imageParts, ...(message.content ? [{ type: 'text', text: message.content }] : [])],
+    'queue',
+  ))
+  return {
+    ok: false,
+    error: `重新排队失败：${accepted.error}${restore.ok ? '（已按原文恢复）' : '（恢复也失败，请手动重发这条消息）'}`
+  }
+}
+
+/**
+ * 编辑一条排队消息：按 sessionId 找到宿主会话 face 后走 applyQueueTextEdit。
+ * 会话流未就绪（binding 还没物化）时给出可读原因，不丢用户的文字。
+ */
+export async function editQueuedMessage(
+  sessionId: string,
+  message: Pick<StreamMsg, 'queueId' | 'content' | 'images' | 'hasFiles'>,
+  text: string,
+): Promise<QueueEditOutcome> {
+  const face: any = channels.get(sessionId)?.binding?.session
+  if (!face) return { ok: false, error: '会话流未连接，稍后再试（文字已保留）' }
+  return applyQueueTextEdit(face, message, text)
 }
 
 // —— 事件 → 消息 投影 ————————————————————————————————
@@ -418,7 +539,17 @@ function queuedMsgOf(m: any, time?: number): StreamMsg | null {
   const text = visibleTextOf(m)
   const images = imagesOf(m)
   if (!text && images.length === 0) return null
-  return { role: 'user', content: text, time, type: 'agent/inbox/spliced', queued: true, ...(images.length > 0 ? { images } : {}) }
+  const hasFiles = Array.isArray(m.content) && m.content.some((b: any) => b && b.type === 'file')
+  return {
+    role: 'user',
+    content: text,
+    time,
+    type: 'agent/inbox/spliced',
+    queued: true,
+    ...(typeof m.id === 'string' && m.id ? { queueId: m.id } : {}),
+    ...(images.length > 0 ? { images } : {}),
+    ...(hasFiles ? { hasFiles: true } : {}),
+  }
 }
 
 /**

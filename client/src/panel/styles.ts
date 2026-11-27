@@ -1173,6 +1173,18 @@ body.ts-vsplit-dragging .ts-card { transition:none !important; animation:none !i
    虚线描边 + 弱化底色，与已送达的气泡一眼分开 */
 .ts-msg-queued { opacity:.72; border-style:dashed; border-color:rgba(96,165,250,.45); background:rgba(96,165,250,.10); }
 .ts-queued-tag { display:inline-block; margin-left:8px; padding:0 6px; border-radius:7px; font-size:calc(var(--ts-fs, 13.5px) * .78); color:var(--ts-fg-mute); border:1px solid var(--ts-line); background:var(--ts-hover); vertical-align:1px; white-space:nowrap; }
+/* 排队消息编辑：混合图片时宿主的 edit 只收纯文本，所以改走「重新排队」，
+   提示里先说明图片保留 / 位置会到队尾。 */
+.ts-queue-edit { margin-left:8px; padding:0 7px; border:1px solid var(--ts-line); border-radius:7px; background:var(--ts-hover); color:var(--ts-fg-dim); font:inherit; font-size:calc(var(--ts-fs, 13.5px) * .78); line-height:1.7; cursor:pointer; vertical-align:1px; white-space:nowrap; }
+.ts-queue-edit:hover { color:var(--ts-fg); border-color:rgba(96,165,250,.7); }
+.ts-queue-edit.is-off { cursor:default; opacity:.55; }
+.ts-msg-queued.is-editing { opacity:1; display:block; white-space:normal; }
+.ts-queue-edit-box { box-sizing:border-box; display:block; width:100%; min-width:220px; min-height:64px; resize:vertical; border:1px solid var(--ts-line); border-radius:6px; background:rgba(127,127,127,.08); color:inherit; font:inherit; font-size:calc(var(--ts-fs, 13.5px) * .96); line-height:1.5; padding:6px 8px; }
+.ts-queue-edit-box:focus { outline:none; border-color:rgba(96,165,250,.7); }
+.ts-queue-edit-actions { display:flex; align-items:center; flex-wrap:wrap; gap:6px; justify-content:flex-end; margin-top:6px; }
+.ts-queue-edit-hint { margin-right:auto; color:var(--ts-fg-mute); font-size:calc(var(--ts-fs, 13.5px) * .78); }
+.ts-queue-edit-error { margin-top:6px; color:#fca5a5; font-size:calc(var(--ts-fs, 13.5px) * .82); line-height:1.5; }
+@media (pointer:coarse) { .ts-queue-edit { min-height:32px; } }
 /* 回复区块：右边缘与用户气泡的右边缘对齐（用户气泡靠右、右边缘贴容器右端，
    因此回复块改为拉伸满宽，不再留右侧那一小块空白） */
 .ts-msg-assistant { align-self:stretch; background:rgba(127,127,127,.14); border-radius:8px 8px 8px 2px; padding:5px 9px; max-width:none; white-space:pre-wrap; word-break:break-word; }

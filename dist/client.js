@@ -39,7 +39,7 @@ __export(index_exports, {
   inject: () => inject
 });
 module.exports = __toCommonJS(index_exports);
-var import_react27 = require("react");
+var import_react28 = require("react");
 
 // client/src/session-subscribe.ts
 var clientCtx = null;
@@ -78,13 +78,85 @@ async function resolveSessionImageUrl(sessionId, attachment) {
   }
   throw new Error("\u4F1A\u8BDD\u56FE\u7247\u8BFB\u53D6\u63A5\u53E3\u4E0D\u53EF\u7528");
 }
-function bytesToDataUrl(data, mediaType) {
+function bytesToBase64(data) {
   let binary = "";
   const chunk = 32768;
   for (let i = 0; i < data.length; i += chunk) {
     binary += String.fromCharCode(...data.subarray(i, i + chunk));
   }
-  return `data:${mediaType};base64,${btoa(binary)}`;
+  return btoa(binary);
+}
+function bytesToDataUrl(data, mediaType) {
+  return `data:${mediaType};base64,${bytesToBase64(data)}`;
+}
+function remoteFailure(error) {
+  if (error && typeof error === "object") {
+    const message = typeof error.message === "string" ? error.message : "";
+    const code = typeof error.code === "string" ? error.code : "";
+    if (message) return code ? `${message}\uFF08${code}\uFF09` : message;
+    if (code) return code;
+  }
+  return String(error ?? "\u961F\u5217\u7F16\u8F91\u5931\u8D25");
+}
+async function applyQueueTextEdit(face, message, text) {
+  const next = text.trim();
+  if (!next) return { ok: false, error: "\u5185\u5BB9\u4E0D\u80FD\u4E3A\u7A7A" };
+  const queueId = message.queueId;
+  if (!queueId) return { ok: false, error: "\u8FD9\u6761\u6D88\u606F\u5DF2\u4E0D\u5728\u961F\u5217\u91CC" };
+  if (message.hasFiles) return { ok: false, error: "\u542B\u6587\u4EF6\u9644\u4EF6\uFF0C\u6682\u4E0D\u652F\u6301\u7F16\u8F91\uFF08\u91CD\u653E\u4F1A\u4E22\u6587\u4EF6\uFF09" };
+  if (!face || typeof face.updateQueue !== "function") {
+    return { ok: false, error: "\u5BBF\u4E3B\u961F\u5217\u63A5\u53E3\u672A\u5C31\u7EEA\uFF0C\u7A0D\u540E\u518D\u8BD5" };
+  }
+  const resultOf = async (promise) => {
+    try {
+      const result = await promise;
+      if (result && result.ok === false) return { ok: false, error: remoteFailure(result.error) };
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: remoteFailure(e) };
+    }
+  };
+  if (!message.images?.length) {
+    return resultOf(face.updateQueue(queueId, { kind: "edit", content: [{ type: "text", text: next }] }));
+  }
+  if (typeof face.readAttachment !== "function" || typeof face.prompt !== "function") {
+    return { ok: false, error: "\u5BBF\u4E3B\u4E0D\u652F\u6301\u91CD\u653E\u56FE\u7247\uFF0C\u961F\u5217\u672A\u6539\u52A8" };
+  }
+  const imageParts = [];
+  for (const image of message.images) {
+    try {
+      const result = await face.readAttachment(image);
+      const data = result?.ok ? result.value?.data : void 0;
+      if (!(data instanceof Uint8Array)) {
+        return { ok: false, error: `\u56FE\u7247\u8BFB\u53D6\u5931\u8D25${result?.error?.code ? `\uFF08${result.error.code}\uFF09` : ""}\uFF0C\u961F\u5217\u672A\u6539\u52A8` };
+      }
+      imageParts.push({
+        type: "image",
+        mediaType: image.mediaType,
+        data: bytesToBase64(data),
+        ...image.name ? { name: image.name } : {}
+      });
+    } catch (e) {
+      return { ok: false, error: `\u56FE\u7247\u8BFB\u53D6\u5931\u8D25\uFF1A${remoteFailure(e)}\uFF1B\u961F\u5217\u672A\u6539\u52A8` };
+    }
+  }
+  const removed = await resultOf(face.updateQueue(queueId, { kind: "remove" }));
+  if (!removed.ok) return { ok: false, error: `\u79FB\u9664\u65E7\u6392\u961F\u9879\u5931\u8D25\uFF1A${removed.error}` };
+  const accepted = await resultOf(face.prompt([...imageParts, { type: "text", text: next }], "queue"));
+  if (accepted.ok) return { ok: true, requeued: true };
+  const restore = await resultOf(face.prompt(
+    [...imageParts, ...message.content ? [{ type: "text", text: message.content }] : []],
+    "queue"
+  ));
+  return {
+    ok: false,
+    error: `\u91CD\u65B0\u6392\u961F\u5931\u8D25\uFF1A${accepted.error}${restore.ok ? "\uFF08\u5DF2\u6309\u539F\u6587\u6062\u590D\uFF09" : "\uFF08\u6062\u590D\u4E5F\u5931\u8D25\uFF0C\u8BF7\u624B\u52A8\u91CD\u53D1\u8FD9\u6761\u6D88\u606F\uFF09"}`
+  };
+}
+async function editQueuedMessage(sessionId, message, text) {
+  const face = channels.get(sessionId)?.binding?.session;
+  if (!face) return { ok: false, error: "\u4F1A\u8BDD\u6D41\u672A\u8FDE\u63A5\uFF0C\u7A0D\u540E\u518D\u8BD5\uFF08\u6587\u5B57\u5DF2\u4FDD\u7559\uFF09" };
+  return applyQueueTextEdit(face, message, text);
 }
 function textOf(c) {
   if (typeof c === "string") return c;
@@ -209,7 +281,17 @@ function queuedMsgOf(m, time) {
   const text = visibleTextOf(m);
   const images = imagesOf(m);
   if (!text && images.length === 0) return null;
-  return { role: "user", content: text, time, type: "agent/inbox/spliced", queued: true, ...images.length > 0 ? { images } : {} };
+  const hasFiles = Array.isArray(m.content) && m.content.some((b) => b && b.type === "file");
+  return {
+    role: "user",
+    content: text,
+    time,
+    type: "agent/inbox/spliced",
+    queued: true,
+    ...typeof m.id === "string" && m.id ? { queueId: m.id } : {},
+    ...images.length > 0 ? { images } : {},
+    ...hasFiles ? { hasFiles: true } : {}
+  };
 }
 function applySplice(queue, data, time) {
   if (!data || data.target !== "next-turn") return;
@@ -2301,7 +2383,7 @@ async function stopSession(sessionId) {
 }
 
 // client/src/panel/ControlRoom.tsx
-var import_react21 = require("react");
+var import_react22 = require("react");
 
 // client/src/panel/styles.ts
 var STYLE_ID = "tokensave-project-center-css";
@@ -3469,6 +3551,18 @@ body.ts-vsplit-dragging .ts-card { transition:none !important; animation:none !i
    \u865A\u7EBF\u63CF\u8FB9 + \u5F31\u5316\u5E95\u8272\uFF0C\u4E0E\u5DF2\u9001\u8FBE\u7684\u6C14\u6CE1\u4E00\u773C\u5206\u5F00 */
 .ts-msg-queued { opacity:.72; border-style:dashed; border-color:rgba(96,165,250,.45); background:rgba(96,165,250,.10); }
 .ts-queued-tag { display:inline-block; margin-left:8px; padding:0 6px; border-radius:7px; font-size:calc(var(--ts-fs, 13.5px) * .78); color:var(--ts-fg-mute); border:1px solid var(--ts-line); background:var(--ts-hover); vertical-align:1px; white-space:nowrap; }
+/* \u6392\u961F\u6D88\u606F\u7F16\u8F91\uFF1A\u6DF7\u5408\u56FE\u7247\u65F6\u5BBF\u4E3B\u7684 edit \u53EA\u6536\u7EAF\u6587\u672C\uFF0C\u6240\u4EE5\u6539\u8D70\u300C\u91CD\u65B0\u6392\u961F\u300D\uFF0C
+   \u63D0\u793A\u91CC\u5148\u8BF4\u660E\u56FE\u7247\u4FDD\u7559 / \u4F4D\u7F6E\u4F1A\u5230\u961F\u5C3E\u3002 */
+.ts-queue-edit { margin-left:8px; padding:0 7px; border:1px solid var(--ts-line); border-radius:7px; background:var(--ts-hover); color:var(--ts-fg-dim); font:inherit; font-size:calc(var(--ts-fs, 13.5px) * .78); line-height:1.7; cursor:pointer; vertical-align:1px; white-space:nowrap; }
+.ts-queue-edit:hover { color:var(--ts-fg); border-color:rgba(96,165,250,.7); }
+.ts-queue-edit.is-off { cursor:default; opacity:.55; }
+.ts-msg-queued.is-editing { opacity:1; display:block; white-space:normal; }
+.ts-queue-edit-box { box-sizing:border-box; display:block; width:100%; min-width:220px; min-height:64px; resize:vertical; border:1px solid var(--ts-line); border-radius:6px; background:rgba(127,127,127,.08); color:inherit; font:inherit; font-size:calc(var(--ts-fs, 13.5px) * .96); line-height:1.5; padding:6px 8px; }
+.ts-queue-edit-box:focus { outline:none; border-color:rgba(96,165,250,.7); }
+.ts-queue-edit-actions { display:flex; align-items:center; flex-wrap:wrap; gap:6px; justify-content:flex-end; margin-top:6px; }
+.ts-queue-edit-hint { margin-right:auto; color:var(--ts-fg-mute); font-size:calc(var(--ts-fs, 13.5px) * .78); }
+.ts-queue-edit-error { margin-top:6px; color:#fca5a5; font-size:calc(var(--ts-fs, 13.5px) * .82); line-height:1.5; }
+@media (pointer:coarse) { .ts-queue-edit { min-height:32px; } }
 /* \u56DE\u590D\u533A\u5757\uFF1A\u53F3\u8FB9\u7F18\u4E0E\u7528\u6237\u6C14\u6CE1\u7684\u53F3\u8FB9\u7F18\u5BF9\u9F50\uFF08\u7528\u6237\u6C14\u6CE1\u9760\u53F3\u3001\u53F3\u8FB9\u7F18\u8D34\u5BB9\u5668\u53F3\u7AEF\uFF0C
    \u56E0\u6B64\u56DE\u590D\u5757\u6539\u4E3A\u62C9\u4F38\u6EE1\u5BBD\uFF0C\u4E0D\u518D\u7559\u53F3\u4FA7\u90A3\u4E00\u5C0F\u5757\u7A7A\u767D\uFF09 */
 .ts-msg-assistant { align-self:stretch; background:rgba(127,127,127,.14); border-radius:8px 8px 8px 2px; padding:5px 9px; max-width:none; white-space:pre-wrap; word-break:break-word; }
@@ -3850,7 +3944,7 @@ function injectProjectCenterStyles() {
 }
 
 // client/src/panel/DeskDock.tsx
-var import_react20 = require("react");
+var import_react21 = require("react");
 var import_react_dom6 = require("react-dom");
 
 // client/src/vendor/dockview.css
@@ -4773,10 +4867,10 @@ function SavingsColumn({
 }
 
 // client/src/panel/MainChat.tsx
-var import_react12 = require("react");
+var import_react13 = require("react");
 
 // client/src/panel/MsgList.tsx
-var import_react8 = require("react");
+var import_react9 = require("react");
 
 // client/src/panel/changes-card.tsx
 var import_react6 = require("react");
@@ -5424,8 +5518,103 @@ function MessageImages({ sessionId, images, align = "start", gallery }) {
   ] });
 }
 
-// client/src/panel/MsgList.tsx
+// client/src/panel/queued-message.tsx
+var import_react8 = require("react");
 var import_jsx_runtime7 = require("react/jsx-runtime");
+function QueuedMessage({ sessionId, message, gallery }) {
+  const [editing, setEditing] = (0, import_react8.useState)(false);
+  const [draft, setDraft] = (0, import_react8.useState)(message.content);
+  const [busy, setBusy] = (0, import_react8.useState)(false);
+  const [error, setError] = (0, import_react8.useState)("");
+  const mixed = (message.images?.length ?? 0) > 0;
+  const canEdit = !!message.queueId && !message.hasFiles;
+  const start = () => {
+    setDraft(message.content);
+    setError("");
+    setEditing(true);
+  };
+  const save = async () => {
+    if (busy) return;
+    setBusy(true);
+    setError("");
+    const result = await editQueuedMessage(sessionId, message, draft);
+    setBusy(false);
+    if (result.ok) {
+      setEditing(false);
+      return;
+    }
+    setError(result.error || "\u7F16\u8F91\u5931\u8D25");
+  };
+  return /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)(import_jsx_runtime7.Fragment, { children: [
+    editing ? /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("div", { className: "ts-msg-user ts-msg-queued is-editing", "data-queued-edit": "", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(
+        "textarea",
+        {
+          className: "ts-queue-edit-box",
+          value: draft,
+          onChange: (e) => setDraft(e.target.value),
+          placeholder: "\u7F16\u8F91\u8FD9\u6761\u6392\u961F\u6D88\u606F\u2026",
+          "aria-label": "\u7F16\u8F91\u6392\u961F\u6D88\u606F",
+          autoFocus: true,
+          onKeyDown: (e) => {
+            if (e.key === "Escape") {
+              e.preventDefault();
+              if (!busy) setEditing(false);
+              return;
+            }
+            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+              e.preventDefault();
+              void save();
+            }
+          }
+        }
+      ),
+      /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("div", { className: "ts-queue-edit-actions", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("span", { className: "ts-queue-edit-hint", children: mixed ? "\u56FE\u7247\u4F1A\u4FDD\u7559\uFF1B\u4FDD\u5B58\u540E\u8FD9\u6761\u4F1A\u79FB\u5230\u961F\u5C3E" : "\u53EA\u6539\u6587\u5B57\uFF0C\u6392\u961F\u4F4D\u7F6E\u4E0D\u53D8" }),
+        /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("button", { type: "button", className: "ts-btn ts-btn-sm", disabled: busy, onClick: () => setEditing(false), children: "\u53D6\u6D88" }),
+        /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(
+          "button",
+          {
+            type: "button",
+            className: "ts-btn ts-btn-sm ts-btn-primary",
+            disabled: busy || draft.trim() === "",
+            onClick: () => {
+              void save();
+            },
+            children: busy ? "\u4FDD\u5B58\u4E2D\u2026" : "\u4FDD\u5B58"
+          }
+        )
+      ] }),
+      error && /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("div", { className: "ts-queue-edit-error", role: "alert", children: error })
+    ] }) : /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("div", { className: "ts-msg-user ts-msg-queued", children: [
+      message.content,
+      /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(
+        "span",
+        {
+          className: "ts-queued-tag",
+          title: "\u4F1A\u8BDD\u6B63\u5FD9\uFF1A\u8FD9\u6761\u6D88\u606F\u5728\u5BBF\u4E3B\u6536\u4EF6\u7BB1\u961F\u5217\u91CC\uFF0C\u4E0B\u4E00\u8F6E\u5F00\u59CB\u65F6\u9001\u8FBE\u6A21\u578B\uFF08\u4E0E\u539F\u751F\u5BF9\u8BDD\u7684\u961F\u5217\u9762\u677F\u540C\u6E90\uFF09",
+          children: "\u6392\u961F\u4E2D"
+        }
+      ),
+      canEdit && /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(
+        "button",
+        {
+          type: "button",
+          className: "ts-queue-edit",
+          "data-queued-edit-btn": "",
+          onClick: start,
+          title: mixed ? "\u7F16\u8F91\u6587\u5B57\uFF08\u56FE\u7247\u4FDD\u7559\uFF1B\u4FDD\u5B58\u540E\u4F1A\u91CD\u65B0\u6392\u961F\u5230\u961F\u5C3E\uFF09" : "\u7F16\u8F91\u8FD9\u6761\u6392\u961F\u6D88\u606F\u7684\u6587\u5B57",
+          children: "\u7F16\u8F91"
+        }
+      ),
+      message.hasFiles && /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("span", { className: "ts-queue-edit is-off", title: "\u542B\u6587\u4EF6\u9644\u4EF6\uFF1A\u91CD\u653E\u4F1A\u4E22\u6587\u4EF6\uFF0C\u6682\u4E0D\u652F\u6301\u7F16\u8F91", children: "\u4E0D\u53EF\u7F16\u8F91" })
+    ] }),
+    message.images?.length ? /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(MessageImages, { sessionId, images: message.images, align: "end", gallery }) : null
+  ] });
+}
+
+// client/src/panel/MsgList.tsx
+var import_jsx_runtime8 = require("react/jsx-runtime");
 var MAX_TURNS = 40;
 var TURNS_PER_PAGE = 20;
 var TOP_LOAD_THRESHOLD = 32;
@@ -5482,9 +5671,9 @@ function fallbackCopyText(text) {
   }
 }
 function CopyButton({ text }) {
-  const [copied, setCopied] = (0, import_react8.useState)(false);
-  const timer = (0, import_react8.useRef)(null);
-  (0, import_react8.useEffect)(() => () => {
+  const [copied, setCopied] = (0, import_react9.useState)(false);
+  const timer = (0, import_react9.useRef)(null);
+  (0, import_react9.useEffect)(() => () => {
     if (timer.current) window.clearTimeout(timer.current);
   }, []);
   const handleCopy = (e) => {
@@ -5502,7 +5691,7 @@ function CopyButton({ text }) {
       markDone();
     }
   };
-  return /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(
+  return /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(
     "button",
     {
       type: "button",
@@ -5510,9 +5699,9 @@ function CopyButton({ text }) {
       onClick: handleCopy,
       title: copied ? "\u5DF2\u590D\u5236" : "\u590D\u5236\u5185\u5BB9",
       "aria-label": "\u590D\u5236\u5185\u5BB9",
-      children: copied ? "\u2713" : /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("svg", { width: "12", height: "12", viewBox: "0 0 16 16", fill: "none", "aria-hidden": "true", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("rect", { x: "5.75", y: "5.75", width: "8.5", height: "8.5", rx: "1.5", stroke: "currentColor", strokeWidth: "1.6" }),
-        /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("path", { d: "M10.25 5.75V4A1.75 1.75 0 0 0 8.5 2.25H4A1.75 1.75 0 0 0 2.25 4v4.5A1.75 1.75 0 0 0 4 10.25h1.75", stroke: "currentColor", strokeWidth: "1.6" })
+      children: copied ? "\u2713" : /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("svg", { width: "12", height: "12", viewBox: "0 0 16 16", fill: "none", "aria-hidden": "true", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("rect", { x: "5.75", y: "5.75", width: "8.5", height: "8.5", rx: "1.5", stroke: "currentColor", strokeWidth: "1.6" }),
+        /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("path", { d: "M10.25 5.75V4A1.75 1.75 0 0 0 8.5 2.25H4A1.75 1.75 0 0 0 2.25 4v4.5A1.75 1.75 0 0 0 4 10.25h1.75", stroke: "currentColor", strokeWidth: "1.6" })
       ] })
     }
   );
@@ -5521,7 +5710,7 @@ function MsgTime({ time, className, copyContent }) {
   const hasTime = typeof time === "number" && Number.isFinite(time) && time > 0;
   if (!hasTime) {
     if (!copyContent) return null;
-    return /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("span", { className: className ? `ts-msg-time ${className}` : "ts-msg-time", children: /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(CopyButton, { text: copyContent }) });
+    return /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("span", { className: className ? `ts-msg-time ${className}` : "ts-msg-time", children: /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(CopyButton, { text: copyContent }) });
   }
   const d = new Date(time);
   const now = /* @__PURE__ */ new Date();
@@ -5529,19 +5718,19 @@ function MsgTime({ time, className, copyContent }) {
   const hm = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
   const sameDay = d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
   const text = sameDay ? hm : d.getFullYear() === now.getFullYear() ? `${d.getMonth() + 1}\u6708${d.getDate()}\u65E5 ${hm}` : `${d.getFullYear()}\u5E74${d.getMonth() + 1}\u6708${d.getDate()}\u65E5 ${hm}`;
-  return /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("span", { className: className ? `ts-msg-time ${className}` : "ts-msg-time", title: d.toLocaleString("zh-CN"), children: [
-    /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("span", { className: "ts-msg-time-text", children: text }),
-    copyContent && /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(CopyButton, { text: copyContent })
+  return /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("span", { className: className ? `ts-msg-time ${className}` : "ts-msg-time", title: d.toLocaleString("zh-CN"), children: [
+    /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("span", { className: "ts-msg-time-text", children: text }),
+    copyContent && /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(CopyButton, { text: copyContent })
   ] });
 }
 function ProcItem({ msg }) {
-  const [open, setOpen] = (0, import_react8.useState)(false);
+  const [open, setOpen] = (0, import_react9.useState)(false);
   const isThink = msg.kind === "reasoning";
-  return /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("div", { className: `ts-proc-item${isThink ? " ts-proc-think" : ""}`, children: [
-    /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("div", { className: "ts-proc-item-head", children: [
-      /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("span", { className: "ts-proc-role", children: isThink ? "\u601D\u8003" : ROLE_LABELS[msg.role] || msg.role }),
-      /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(MsgTime, { time: msg.time, className: "ts-proc-time", copyContent: msg.content }),
-      /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(
+  return /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("div", { className: `ts-proc-item${isThink ? " ts-proc-think" : ""}`, children: [
+    /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("div", { className: "ts-proc-item-head", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("span", { className: "ts-proc-role", children: isThink ? "\u601D\u8003" : ROLE_LABELS[msg.role] || msg.role }),
+      /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(MsgTime, { time: msg.time, className: "ts-proc-time", copyContent: msg.content }),
+      /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(
         "button",
         {
           className: "ts-icon-btn ts-msg-toggle",
@@ -5551,75 +5740,75 @@ function ProcItem({ msg }) {
         }
       )
     ] }),
-    open ? /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("div", { className: "ts-msg-full", children: /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(RichText, { text: msg.content }) }) : /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("div", { className: "ts-msg-preview", children: oneLine(msg.content) })
+    open ? /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("div", { className: "ts-msg-full", children: /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(RichText, { text: msg.content }) }) : /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("div", { className: "ts-msg-preview", children: oneLine(msg.content) })
   ] });
 }
 function InjectionRow({ items }) {
-  const [open, setOpen] = (0, import_react8.useState)(false);
+  const [open, setOpen] = (0, import_react9.useState)(false);
   if (items.length === 0) return null;
   const label = (m) => INJECT_LABELS[m.injectKind ?? ""] ?? "\u4E0A\u4E0B\u6587\u6CE8\u5165";
-  return /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("div", { className: "ts-inject", children: [
-    /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)(
+  return /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("div", { className: "ts-inject", children: [
+    /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)(
       "button",
       {
         className: "ts-proc-head",
         title: `\u4E0A\u4E0B\u6587\u6CE8\u5165 ${items.length} \u6761\uFF08${items.map(label).join("\u3001")}\uFF09\uFF0C\u70B9\u5F00\u67E5\u770B\u6B63\u6587`,
         onClick: () => setOpen((v) => !v),
         children: [
-          /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("span", { className: "ts-proc-caret", children: open ? "\u25BE" : "\u25B8" }),
-          /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("span", { className: "ts-proc-lead", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("span", { className: "ts-proc-caret", children: open ? "\u25BE" : "\u25B8" }),
+          /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("span", { className: "ts-proc-lead", children: [
             "\u4E0A\u4E0B\u6587\u6CE8\u5165 ",
             items.length,
             " \u6761"
           ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("span", { className: "ts-dim", children: items.map(label).join("\u3001") })
+          /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("span", { className: "ts-dim", children: items.map(label).join("\u3001") })
         ]
       }
     ),
-    open && /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("div", { className: "ts-proc-body", onClick: collapseOnBodyClick(() => setOpen(false)), children: items.map((m, i) => /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("div", { className: "ts-proc-item ts-inject-item", children: [
-      /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("div", { className: "ts-proc-item-head", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("span", { className: "ts-proc-role", children: label(m) }),
-        /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(MsgTime, { time: m.time, className: "ts-proc-time", copyContent: m.content })
+    open && /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("div", { className: "ts-proc-body", onClick: collapseOnBodyClick(() => setOpen(false)), children: items.map((m, i) => /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("div", { className: "ts-proc-item ts-inject-item", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("div", { className: "ts-proc-item-head", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("span", { className: "ts-proc-role", children: label(m) }),
+        /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(MsgTime, { time: m.time, className: "ts-proc-time", copyContent: m.content })
       ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("div", { className: "ts-msg-full", children: /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(RichText, { text: m.content }) })
+      /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("div", { className: "ts-msg-full", children: /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(RichText, { text: m.content }) })
     ] }, i)) })
   ] });
 }
 function ProcessGroup({ items, sessionId, gallery }) {
-  const [open, setOpen] = (0, import_react8.useState)(false);
+  const [open, setOpen] = (0, import_react9.useState)(false);
   const tools = items.filter((m) => m.role === "tool").length;
   const thinks = items.filter((m) => m.kind === "reasoning").length;
   const withImages = items.filter((m) => (m.images?.length ?? 0) > 0);
-  return /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("div", { className: "ts-proc", children: [
-    /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)(
+  return /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("div", { className: "ts-proc", children: [
+    /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)(
       "button",
       {
         className: "ts-proc-head",
         title: `\u8FC7\u7A0B ${items.length} \u6B65${thinks > 0 ? ` \xB7 \u601D\u8003 ${thinks} \u6BB5` : ""}${tools > 0 ? ` \xB7 \u5DE5\u5177 ${tools} \u6B21` : ""}`,
         onClick: () => setOpen((v) => !v),
         children: [
-          /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("span", { className: "ts-proc-caret", children: open ? "\u25BE" : "\u25B8" }),
-          /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("span", { className: "ts-proc-lead", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("span", { className: "ts-proc-caret", children: open ? "\u25BE" : "\u25B8" }),
+          /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("span", { className: "ts-proc-lead", children: [
             "\u8FC7\u7A0B ",
             items.length,
             " \u6B65"
           ] }),
-          thinks > 0 && /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("span", { className: "ts-dim", children: [
+          thinks > 0 && /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("span", { className: "ts-dim", children: [
             "\u601D\u8003 ",
             thinks,
             " \u6BB5"
           ] }),
-          tools > 0 && /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("span", { className: "ts-dim", children: [
+          tools > 0 && /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("span", { className: "ts-dim", children: [
             "\u5DE5\u5177 ",
             tools,
             " \u6B21"
           ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(MsgTime, { time: items[items.length - 1]?.time, className: "ts-proc-time" })
+          /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(MsgTime, { time: items[items.length - 1]?.time, className: "ts-proc-time" })
         ]
       }
     ),
-    withImages.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("div", { className: "ts-proc-images", children: withImages.map((m, i) => /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(MessageImages, { sessionId, images: m.images, align: "start", gallery }, `img${i}`)) }),
-    open && /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("div", { className: "ts-proc-body", onClick: collapseOnBodyClick(() => setOpen(false)), children: items.map((m, i) => /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(ProcItem, { msg: m }, i)) })
+    withImages.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("div", { className: "ts-proc-images", children: withImages.map((m, i) => /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(MessageImages, { sessionId, images: m.images, align: "start", gallery }, `img${i}`)) }),
+    open && /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("div", { className: "ts-proc-body", onClick: collapseOnBodyClick(() => setOpen(false)), children: items.map((m, i) => /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(ProcItem, { msg: m }, i)) })
   ] });
 }
 function splitTurn(turn) {
@@ -5668,15 +5857,15 @@ function splitTurn(turn) {
   return { users, injects, proc, answer, notice, queued, edits, changesSeq, retries };
 }
 function TurnNoticeRow({ notice }) {
-  const [open, setOpen] = (0, import_react8.useState)(false);
+  const [open, setOpen] = (0, import_react9.useState)(false);
   const fatal = notice.kind === "error" || notice.kind === "blocked";
   const label = notice.kind === "max-tokens" ? "\u8F93\u51FA\u88AB\u622A\u65AD" : notice.kind === "aborted" ? "\u672C\u8F6E\u5DF2\u4E2D\u6B62" : notice.kind === "interrupted" ? "\u672C\u8F6E\u5DF2\u4E2D\u65AD" : notice.kind === "blocked" ? "\u672C\u8F6E\u88AB\u963B\u65AD" : "\u672C\u8F6E\u8FD0\u884C\u5931\u8D25";
-  return /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("div", { className: `ts-turn-notice${fatal ? " ts-turn-notice-fatal" : ""}`, children: [
-    /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("div", { className: "ts-turn-notice-head", children: [
-      /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("span", { className: "ts-turn-notice-icon", "aria-hidden": "true", children: fatal ? "\u26D4" : "\u26A0\uFE0F" }),
-      /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("span", { className: "ts-turn-notice-label", children: label }),
-      notice.code && /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("span", { className: "ts-turn-notice-code", children: notice.code }),
-      /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(
+  return /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("div", { className: `ts-turn-notice${fatal ? " ts-turn-notice-fatal" : ""}`, children: [
+    /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("div", { className: "ts-turn-notice-head", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("span", { className: "ts-turn-notice-icon", "aria-hidden": "true", children: fatal ? "\u26D4" : "\u26A0\uFE0F" }),
+      /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("span", { className: "ts-turn-notice-label", children: label }),
+      notice.code && /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("span", { className: "ts-turn-notice-code", children: notice.code }),
+      /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(
         "button",
         {
           className: "ts-icon-btn ts-msg-toggle",
@@ -5686,7 +5875,7 @@ function TurnNoticeRow({ notice }) {
         }
       )
     ] }),
-    open ? /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("div", { className: "ts-turn-notice-body", children: /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(RichText, { text: notice.message }) }) : /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("div", { className: "ts-turn-notice-preview", children: oneLine(notice.message) })
+    open ? /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("div", { className: "ts-turn-notice-body", children: /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(RichText, { text: notice.message }) }) : /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("div", { className: "ts-turn-notice-preview", children: oneLine(notice.message) })
   ] });
 }
 function retryFailureText(retry) {
@@ -5701,11 +5890,11 @@ function retryFailureText(retry) {
   }
 }
 function ModelRetryRow({ retry }) {
-  const [open, setOpen] = (0, import_react8.useState)(false);
+  const [open, setOpen] = (0, import_react9.useState)(false);
   const active = retry.state === "scheduled";
-  const deadline = (0, import_react8.useMemo)(() => Date.now() + retry.delayMs, [retry.retryId, retry.delayMs]);
-  const [seconds, setSeconds] = (0, import_react8.useState)(() => Math.max(1, Math.ceil(retry.delayMs / 1e3)));
-  (0, import_react8.useEffect)(() => {
+  const deadline = (0, import_react9.useMemo)(() => Date.now() + retry.delayMs, [retry.retryId, retry.delayMs]);
+  const [seconds, setSeconds] = (0, import_react9.useState)(() => Math.max(1, Math.ceil(retry.delayMs / 1e3)));
+  (0, import_react9.useEffect)(() => {
     if (!active) return;
     const tick = () => {
       const left = Math.max(1, Math.ceil((deadline - Date.now()) / 1e3));
@@ -5721,8 +5910,8 @@ function ModelRetryRow({ retry }) {
   const label = active ? "\u6B63\u5728\u91CD\u8BD5\u6A21\u578B\u8BF7\u6C42" : retry.state === "cancelled" ? "\u6A21\u578B\u8BF7\u6C42\u91CD\u8BD5\u5DF2\u53D6\u6D88" : "\u5DF2\u91CD\u8BD5\u6A21\u578B\u8BF7\u6C42";
   const maximum = retry.maxRetries === void 0 ? "\u221E" : retry.maxRetries;
   const shownSeconds = active ? seconds : Math.max(1, Math.ceil(retry.delayMs / 1e3));
-  return /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("div", { className: `ts-retry-row${active ? " is-active" : ""}`, children: [
-    /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)(
+  return /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("div", { className: `ts-retry-row${active ? " is-active" : ""}`, children: [
+    /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)(
       "button",
       {
         type: "button",
@@ -5731,8 +5920,8 @@ function ModelRetryRow({ retry }) {
         title: open ? "\u6536\u8D77\u91CD\u8BD5\u8BE6\u60C5" : "\u5C55\u5F00\u91CD\u8BD5\u8BE6\u60C5\uFF08\u5EF6\u8FDF / \u5931\u8D25\u539F\u56E0\uFF09",
         "aria-expanded": open,
         children: [
-          /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("span", { className: "ts-retry-dot", "aria-hidden": "true" }),
-          /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("span", { className: "ts-retry-text", role: "status", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("span", { className: "ts-retry-dot", "aria-hidden": "true" }),
+          /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("span", { className: "ts-retry-text", role: "status", children: [
             label,
             "\uFF08",
             retry.retry,
@@ -5742,18 +5931,18 @@ function ModelRetryRow({ retry }) {
             shownSeconds,
             "s"
           ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("span", { className: "ts-retry-caret", "aria-hidden": "true", children: open ? "\u25B4" : "\u25BE" })
+          /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("span", { className: "ts-retry-caret", "aria-hidden": "true", children: open ? "\u25B4" : "\u25BE" })
         ]
       }
     ),
-    open && /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("div", { className: "ts-retry-detail", children: [
-      /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("div", { children: [
-        /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("span", { className: "ts-retry-key", children: "\u91CD\u8BD5\u5EF6\u8FDF\uFF1A" }),
+    open && /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("div", { className: "ts-retry-detail", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("div", { children: [
+        /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("span", { className: "ts-retry-key", children: "\u91CD\u8BD5\u5EF6\u8FDF\uFF1A" }),
         Math.round(retry.delayMs),
         " \u6BEB\u79D2"
       ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("div", { children: [
-        /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("span", { className: "ts-retry-key", children: "\u5931\u8D25\u539F\u56E0\uFF1A" }),
+      /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("div", { children: [
+        /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("span", { className: "ts-retry-key", children: "\u5931\u8D25\u539F\u56E0\uFF1A" }),
         retryFailureText(retry)
       ] })
     ] })
@@ -5770,19 +5959,19 @@ function MsgList({
   sessionId = "",
   view = "all"
 }) {
-  (0, import_react8.useEffect)(() => {
+  (0, import_react9.useEffect)(() => {
     injectProjectCenterStyles();
   }, []);
-  const ref = (0, import_react8.useRef)(null);
-  const [windowTurns, setWindowTurns] = (0, import_react8.useState)(MAX_TURNS);
-  const pinnedRef = (0, import_react8.useRef)(true);
-  const [pinned, setPinned] = (0, import_react8.useState)(true);
-  const anchorRef = (0, import_react8.useRef)(null);
-  const anchorRafRef = (0, import_react8.useRef)(0);
-  const restoredAtRef = (0, import_react8.useRef)(0);
+  const ref = (0, import_react9.useRef)(null);
+  const [windowTurns, setWindowTurns] = (0, import_react9.useState)(MAX_TURNS);
+  const pinnedRef = (0, import_react9.useRef)(true);
+  const [pinned, setPinned] = (0, import_react9.useState)(true);
+  const anchorRef = (0, import_react9.useRef)(null);
+  const anchorRafRef = (0, import_react9.useRef)(0);
+  const restoredAtRef = (0, import_react9.useRef)(0);
   const NEAR_BOTTOM = 24;
   const JUMP_SHOW_MS = 5e3;
-  const rememberScroll = (0, import_react8.useCallback)(() => {
+  const rememberScroll = (0, import_react9.useCallback)(() => {
     const el = ref.current;
     if (!el || !followKey) return;
     const bottom = pinnedRef.current;
@@ -5792,13 +5981,13 @@ function MsgList({
       if (oldest !== void 0) SCROLL_MEMO.delete(oldest);
     }
   }, [followKey]);
-  (0, import_react8.useEffect)(() => rememberScroll, [rememberScroll]);
-  (0, import_react8.useEffect)(() => () => {
+  (0, import_react9.useEffect)(() => rememberScroll, [rememberScroll]);
+  (0, import_react9.useEffect)(() => () => {
     if (jumpTimerRef.current !== null) window.clearTimeout(jumpTimerRef.current);
   }, []);
-  const pendingRestoreRef = (0, import_react8.useRef)(null);
-  const memoKeyRef = (0, import_react8.useRef)(followKey);
-  (0, import_react8.useLayoutEffect)(() => {
+  const pendingRestoreRef = (0, import_react9.useRef)(null);
+  const memoKeyRef = (0, import_react9.useRef)(followKey);
+  (0, import_react9.useLayoutEffect)(() => {
     const el = ref.current;
     if (!el) return;
     const sameSession = memoKeyRef.current === followKey;
@@ -5820,7 +6009,7 @@ function MsgList({
     pendingRestoreRef.current = null;
     el.scrollTop = el.scrollHeight;
   }, [followKey]);
-  (0, import_react8.useLayoutEffect)(() => {
+  (0, import_react9.useLayoutEffect)(() => {
     const p = pendingRestoreRef.current;
     const el = ref.current;
     if (!p || !el) return;
@@ -5829,7 +6018,7 @@ function MsgList({
     el.scrollTop = Math.min(p.top, Math.max(0, el.scrollHeight - el.clientHeight));
     restoredAtRef.current = Date.now();
   });
-  const turns = (0, import_react8.useMemo)(() => {
+  const turns = (0, import_react9.useMemo)(() => {
     const out = [];
     for (const m of messages) {
       if (m.role === "user" && !m.injected && !m.queued || out.length === 0) out.push([]);
@@ -5839,8 +6028,8 @@ function MsgList({
   }, [messages]);
   const shownTurns = turns.length > windowTurns ? turns.slice(-windowTurns) : turns;
   const hiddenTurns = turns.length - shownTurns.length;
-  const parsed = (0, import_react8.useMemo)(() => shownTurns.map(splitTurn), [shownTurns]);
-  const visible = (0, import_react8.useMemo)(
+  const parsed = (0, import_react9.useMemo)(() => shownTurns.map(splitTurn), [shownTurns]);
+  const visible = (0, import_react9.useMemo)(
     () => parsed.map((t) => ({
       users: view === "agent" ? [] : t.users,
       queued: view === "agent" ? [] : t.queued,
@@ -5858,7 +6047,7 @@ function MsgList({
     })).filter((t) => t.users.length > 0 || t.injects.length > 0 || t.proc.length > 0 || t.retries.length > 0 || !!t.answer || !!t.notice || t.queued.length > 0),
     [parsed, view]
   );
-  const visibleKeys = (0, import_react8.useMemo)(
+  const visibleKeys = (0, import_react9.useMemo)(
     () => visible.map((t) => {
       const last = t.answer ?? t.proc[t.proc.length - 1] ?? t.injects[t.injects.length - 1] ?? t.users[t.users.length - 1];
       if (!last) return "e";
@@ -5870,7 +6059,7 @@ function MsgList({
     }),
     [visible]
   );
-  const galleryImages = (0, import_react8.useMemo)(() => {
+  const galleryImages = (0, import_react9.useMemo)(() => {
     const all = [];
     for (const t of visible) {
       for (const m of t.users) if (m.images?.length) all.push(...m.images);
@@ -5882,7 +6071,7 @@ function MsgList({
   }, [visible]);
   const hasHiddenInDom = hiddenTurns > 0;
   const canLoadOlder = hasHiddenInDom || hasMore && !!onLoadOlder;
-  const startOlderAnchor = (0, import_react8.useCallback)(() => {
+  const startOlderAnchor = (0, import_react9.useCallback)(() => {
     const el = ref.current;
     if (!el) return;
     const r = el.getBoundingClientRect();
@@ -5929,7 +6118,7 @@ function MsgList({
     };
     anchorRafRef.current = requestAnimationFrame(step);
   }, []);
-  const requestOlder = (0, import_react8.useCallback)(() => {
+  const requestOlder = (0, import_react9.useCallback)(() => {
     const el = ref.current;
     if (!el) return;
     if (Date.now() - restoredAtRef.current < 150) return;
@@ -5942,29 +6131,29 @@ function MsgList({
     startOlderAnchor();
     void onLoadOlder();
   }, [hasHiddenInDom, hasMore, loadingOlder, onLoadOlder]);
-  const userIntentAtRef = (0, import_react8.useRef)(0);
-  const lastTopRef = (0, import_react8.useRef)(null);
-  const upwardRef = (0, import_react8.useRef)(false);
-  const downPxRef = (0, import_react8.useRef)(0);
-  const settleUntilRef = (0, import_react8.useRef)(0);
-  const settleRafRef = (0, import_react8.useRef)(0);
-  const suspendFollow = (0, import_react8.useCallback)(() => {
+  const userIntentAtRef = (0, import_react9.useRef)(0);
+  const lastTopRef = (0, import_react9.useRef)(null);
+  const upwardRef = (0, import_react9.useRef)(false);
+  const downPxRef = (0, import_react9.useRef)(0);
+  const settleUntilRef = (0, import_react9.useRef)(0);
+  const settleRafRef = (0, import_react9.useRef)(0);
+  const suspendFollow = (0, import_react9.useCallback)(() => {
     if (pinnedRef.current) {
       pinnedRef.current = false;
       setPinned(false);
     }
     settleUntilRef.current = 0;
   }, []);
-  const [jumpVisible, setJumpVisible] = (0, import_react8.useState)(false);
-  const jumpTimerRef = (0, import_react8.useRef)(null);
-  const hideJump = (0, import_react8.useCallback)(() => {
+  const [jumpVisible, setJumpVisible] = (0, import_react9.useState)(false);
+  const jumpTimerRef = (0, import_react9.useRef)(null);
+  const hideJump = (0, import_react9.useCallback)(() => {
     if (jumpTimerRef.current !== null) {
       window.clearTimeout(jumpTimerRef.current);
       jumpTimerRef.current = null;
     }
     setJumpVisible(false);
   }, []);
-  const revealJump = (0, import_react8.useCallback)(() => {
+  const revealJump = (0, import_react9.useCallback)(() => {
     const el = ref.current;
     if (!el) return;
     if (el.scrollHeight - el.clientHeight <= NEAR_BOTTOM) {
@@ -5980,7 +6169,7 @@ function MsgList({
       return true;
     });
   }, [NEAR_BOTTOM, JUMP_SHOW_MS, hideJump]);
-  (0, import_react8.useEffect)(() => {
+  (0, import_react9.useEffect)(() => {
     const el = ref.current;
     if (!el) return;
     const mark = () => {
@@ -6022,7 +6211,7 @@ function MsgList({
       for (const t of types) el.removeEventListener(t, mark, opts);
     };
   }, [suspendFollow]);
-  const forceBottom = (0, import_react8.useCallback)(() => {
+  const forceBottom = (0, import_react9.useCallback)(() => {
     const node = ref.current;
     if (!node) return false;
     const target = node.scrollHeight - node.clientHeight;
@@ -6030,7 +6219,7 @@ function MsgList({
     node.scrollTop = target;
     return true;
   }, []);
-  const scrollToBottom = (0, import_react8.useCallback)(() => {
+  const scrollToBottom = (0, import_react9.useCallback)(() => {
     upwardRef.current = false;
     downPxRef.current = 0;
     forceBottom();
@@ -6038,7 +6227,7 @@ function MsgList({
     setPinned(true);
     hideJump();
   }, [forceBottom, hideJump]);
-  const runSettle = (0, import_react8.useCallback)(() => {
+  const runSettle = (0, import_react9.useCallback)(() => {
     settleRafRef.current = 0;
     if (performance.now() >= settleUntilRef.current) return;
     if (!pinnedRef.current) {
@@ -6048,11 +6237,11 @@ function MsgList({
     forceBottom();
     settleRafRef.current = requestAnimationFrame(runSettle);
   }, [forceBottom]);
-  const scheduleSettle = (0, import_react8.useCallback)(() => {
+  const scheduleSettle = (0, import_react9.useCallback)(() => {
     settleUntilRef.current = performance.now() + 1500;
     if (!settleRafRef.current) settleRafRef.current = requestAnimationFrame(runSettle);
   }, [runSettle]);
-  (0, import_react8.useEffect)(() => () => {
+  (0, import_react9.useEffect)(() => () => {
     if (settleRafRef.current) cancelAnimationFrame(settleRafRef.current);
     if (anchorRafRef.current) cancelAnimationFrame(anchorRafRef.current);
   }, []);
@@ -6102,54 +6291,50 @@ function MsgList({
     scrollToBottom();
     rememberScroll();
   };
-  (0, import_react8.useLayoutEffect)(() => {
+  (0, import_react9.useLayoutEffect)(() => {
     if (!pinnedRef.current) return;
     forceBottom();
     scheduleSettle();
   });
-  (0, import_react8.useEffect)(() => {
+  (0, import_react9.useEffect)(() => {
     setWindowTurns(MAX_TURNS);
   }, [followKey]);
-  return /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("div", { className: "ts-chat-wrap", children: [
-    (canLoadOlder || loadingOlder) && /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("div", { className: "ts-msgs-topbar", children: [
-      loadingOlder ? /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("span", { className: "ts-dim", children: "\u8F7D\u5165\u66F4\u65E9\u7684\u5386\u53F2\u2026" }) : /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("button", { className: "ts-btn ts-btn-sm", onClick: requestOlder, title: "\u5411\u56DE\u52A0\u8F7D\u66F4\u65E9\u7684\u804A\u5929\u8BB0\u5F55", children: "\u52A0\u8F7D\u66F4\u65E9" }),
-      hasHiddenInDom && /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("span", { className: "ts-dim", children: [
+  return /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("div", { className: "ts-chat-wrap", children: [
+    (canLoadOlder || loadingOlder) && /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("div", { className: "ts-msgs-topbar", children: [
+      loadingOlder ? /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("span", { className: "ts-dim", children: "\u8F7D\u5165\u66F4\u65E9\u7684\u5386\u53F2\u2026" }) : /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("button", { className: "ts-btn ts-btn-sm", onClick: requestOlder, title: "\u5411\u56DE\u52A0\u8F7D\u66F4\u65E9\u7684\u804A\u5929\u8BB0\u5F55", children: "\u52A0\u8F7D\u66F4\u65E9" }),
+      hasHiddenInDom && /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("span", { className: "ts-dim", children: [
         "\u5DF2\u6298\u53E0\u66F4\u65E9 ",
         hiddenTurns,
         " \u8F6E"
       ] })
     ] }),
-    /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("div", { className: "ts-chat-msgs", ref, onScroll: onScroll3, children: [
-      messages.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("div", { className: "ts-hint", children: emptyText ?? "\u7B49\u5F85\u4F1A\u8BDD\u6D88\u606F\u2026" }),
-      messages.length > 0 && visible.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("div", { className: "ts-hint", children: VIEW_EMPTY[view] }),
-      visible.map((t, ti) => /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("div", { className: "ts-turn", "data-turn-key": visibleKeys[ti], children: [
-        t.users.map((m, i) => /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("div", { className: "ts-msg-block ts-msg-block-user", children: [
-          m.content ? /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("div", { className: "ts-msg-user", children: m.content }) : null,
-          m.images?.length ? /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(MessageImages, { sessionId, images: m.images, align: "end", gallery: galleryImages }) : null,
-          /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(MsgTime, { time: m.time, copyContent: m.content })
+    /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("div", { className: "ts-chat-msgs", ref, onScroll: onScroll3, children: [
+      messages.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("div", { className: "ts-hint", children: emptyText ?? "\u7B49\u5F85\u4F1A\u8BDD\u6D88\u606F\u2026" }),
+      messages.length > 0 && visible.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("div", { className: "ts-hint", children: VIEW_EMPTY[view] }),
+      visible.map((t, ti) => /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("div", { className: "ts-turn", "data-turn-key": visibleKeys[ti], children: [
+        t.users.map((m, i) => /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("div", { className: "ts-msg-block ts-msg-block-user", children: [
+          m.content ? /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("div", { className: "ts-msg-user", children: m.content }) : null,
+          m.images?.length ? /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(MessageImages, { sessionId, images: m.images, align: "end", gallery: galleryImages }) : null,
+          /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(MsgTime, { time: m.time, copyContent: m.content })
         ] }, `u${i}`)),
-        /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(InjectionRow, { items: t.injects }),
-        t.proc.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(ProcessGroup, { items: t.proc, sessionId, gallery: galleryImages }),
-        t.retries.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("div", { className: "ts-retries", children: t.retries.map((m, i) => /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(ModelRetryRow, { retry: m.retry }, m.retry?.retryId ?? `retry${i}`)) }),
-        t.answer && /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("div", { className: "ts-msg-block ts-msg-block-assistant", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("div", { className: "ts-msg-assistant", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(RichText, { text: t.answer.content }),
-            t.answer.images?.length ? /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(MessageImages, { sessionId, images: t.answer.images, align: "start", gallery: galleryImages }) : null
+        /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(InjectionRow, { items: t.injects }),
+        t.proc.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(ProcessGroup, { items: t.proc, sessionId, gallery: galleryImages }),
+        t.retries.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("div", { className: "ts-retries", children: t.retries.map((m, i) => /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(ModelRetryRow, { retry: m.retry }, m.retry?.retryId ?? `retry${i}`)) }),
+        t.answer && /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("div", { className: "ts-msg-block ts-msg-block-assistant", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("div", { className: "ts-msg-assistant", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(RichText, { text: t.answer.content }),
+            t.answer.images?.length ? /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(MessageImages, { sessionId, images: t.answer.images, align: "start", gallery: galleryImages }) : null
           ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(MsgTime, { time: t.answer.time, copyContent: t.answer.content })
+          /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(MsgTime, { time: t.answer.time, copyContent: t.answer.content })
         ] }),
-        (t.changesSeq !== null || t.edits.length > 0) && /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(ChangesCard, { sessionId, seq: t.changesSeq, fallbackFiles: t.edits }),
-        t.notice && /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(TurnNoticeRow, { notice: t.notice.notice }),
-        t.queued.map((m, i) => /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("div", { className: "ts-msg-block ts-msg-block-user", "data-turn-queued": "", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("div", { className: "ts-msg-user ts-msg-queued", children: [
-            m.content,
-            /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("span", { className: "ts-queued-tag", title: "\u4F1A\u8BDD\u6B63\u5FD9\uFF1A\u8FD9\u6761\u6D88\u606F\u5728\u5BBF\u4E3B\u6536\u4EF6\u7BB1\u961F\u5217\u91CC\uFF0C\u4E0B\u4E00\u8F6E\u5F00\u59CB\u65F6\u9001\u8FBE\u6A21\u578B\uFF08\u4E0E\u539F\u751F\u5BF9\u8BDD\u7684\u961F\u5217\u9762\u677F\u540C\u6E90\uFF09", children: "\u6392\u961F\u4E2D" })
-          ] }),
-          m.images?.length ? /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(MessageImages, { sessionId, images: m.images, align: "end", gallery: galleryImages }) : null,
-          /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(MsgTime, { time: m.time, copyContent: m.content })
+        (t.changesSeq !== null || t.edits.length > 0) && /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(ChangesCard, { sessionId, seq: t.changesSeq, fallbackFiles: t.edits }),
+        t.notice && /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(TurnNoticeRow, { notice: t.notice.notice }),
+        t.queued.map((m, i) => /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("div", { className: "ts-msg-block ts-msg-block-user", "data-turn-queued": "", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(QueuedMessage, { sessionId, message: m, gallery: galleryImages }),
+          /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(MsgTime, { time: m.time, copyContent: m.content })
         ] }, `q${i}`))
       ] }, visibleKeys[ti] ?? ti)),
-      messages.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(
+      messages.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(
         "button",
         {
           className: "ts-jump-latest",
@@ -6166,7 +6351,7 @@ function MsgList({
 }
 
 // client/src/panel/agent-preset-chip.tsx
-var import_react9 = require("react");
+var import_react10 = require("react");
 var import_react_dom3 = require("react-dom");
 
 // client/src/panel/agent-preset.ts
@@ -6241,24 +6426,24 @@ async function probeAgentPresets() {
 }
 
 // client/src/panel/agent-preset-chip.tsx
-var import_jsx_runtime8 = require("react/jsx-runtime");
+var import_jsx_runtime9 = require("react/jsx-runtime");
 var MENU_W = 260;
 var MENU_MAX_H = 320;
 var ROSTER_TIMEOUT_MS = 1500;
 function presetIcon() {
-  return /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("svg", { width: "13", height: "13", viewBox: "0 0 14 14", "aria-hidden": "true", focusable: "false", children: [
-    /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("circle", { cx: "7", cy: "4", r: "2.4", fill: "none", stroke: "currentColor", strokeWidth: "1.2" }),
-    /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("path", { d: "M2.6 12c0-2.4 2-4.2 4.4-4.2s4.4 1.8 4.4 4.2", fill: "none", stroke: "currentColor", strokeWidth: "1.2", strokeLinecap: "round" })
+  return /* @__PURE__ */ (0, import_jsx_runtime9.jsxs)("svg", { width: "13", height: "13", viewBox: "0 0 14 14", "aria-hidden": "true", focusable: "false", children: [
+    /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("circle", { cx: "7", cy: "4", r: "2.4", fill: "none", stroke: "currentColor", strokeWidth: "1.2" }),
+    /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("path", { d: "M2.6 12c0-2.4 2-4.2 4.4-4.2s4.4 1.8 4.4 4.2", fill: "none", stroke: "currentColor", strokeWidth: "1.2", strokeLinecap: "round" })
   ] });
 }
 function AgentPresetChip({ sessionId, editable }) {
-  const [rows, setRows] = (0, import_react9.useState)(null);
-  const [current2, setCurrent] = (0, import_react9.useState)("");
-  const [open, setOpen] = (0, import_react9.useState)(false);
-  const [notice, setNotice] = (0, import_react9.useState)(null);
-  const [pos, setPos] = (0, import_react9.useState)(null);
-  const anchorRef = (0, import_react9.useRef)(null);
-  (0, import_react9.useEffect)(() => {
+  const [rows, setRows] = (0, import_react10.useState)(null);
+  const [current2, setCurrent] = (0, import_react10.useState)("");
+  const [open, setOpen] = (0, import_react10.useState)(false);
+  const [notice, setNotice] = (0, import_react10.useState)(null);
+  const [pos, setPos] = (0, import_react10.useState)(null);
+  const anchorRef = (0, import_react10.useRef)(null);
+  (0, import_react10.useEffect)(() => {
     let alive = true;
     let settled = false;
     const finish = (rows2) => {
@@ -6275,7 +6460,7 @@ function AgentPresetChip({ sessionId, editable }) {
       window.clearTimeout(timer);
     };
   }, [sessionId]);
-  const placeMenu = (0, import_react9.useCallback)(() => {
+  const placeMenu = (0, import_react10.useCallback)(() => {
     const el = anchorRef.current;
     if (!el) return;
     const r = el.getBoundingClientRect();
@@ -6292,7 +6477,7 @@ function AgentPresetChip({ sessionId, editable }) {
     setOpen((v) => !v);
     setNotice(null);
   };
-  (0, import_react9.useEffect)(() => {
+  (0, import_react10.useEffect)(() => {
     if (!open) return;
     const onScroll3 = () => placeMenu();
     const onKey = (e) => {
@@ -6328,11 +6513,11 @@ function AgentPresetChip({ sessionId, editable }) {
       }
     });
   };
-  const chosen = (0, import_react9.useMemo)(() => rows?.find((r) => r.id === current2), [rows, current2]);
+  const chosen = (0, import_react10.useMemo)(() => rows?.find((r) => r.id === current2), [rows, current2]);
   const label = chosen ? presetLabel(chosen) : rows === null ? "\u6A21\u5F0F\u52A0\u8F7D\u4E2D\u2026" : "\u672A\u914D\u7F6E\u6A21\u5F0F";
   if (rows !== null && rows.length === 0) return null;
-  return /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)(import_jsx_runtime8.Fragment, { children: [
-    /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)(
+  return /* @__PURE__ */ (0, import_jsx_runtime9.jsxs)(import_jsx_runtime9.Fragment, { children: [
+    /* @__PURE__ */ (0, import_jsx_runtime9.jsxs)(
       "button",
       {
         ref: anchorRef,
@@ -6345,21 +6530,21 @@ function AgentPresetChip({ sessionId, editable }) {
         title: editable ? "\u9009\u62E9\u672C\u8F6E\u4F1A\u8BDD\u7684 Agent \u6A21\u5F0F\uFF08\u6807\u51C6 / PTC / \u6781\u7B80 / \u521B\u9020\uFF09" : "\u6A21\u5F0F\u5728\u4F1A\u8BDD\u5F00\u59CB\u540E\u56FA\u5B9A\uFF1A\u5386\u53F2\u662F\u5728\u8BE5\u6A21\u5F0F\u7684\u5DE5\u5177\u4E0E\u63D0\u793A\u8BCD\u4E0B\u4EA7\u751F\u7684\uFF0C\u5207\u6362\u4F1A\u81EA\u76F8\u77DB\u76FE",
         children: [
           presetIcon(),
-          /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("span", { className: "ts-preset-label", children: label }),
-          editable && /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("span", { className: "ts-preset-caret", "aria-hidden": "true", children: "\u25BE" })
+          /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("span", { className: "ts-preset-label", children: label }),
+          editable && /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("span", { className: "ts-preset-caret", "aria-hidden": "true", children: "\u25BE" })
         ]
       }
     ),
-    notice && /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("span", { className: "ts-preset-notice", role: "status", children: notice }),
+    notice && /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("span", { className: "ts-preset-notice", role: "status", children: notice }),
     open && pos && rows && (0, import_react_dom3.createPortal)(
-      /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(
+      /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(
         "div",
         {
           className: "ts-preset-menu",
           "data-ts-preset-menu": "",
           role: "menu",
           style: { left: pos.left, top: pos.top, width: pos.width, maxHeight: pos.maxHeight },
-          children: rows.map((r) => /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)(
+          children: rows.map((r) => /* @__PURE__ */ (0, import_jsx_runtime9.jsxs)(
             "button",
             {
               type: "button",
@@ -6368,8 +6553,8 @@ function AgentPresetChip({ sessionId, editable }) {
               className: `ts-preset-item${r.id === current2 ? " is-current" : ""}`,
               onClick: () => pick(r.id),
               children: [
-                /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("span", { className: "ts-preset-item-name", children: presetLabel(r) }),
-                /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("span", { className: "ts-preset-item-desc", children: presetDescription(r) })
+                /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("span", { className: "ts-preset-item-name", children: presetLabel(r) }),
+                /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("span", { className: "ts-preset-item-desc", children: presetDescription(r) })
               ]
             },
             r.id
@@ -6382,7 +6567,7 @@ function AgentPresetChip({ sessionId, editable }) {
 }
 
 // client/src/panel/chat-view.ts
-var import_react10 = require("react");
+var import_react11 = require("react");
 var CHAT_VIEWS = [
   { id: "all", label: "\u5168\u90E8", desc: "\u6211\u53D1\u7684 + \u6A21\u578B\u56DE\u590D\uFF08\u5DE5\u5177\u8FC7\u7A0B\u3001\u4E0A\u4E0B\u6587\u6CE8\u5165\u4ECD\u6298\u53E0\u6210\u4E00\u884C\uFF09" },
   { id: "user", label: "\u6211\u7684", desc: "\u53EA\u770B\u6211\u53D1\u7684\u6D88\u606F\uFF08\u9690\u85CF\u6A21\u578B\u56DE\u590D\u4E0E\u5DE5\u5177\u8FC7\u7A0B\uFF09" },
@@ -6431,8 +6616,8 @@ function subscribe(fn) {
 }
 function useChatView(scope) {
   const k = scope || "";
-  const [v, setV] = (0, import_react10.useState)(() => getChatView(k));
-  (0, import_react10.useEffect)(() => {
+  const [v, setV] = (0, import_react11.useState)(() => getChatView(k));
+  (0, import_react11.useEffect)(() => {
     setV(getChatView(k));
     return subscribe(() => setV(getChatView(k)));
   }, [k]);
@@ -6440,8 +6625,8 @@ function useChatView(scope) {
 }
 
 // client/src/panel/composer-status.tsx
-var import_react11 = require("react");
-var import_jsx_runtime9 = require("react/jsx-runtime");
+var import_react12 = require("react");
+var import_jsx_runtime10 = require("react/jsx-runtime");
 function turnStartMsOf(messages) {
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i];
@@ -6457,8 +6642,8 @@ function formatElapsed(sec) {
   return `${m}\u5206${String(r).padStart(2, "0")}\u79D2`;
 }
 function useRunning(sessionId) {
-  const [running, setRunning] = (0, import_react11.useState)(false);
-  (0, import_react11.useEffect)(() => {
+  const [running, setRunning] = (0, import_react12.useState)(false);
+  (0, import_react12.useEffect)(() => {
     if (!sessionId) {
       setRunning(false);
       return;
@@ -6491,22 +6676,22 @@ function useRunning(sessionId) {
 function ComposerRunBadge({ sessionId, messages }) {
   const running = useRunning(sessionId);
   const startMs = readTurnStartMs(sessionId) ?? turnStartMsOf(messages);
-  const [, tick] = (0, import_react11.useState)(0);
-  (0, import_react11.useEffect)(() => {
+  const [, tick] = (0, import_react12.useState)(0);
+  (0, import_react12.useEffect)(() => {
     if (!running) return;
     const t = window.setInterval(() => tick((n) => n + 1), 1e3);
     return () => window.clearInterval(t);
   }, [running]);
   if (!running || startMs == null) return null;
   const sec = Math.max(0, Math.round((Date.now() - startMs) / 1e3));
-  return /* @__PURE__ */ (0, import_jsx_runtime9.jsxs)(
+  return /* @__PURE__ */ (0, import_jsx_runtime10.jsxs)(
     "div",
     {
       className: "ts-run-badge",
       role: "status",
       title: "\u8FD9\u8F6E\u5BF9\u8BDD\u4ECE\u672C\u8F6E turn/start \u8D77\u8BA1\u65F6\uFF08\u4E0E\u539F\u751F\u5BF9\u8BDD tab \u540C\u53E3\u5F84\uFF09",
       children: [
-        /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("span", { className: "ts-run-dot", "aria-hidden": "true" }),
+        /* @__PURE__ */ (0, import_jsx_runtime10.jsx)("span", { className: "ts-run-dot", "aria-hidden": "true" }),
         "\u6DF1\u5EA6\u6C42\u7D22\u4E2D\uFF0C\u7528\u65F6",
         formatElapsed(sec),
         "\u2026"
@@ -6516,7 +6701,7 @@ function ComposerRunBadge({ sessionId, messages }) {
 }
 
 // client/src/panel/MainChat.tsx
-var import_jsx_runtime10 = require("react/jsx-runtime");
+var import_jsx_runtime11 = require("react/jsx-runtime");
 var WIDTH_PREF_KEY = "dsh.conversation.contentWidth";
 var CONTENT_MIN = 640;
 var CONTENT_EDGE_BUDGET = 176;
@@ -6558,8 +6743,8 @@ function WidthHandles() {
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
   };
-  return /* @__PURE__ */ (0, import_jsx_runtime10.jsxs)(import_jsx_runtime10.Fragment, { children: [
-    /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(
+  return /* @__PURE__ */ (0, import_jsx_runtime11.jsxs)(import_jsx_runtime11.Fragment, { children: [
+    /* @__PURE__ */ (0, import_jsx_runtime11.jsx)(
       "div",
       {
         className: "ts-chat-w ts-chat-w--left",
@@ -6568,7 +6753,7 @@ function WidthHandles() {
         onPointerDown: drag2(-1)
       }
     ),
-    /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(
+    /* @__PURE__ */ (0, import_jsx_runtime11.jsx)(
       "div",
       {
         className: "ts-chat-w ts-chat-w--right",
@@ -6580,14 +6765,14 @@ function WidthHandles() {
   ] });
 }
 function MainChat({ sessionId, actions }) {
-  const [messages, setMessages] = (0, import_react12.useState)([]);
+  const [messages, setMessages] = (0, import_react13.useState)([]);
   const [view, setView] = useChatView(sessionId);
   const blank = !messages.some((m) => m.role === "user" && !m.injected && !m.queued);
-  const [history, setHistory] = (0, import_react12.useState)({
+  const [history, setHistory] = (0, import_react13.useState)({
     hasMore: false,
     loadingOlder: false
   });
-  (0, import_react12.useEffect)(() => {
+  (0, import_react13.useEffect)(() => {
     if (!sessionId) {
       setMessages([]);
       return;
@@ -6595,7 +6780,7 @@ function MainChat({ sessionId, actions }) {
     const un = subscribeSession(sessionId, (list) => setMessages(list));
     return () => un();
   }, [sessionId]);
-  (0, import_react12.useEffect)(() => {
+  (0, import_react13.useEffect)(() => {
     if (!sessionId) {
       setHistory({ hasMore: false, loadingOlder: false });
       return;
@@ -6606,7 +6791,7 @@ function MainChat({ sessionId, actions }) {
       );
     });
   }, [sessionId]);
-  const stat = (0, import_react12.useMemo)(() => {
+  const stat = (0, import_react13.useMemo)(() => {
     let user = 0;
     let agent = 0;
     for (const m of messages) {
@@ -6620,11 +6805,11 @@ function MainChat({ sessionId, actions }) {
   }, [messages]);
   const shown = view === "user" ? stat.user : view === "agent" ? stat.agent : stat.total;
   const unit = CHAT_VIEW_UNIT[view];
-  const loadOlder = (0, import_react12.useCallback)(async () => {
+  const loadOlder = (0, import_react13.useCallback)(async () => {
     if (!sessionId) return;
     await loadOlderHistory(sessionId);
   }, [sessionId]);
-  const scrollHideRef = (0, import_react12.useRef)(null);
+  const scrollHideRef = (0, import_react13.useRef)(null);
   const onScrollArea = (e) => {
     const el = e.currentTarget;
     el.setAttribute("data-scrolling", "1");
@@ -6634,27 +6819,27 @@ function MainChat({ sessionId, actions }) {
       el.removeAttribute("data-scrolling");
     }, 900);
   };
-  (0, import_react12.useEffect)(() => {
+  (0, import_react13.useEffect)(() => {
     applyContentWidth(readContentWidth());
   }, []);
-  return /* @__PURE__ */ (0, import_jsx_runtime10.jsxs)("div", { className: "ts-mainchat", children: [
-    /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(WidthHandles, {}),
-    /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(ComposerRunBadge, { sessionId, messages }),
-    /* @__PURE__ */ (0, import_jsx_runtime10.jsxs)("div", { className: "ts-mainchat-head", children: [
-      /* @__PURE__ */ (0, import_jsx_runtime10.jsx)("span", { className: "ts-head-title", children: "DSH \u4E3B\u5BF9\u8BDD" }),
-      /* @__PURE__ */ (0, import_jsx_runtime10.jsx)("span", { className: "ts-head-preset", children: /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(AgentPresetChip, { sessionId, editable: blank }) }),
-      /* @__PURE__ */ (0, import_jsx_runtime10.jsxs)(
+  return /* @__PURE__ */ (0, import_jsx_runtime11.jsxs)("div", { className: "ts-mainchat", children: [
+    /* @__PURE__ */ (0, import_jsx_runtime11.jsx)(WidthHandles, {}),
+    /* @__PURE__ */ (0, import_jsx_runtime11.jsx)(ComposerRunBadge, { sessionId, messages }),
+    /* @__PURE__ */ (0, import_jsx_runtime11.jsxs)("div", { className: "ts-mainchat-head", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime11.jsx)("span", { className: "ts-head-title", children: "DSH \u4E3B\u5BF9\u8BDD" }),
+      /* @__PURE__ */ (0, import_jsx_runtime11.jsx)("span", { className: "ts-head-preset", children: /* @__PURE__ */ (0, import_jsx_runtime11.jsx)(AgentPresetChip, { sessionId, editable: blank }) }),
+      /* @__PURE__ */ (0, import_jsx_runtime11.jsxs)(
         "span",
         {
           className: "ts-head-mid ts-mainchat-mid",
           title: `\u5F53\u524D\u89C6\u56FE\u300C${CHAT_VIEWS.find((v) => v.id === view)?.label}\u300D\xB7 \u663E\u793A ${shown} ${unit}\uFF08\u4F1A\u8BDD\u5171 ${stat.total} \u884C \xB7 \u6211\u53D1\u7684 ${stat.user} \xB7 \u6A21\u578B\u56DE\u590D ${stat.agent}\uFF09
 ` + CHAT_VIEWS.map((v) => `${v.label}\uFF1A${v.desc}`).join("\n"),
           children: [
-            /* @__PURE__ */ (0, import_jsx_runtime10.jsxs)("span", { className: "ts-msgstat", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime10.jsx)("span", { className: "ts-msgstat-k", children: CHAT_VIEW_STAT[view] }),
+            /* @__PURE__ */ (0, import_jsx_runtime11.jsxs)("span", { className: "ts-msgstat", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime11.jsx)("span", { className: "ts-msgstat-k", children: CHAT_VIEW_STAT[view] }),
               shown
             ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime10.jsx)("span", { className: "ts-view-tabs", role: "group", "aria-label": "\u9605\u8BFB\u89C6\u56FE", children: CHAT_VIEWS.map((v) => /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(
+            /* @__PURE__ */ (0, import_jsx_runtime11.jsx)("span", { className: "ts-view-tabs", role: "group", "aria-label": "\u9605\u8BFB\u89C6\u56FE", children: CHAT_VIEWS.map((v) => /* @__PURE__ */ (0, import_jsx_runtime11.jsx)(
               "button",
               {
                 className: `ts-view-tab${v.id === view ? " is-on" : ""}`,
@@ -6671,7 +6856,7 @@ function MainChat({ sessionId, actions }) {
       ),
       actions
     ] }),
-    /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(
+    /* @__PURE__ */ (0, import_jsx_runtime11.jsx)(
       MsgList,
       {
         messages,
@@ -6689,7 +6874,7 @@ function MainChat({ sessionId, actions }) {
 }
 
 // client/src/panel/PreviewPanel.tsx
-var import_jsx_runtime11 = require("react/jsx-runtime");
+var import_jsx_runtime12 = require("react/jsx-runtime");
 function isLoopbackHost(host) {
   const h = String(host || "").toLowerCase();
   return h === "127.0.0.1" || h === "localhost" || h === "::1" || h === "[::1]" || h.startsWith("127.");
@@ -6732,13 +6917,13 @@ function PreviewPanel({
       console.warn("[tokensave] \u65B0\u7A97\u53E3\u6253\u5F00\u5931\u8D25", e);
     }
   };
-  return /* @__PURE__ */ (0, import_jsx_runtime11.jsxs)("section", { className: "ts-preview-panel", children: [
-    /* @__PURE__ */ (0, import_jsx_runtime11.jsxs)("div", { className: "ts-preview-bar", children: [
-      /* @__PURE__ */ (0, import_jsx_runtime11.jsx)("span", { className: "ts-preview-title", children: "\u9879\u76EE\u9884\u89C8" }),
-      /* @__PURE__ */ (0, import_jsx_runtime11.jsx)("span", { className: "ts-preview-url", title: url, children: url }),
-      devRunning && /* @__PURE__ */ (0, import_jsx_runtime11.jsx)("span", { className: "ts-tag ts-tag-live", children: "\u25CF \u5DF2\u542F\u52A8" }),
-      /* @__PURE__ */ (0, import_jsx_runtime11.jsxs)("span", { className: "ts-preview-ops", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime11.jsx)(
+  return /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)("section", { className: "ts-preview-panel", children: [
+    /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)("div", { className: "ts-preview-bar", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("span", { className: "ts-preview-title", children: "\u9879\u76EE\u9884\u89C8" }),
+      /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("span", { className: "ts-preview-url", title: url, children: url }),
+      devRunning && /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("span", { className: "ts-tag ts-tag-live", children: "\u25CF \u5DF2\u542F\u52A8" }),
+      /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)("span", { className: "ts-preview-ops", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
           "button",
           {
             type: "button",
@@ -6749,7 +6934,7 @@ function PreviewPanel({
             children: "\u5237\u65B0"
           }
         ),
-        /* @__PURE__ */ (0, import_jsx_runtime11.jsx)(
+        /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
           "button",
           {
             type: "button",
@@ -6763,7 +6948,7 @@ function PreviewPanel({
       ] }),
       actions
     ] }),
-    url ? /* @__PURE__ */ (0, import_jsx_runtime11.jsx)(
+    url ? /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
       "iframe",
       {
         className: "ts-preview-frame",
@@ -6771,13 +6956,13 @@ function PreviewPanel({
         title: `${project.name} \u9884\u89C8`
       },
       reloadKey
-    ) : /* @__PURE__ */ (0, import_jsx_runtime11.jsx)("div", { className: "ts-preview-empty", children: devKnown ? "\u9884\u89C8\u672A\u5C31\u7EEA\uFF1Adev server \u8FD8\u6CA1\u8FD0\u884C\u3002" : "\u6B63\u5728\u63A2\u6D4B dev server \u5730\u5740\u2026" })
+    ) : /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("div", { className: "ts-preview-empty", children: devKnown ? "\u9884\u89C8\u672A\u5C31\u7EEA\uFF1Adev server \u8FD8\u6CA1\u8FD0\u884C\u3002" : "\u6B63\u5728\u63A2\u6D4B dev server \u5730\u5740\u2026" })
   ] });
 }
 
 // client/src/panel/ExplorerWindow.tsx
-var import_react13 = __toESM(require("react"), 1);
-var import_jsx_runtime12 = require("react/jsx-runtime");
+var import_react14 = __toESM(require("react"), 1);
+var import_jsx_runtime13 = require("react/jsx-runtime");
 function ExplorerWindow({
   session,
   label,
@@ -6789,11 +6974,11 @@ function ExplorerWindow({
   onExitOverlay,
   onHide
 }) {
-  const [messages, setMessages] = import_react13.default.useState([]);
-  const localRef = (0, import_react13.useRef)(null);
+  const [messages, setMessages] = import_react14.default.useState([]);
+  const localRef = (0, import_react14.useRef)(null);
   const ref = overlay ? overlayRef ?? localRef : localRef;
   const running = session.state === "running";
-  (0, import_react13.useEffect)(() => {
+  (0, import_react14.useEffect)(() => {
     const un = subscribeSession(session.id, (list) => setMessages(list));
     return () => un();
   }, [session.id]);
@@ -6806,21 +6991,21 @@ function ExplorerWindow({
       });
     }
   };
-  return /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)(
+  return /* @__PURE__ */ (0, import_jsx_runtime13.jsxs)(
     "div",
     {
       className: `ts-win${collapsed && !overlay ? " collapsed" : ""}${overlay ? " ts-win-overlay" : ""}`,
       ref,
       children: [
-        /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)("div", { className: "ts-win-head", onDoubleClick: handleHeadDoubleClick, title: "\u53CC\u51FB\u5168\u5C4F", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("span", { className: `ts-win-dot${running ? "" : " idle"}` }),
-          /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("span", { className: "ts-win-name", children: label }),
-          /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)("span", { className: "ts-head-mid ts-win-mid", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime13.jsxs)("div", { className: "ts-win-head", onDoubleClick: handleHeadDoubleClick, title: "\u53CC\u51FB\u5168\u5C4F", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime13.jsx)("span", { className: `ts-win-dot${running ? "" : " idle"}` }),
+          /* @__PURE__ */ (0, import_jsx_runtime13.jsx)("span", { className: "ts-win-name", children: label }),
+          /* @__PURE__ */ (0, import_jsx_runtime13.jsxs)("span", { className: "ts-head-mid ts-win-mid", children: [
             messages.length,
             " \u6761\u6D88\u606F"
           ] }),
-          overlay ? /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("span", { children: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("button", { className: "ts-icon-btn", onClick: onExitOverlay, title: "\u9000\u51FA\u5168\u5C4F", children: "\u2715" }) }) : /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)("span", { children: [
-            /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+          overlay ? /* @__PURE__ */ (0, import_jsx_runtime13.jsx)("span", { children: /* @__PURE__ */ (0, import_jsx_runtime13.jsx)("button", { className: "ts-icon-btn", onClick: onExitOverlay, title: "\u9000\u51FA\u5168\u5C4F", children: "\u2715" }) }) : /* @__PURE__ */ (0, import_jsx_runtime13.jsxs)("span", { children: [
+            /* @__PURE__ */ (0, import_jsx_runtime13.jsx)(
               "button",
               {
                 className: "ts-icon-btn",
@@ -6829,18 +7014,18 @@ function ExplorerWindow({
                 children: collapsed ? "\u25A1" : "\u2014"
               }
             ),
-            /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("button", { className: "ts-icon-btn", onClick: () => onOverlay(session.id), title: "\u6700\u5927\u5316", children: "\u26F6" }),
-            /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("button", { className: "ts-icon-btn", onClick: () => onHide(session.id), title: "\u9690\u85CF\u7A97\u53E3", children: "\u2715" })
+            /* @__PURE__ */ (0, import_jsx_runtime13.jsx)("button", { className: "ts-icon-btn", onClick: () => onOverlay(session.id), title: "\u6700\u5927\u5316", children: "\u26F6" }),
+            /* @__PURE__ */ (0, import_jsx_runtime13.jsx)("button", { className: "ts-icon-btn", onClick: () => onHide(session.id), title: "\u9690\u85CF\u7A97\u53E3", children: "\u2715" })
           ] })
         ] }),
-        (!collapsed || overlay) && /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("div", { className: "ts-win-body", children: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(MsgList, { messages, sessionId: session.id, emptyText: "\u7B49\u5F85\u8BE5\u63A2\u7D22\u8005\u54CD\u5E94\u2026" }) })
+        (!collapsed || overlay) && /* @__PURE__ */ (0, import_jsx_runtime13.jsx)("div", { className: "ts-win-body", children: /* @__PURE__ */ (0, import_jsx_runtime13.jsx)(MsgList, { messages, sessionId: session.id, emptyText: "\u7B49\u5F85\u8BE5\u63A2\u7D22\u8005\u54CD\u5E94\u2026" }) })
       ]
     }
   );
 }
 
 // client/src/panel/composer-dock.ts
-var import_react14 = require("react");
+var import_react15 = require("react");
 var COMPOSER_SEAT = '[data-conversation-region="composer"]';
 var PRE_DOCK_STYLES = /* @__PURE__ */ new WeakMap();
 var HOST_MODAL_MIN_Z = 100;
@@ -6858,7 +7043,7 @@ function isHostModalCover(hit, dockRoot, styleOf = (el) => getComputedStyle(el))
   return false;
 }
 function useDockNativeComposer(ref, enabled, aboveOverlay, deps, cellSelector) {
-  (0, import_react14.useLayoutEffect)(() => {
+  (0, import_react15.useLayoutEffect)(() => {
     const seedCell = ref.current;
     if (!seedCell || typeof document === "undefined") return;
     const initialSeat = document.querySelector(COMPOSER_SEAT);
@@ -7149,14 +7334,14 @@ function useDockNativeComposer(ref, enabled, aboveOverlay, deps, cellSelector) {
 }
 
 // client/src/panel/explorer-status.ts
-var import_react15 = require("react");
+var import_react16 = require("react");
 var NOTICE_TTL_MS = 10 * 60 * 1e3;
 function useExplorerBadges(explorers, seenAt) {
-  const [raw, setRaw] = (0, import_react15.useState)({});
-  const listRef = (0, import_react15.useRef)(explorers);
+  const [raw, setRaw] = (0, import_react16.useState)({});
+  const listRef = (0, import_react16.useRef)(explorers);
   listRef.current = explorers;
   const idKey = explorers.map((e) => e.id).join(",");
-  (0, import_react15.useEffect)(() => {
+  (0, import_react16.useEffect)(() => {
     if (!idKey) {
       setRaw({});
       return;
@@ -7203,9 +7388,9 @@ function useExplorerBadges(explorers, seenAt) {
 }
 
 // client/src/panel/ExplorerSettings.tsx
-var import_react16 = require("react");
+var import_react17 = require("react");
 var import_react_dom4 = require("react-dom");
-var import_jsx_runtime13 = require("react/jsx-runtime");
+var import_jsx_runtime14 = require("react/jsx-runtime");
 var POP_WIDTH = 300;
 function friendlyLoadError(message) {
   if (/Failed to fetch|NetworkError|Load failed/i.test(message)) {
@@ -7234,7 +7419,7 @@ function Switch({
   onToggle,
   tone
 }) {
-  return /* @__PURE__ */ (0, import_jsx_runtime13.jsx)(
+  return /* @__PURE__ */ (0, import_jsx_runtime14.jsx)(
     "button",
     {
       type: "button",
@@ -7248,7 +7433,7 @@ function Switch({
         e.stopPropagation();
         onToggle();
       },
-      children: /* @__PURE__ */ (0, import_jsx_runtime13.jsx)("span", { className: "ts-switch-knob", "aria-hidden": "true" })
+      children: /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("span", { className: "ts-switch-knob", "aria-hidden": "true" })
     }
   );
 }
@@ -7256,19 +7441,19 @@ function ExplorerSettings({
   variant = "text",
   place
 } = {}) {
-  const [open, setOpen] = (0, import_react16.useState)(false);
-  const [pos, setPos] = (0, import_react16.useState)(null);
-  const [data, setData] = (0, import_react16.useState)(null);
-  const [selected, setSelected] = (0, import_react16.useState)([]);
-  const [err, setErr] = (0, import_react16.useState)(null);
-  const [fromCache, setFromCache] = (0, import_react16.useState)(false);
-  const [loading, setLoading] = (0, import_react16.useState)(false);
-  const [busy, setBusy] = (0, import_react16.useState)(false);
-  const [attempt, setAttempt] = (0, import_react16.useState)(0);
-  const autoTriesRef = (0, import_react16.useRef)(0);
-  const boxRef = (0, import_react16.useRef)(null);
-  const popRef = (0, import_react16.useRef)(null);
-  (0, import_react16.useLayoutEffect)(() => {
+  const [open, setOpen] = (0, import_react17.useState)(false);
+  const [pos, setPos] = (0, import_react17.useState)(null);
+  const [data, setData] = (0, import_react17.useState)(null);
+  const [selected, setSelected] = (0, import_react17.useState)([]);
+  const [err, setErr] = (0, import_react17.useState)(null);
+  const [fromCache, setFromCache] = (0, import_react17.useState)(false);
+  const [loading, setLoading] = (0, import_react17.useState)(false);
+  const [busy, setBusy] = (0, import_react17.useState)(false);
+  const [attempt, setAttempt] = (0, import_react17.useState)(0);
+  const autoTriesRef = (0, import_react17.useRef)(0);
+  const boxRef = (0, import_react17.useRef)(null);
+  const popRef = (0, import_react17.useRef)(null);
+  (0, import_react17.useLayoutEffect)(() => {
     if (!open) return;
     const compute = place ?? defaultPlace;
     const apply3 = () => {
@@ -7293,7 +7478,7 @@ function ExplorerSettings({
       ro?.disconnect();
     };
   }, [open, attempt, place]);
-  (0, import_react16.useEffect)(() => {
+  (0, import_react17.useEffect)(() => {
     if (!open) return;
     let alive = true;
     let timer;
@@ -7334,7 +7519,7 @@ function ExplorerSettings({
       if (timer) window.clearTimeout(timer);
     };
   }, [open, attempt]);
-  (0, import_react16.useEffect)(() => {
+  (0, import_react17.useEffect)(() => {
     if (!open || !err) return;
     const again = () => setAttempt((n) => n + 1);
     const onVisible = () => {
@@ -7347,7 +7532,7 @@ function ExplorerSettings({
       window.removeEventListener("online", again);
     };
   }, [open, err]);
-  (0, import_react16.useEffect)(() => {
+  (0, import_react17.useEffect)(() => {
     if (!open) return;
     const onDoc = (e) => {
       if (!boxRef.current?.contains(e.target) && !popRef.current?.contains(e.target)) setOpen(false);
@@ -7422,8 +7607,8 @@ function ExplorerSettings({
     autoTriesRef.current = 0;
     setAttempt((n) => n + 1);
   };
-  return /* @__PURE__ */ (0, import_jsx_runtime13.jsxs)("span", { className: "ts-expset", ref: boxRef, children: [
-    variant === "icon" ? /* @__PURE__ */ (0, import_jsx_runtime13.jsxs)(
+  return /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("span", { className: "ts-expset", ref: boxRef, children: [
+    variant === "icon" ? /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)(
       "button",
       {
         className: "ts-tg",
@@ -7432,7 +7617,7 @@ function ExplorerSettings({
         onClick: () => setOpen((v) => !v),
         title: "\u63A2\u7D22\u8005\u8BBE\u7F6E\uFF1A\u81EA\u884C\u9009\u62E9\u54EA\u4E9B\u63A2\u7D22\u8005\u53C2\u4E0E\uFF08\u9ED8\u8BA4 / \u514D\u8D39 / \u6536\u8D39\uFF0C\u53EF\u9010\u4E2A\u6216\u6574\u7EC4\u5F00\u5173\uFF0C\u81F3\u5C11\u4FDD\u7559 1 \u4E2A\uFF09",
         children: [
-          /* @__PURE__ */ (0, import_jsx_runtime13.jsx)(
+          /* @__PURE__ */ (0, import_jsx_runtime14.jsx)(
             "span",
             {
               "aria-hidden": "true",
@@ -7441,10 +7626,10 @@ function ExplorerSettings({
               }
             }
           ),
-          total ? /* @__PURE__ */ (0, import_jsx_runtime13.jsx)("span", { className: "ts-tg-badge", children: total }) : null
+          total ? /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("span", { className: "ts-tg-badge", children: total }) : null
         ]
       }
-    ) : /* @__PURE__ */ (0, import_jsx_runtime13.jsxs)(
+    ) : /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)(
       "button",
       {
         className: `ts-btn ts-expset-btn${open ? " active" : ""}`,
@@ -7456,7 +7641,7 @@ function ExplorerSettings({
         ]
       }
     ),
-    open && (0, import_react_dom4.createPortal)(/* @__PURE__ */ (0, import_jsx_runtime13.jsxs)(
+    open && (0, import_react_dom4.createPortal)(/* @__PURE__ */ (0, import_jsx_runtime14.jsxs)(
       "div",
       {
         className: "ts-expset-pop",
@@ -7475,32 +7660,32 @@ function ExplorerSettings({
           visibility: pos ? "visible" : "hidden"
         },
         children: [
-          /* @__PURE__ */ (0, import_jsx_runtime13.jsxs)("div", { className: "ts-expset-head", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { className: "ts-expset-head", children: [
             "\u63A2\u7D22\u8005\u8BBE\u7F6E",
-            /* @__PURE__ */ (0, import_jsx_runtime13.jsx)("span", { className: "ts-expset-head-tip", children: fromCache ? "\u4E0A\u6B21\u52A0\u8F7D \xB7 \u6B63\u5728\u5237\u65B0" : "\u81F3\u5C11\u4FDD\u7559 1 \u4E2A\uFF1B\u9009\u62E9\u5373\u65F6\u4FDD\u5B58" })
+            /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("span", { className: "ts-expset-head-tip", children: fromCache ? "\u4E0A\u6B21\u52A0\u8F7D \xB7 \u6B63\u5728\u5237\u65B0" : "\u81F3\u5C11\u4FDD\u7559 1 \u4E2A\uFF1B\u9009\u62E9\u5373\u65F6\u4FDD\u5B58" })
           ] }),
-          err && /* @__PURE__ */ (0, import_jsx_runtime13.jsxs)("div", { className: "ts-expset-err", "data-desk-explorers-err": "", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime13.jsxs)("span", { className: "ts-expset-err-text", title: err, children: [
+          err && /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { className: "ts-expset-err", "data-desk-explorers-err": "", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("span", { className: "ts-expset-err-text", title: err, children: [
               "\u26A0\uFE0F ",
               friendlyLoadError(err)
             ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime13.jsx)("button", { className: "ts-expset-retry", type: "button", onClick: retry, disabled: loading, children: loading ? "\u91CD\u8BD5\u4E2D\u2026" : "\u91CD\u8BD5" })
+            /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("button", { className: "ts-expset-retry", type: "button", onClick: retry, disabled: loading, children: loading ? "\u91CD\u8BD5\u4E2D\u2026" : "\u91CD\u8BD5" })
           ] }),
-          loading && !data && /* @__PURE__ */ (0, import_jsx_runtime13.jsx)("div", { className: "ts-expset-empty", children: "\u52A0\u8F7D\u4E2D\u2026" }),
-          !loading && !data && !err && /* @__PURE__ */ (0, import_jsx_runtime13.jsx)("div", { className: "ts-expset-empty", children: "\uFF08\u6682\u65E0\u76EE\u5F55\uFF09" }),
+          loading && !data && /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("div", { className: "ts-expset-empty", children: "\u52A0\u8F7D\u4E2D\u2026" }),
+          !loading && !data && !err && /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("div", { className: "ts-expset-empty", children: "\uFF08\u6682\u65E0\u76EE\u5F55\uFF09" }),
           data?.groups.map((g) => {
             const usable = g.items.filter((i) => i.available);
             const allOn = usable.length > 0 && usable.every((i) => selectedModels.has(i.model));
             const onCount = g.items.filter((i) => selectedModels.has(i.model)).length;
-            return /* @__PURE__ */ (0, import_jsx_runtime13.jsxs)("div", { className: "ts-expset-group", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime13.jsxs)("div", { className: "ts-expset-group-head", children: [
-                /* @__PURE__ */ (0, import_jsx_runtime13.jsx)("span", { className: "ts-expset-group-name", children: g.label }),
-                /* @__PURE__ */ (0, import_jsx_runtime13.jsxs)("span", { className: "ts-expset-group-count", children: [
+            return /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { className: "ts-expset-group", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { className: "ts-expset-group-head", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("span", { className: "ts-expset-group-name", children: g.label }),
+                /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("span", { className: "ts-expset-group-count", children: [
                   onCount,
                   "/",
                   g.items.length
                 ] }),
-                /* @__PURE__ */ (0, import_jsx_runtime13.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime14.jsx)(
                   Switch,
                   {
                     tone: "group",
@@ -7511,9 +7696,9 @@ function ExplorerSettings({
                   }
                 )
               ] }),
-              g.items.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime13.jsx)("div", { className: "ts-expset-empty", children: "\uFF08\u6682\u65E0\u63A2\u7D22\u8005\uFF09" }),
-              g.items.map((it) => /* @__PURE__ */ (0, import_jsx_runtime13.jsxs)("div", { className: `ts-expset-row${it.available ? "" : " ts-expset-row-off"}`, children: [
-                /* @__PURE__ */ (0, import_jsx_runtime13.jsxs)(
+              g.items.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("div", { className: "ts-expset-empty", children: "\uFF08\u6682\u65E0\u63A2\u7D22\u8005\uFF09" }),
+              g.items.map((it) => /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { className: `ts-expset-row${it.available ? "" : " ts-expset-row-off"}`, children: [
+                /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)(
                   "span",
                   {
                     className: "ts-expset-name",
@@ -7521,11 +7706,11 @@ function ExplorerSettings({
 ${it.note}` : ""}${it.available ? "" : "\n\uFF08provider \u672A\u6CE8\u518C\uFF1A\u51ED\u636E\u672A\u914D\u7F6E\uFF0C\u6682\u4E0D\u53EF\u7528\uFF09"}`,
                     children: [
                       it.label,
-                      !it.available && /* @__PURE__ */ (0, import_jsx_runtime13.jsx)("span", { className: "ts-expset-tag", children: "\u4E0D\u53EF\u7528" })
+                      !it.available && /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("span", { className: "ts-expset-tag", children: "\u4E0D\u53EF\u7528" })
                     ]
                   }
                 ),
-                /* @__PURE__ */ (0, import_jsx_runtime13.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime14.jsx)(
                   Switch,
                   {
                     on: selectedModels.has(it.model),
@@ -7537,7 +7722,7 @@ ${it.note}` : ""}${it.available ? "" : "\n\uFF08provider \u672A\u6CE8\u518C\uFF1
               ] }, it.model))
             ] }, g.id);
           }),
-          busy && /* @__PURE__ */ (0, import_jsx_runtime13.jsx)("div", { className: "ts-expset-busy", children: "\u4FDD\u5B58\u4E2D\u2026" })
+          busy && /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("div", { className: "ts-expset-busy", children: "\u4FDD\u5B58\u4E2D\u2026" })
         ]
       }
     ), document.body)
@@ -7545,12 +7730,12 @@ ${it.note}` : ""}${it.available ? "" : "\n\uFF08provider \u672A\u6CE8\u518C\uFF1
 }
 
 // client/src/panel/SessionPicker.tsx
-var import_react18 = require("react");
+var import_react19 = require("react");
 var import_react_dom5 = require("react-dom");
 
 // client/src/panel/ConfirmDialog.tsx
-var import_react17 = require("react");
-var import_jsx_runtime14 = require("react/jsx-runtime");
+var import_react18 = require("react");
+var import_jsx_runtime15 = require("react/jsx-runtime");
 function ConfirmDialog({
   title,
   message,
@@ -7561,11 +7746,11 @@ function ConfirmDialog({
   onConfirm,
   onCancel
 }) {
-  const cancelRef = (0, import_react17.useRef)(null);
-  (0, import_react17.useEffect)(() => {
+  const cancelRef = (0, import_react18.useRef)(null);
+  (0, import_react18.useEffect)(() => {
     cancelRef.current?.focus();
   }, []);
-  (0, import_react17.useEffect)(() => {
+  (0, import_react18.useEffect)(() => {
     const onKey = (e) => {
       if (e.key === "Escape") {
         e.stopPropagation();
@@ -7575,25 +7760,25 @@ function ConfirmDialog({
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [onCancel]);
-  return /* @__PURE__ */ (0, import_jsx_runtime14.jsx)(
+  return /* @__PURE__ */ (0, import_jsx_runtime15.jsx)(
     "div",
     {
       className: "ts-modal-mask",
       onClick: (e) => {
         if (e.target === e.currentTarget) onCancel();
       },
-      children: /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { className: `ts-modal ts-confirm${danger ? " ts-confirm-danger" : ""}`, role: "alertdialog", "aria-modal": "true", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { className: "ts-modal-head", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("span", { children: [
+      children: /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("div", { className: `ts-modal ts-confirm${danger ? " ts-confirm-danger" : ""}`, role: "alertdialog", "aria-modal": "true", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("div", { className: "ts-modal-head", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("span", { children: [
             danger ? "\u26A0\uFE0F " : "",
             title
           ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("button", { className: "ts-icon-btn", onClick: onCancel, title: "\u5173\u95ED", children: "\u2715" })
+          /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("button", { className: "ts-icon-btn", onClick: onCancel, title: "\u5173\u95ED", children: "\u2715" })
         ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("div", { className: "ts-modal-body", children: /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("div", { className: "ts-confirm-msg", children: message }) }),
-        /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { className: "ts-modal-foot", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("button", { ref: cancelRef, className: "ts-btn", onClick: onCancel, disabled: busy, children: cancelText }),
-          /* @__PURE__ */ (0, import_jsx_runtime14.jsx)(
+        /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("div", { className: "ts-modal-body", children: /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("div", { className: "ts-confirm-msg", children: message }) }),
+        /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("div", { className: "ts-modal-foot", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("button", { ref: cancelRef, className: "ts-btn", onClick: onCancel, disabled: busy, children: cancelText }),
+          /* @__PURE__ */ (0, import_jsx_runtime15.jsx)(
             "button",
             {
               className: `ts-btn ${danger ? "ts-btn-danger-solid" : "ts-btn-primary"}`,
@@ -7609,7 +7794,7 @@ function ConfirmDialog({
 }
 
 // client/src/panel/SessionPicker.tsx
-var import_jsx_runtime15 = require("react/jsx-runtime");
+var import_jsx_runtime16 = require("react/jsx-runtime");
 function relTime(ms) {
   if (!ms) return "";
   const d = Date.now() - ms;
@@ -7620,25 +7805,25 @@ function relTime(ms) {
   return new Date(ms).toLocaleDateString("zh-CN", { month: "2-digit", day: "2-digit" });
 }
 function MarqueeTitle({ text, prefix }) {
-  const clipRef = (0, import_react18.useRef)(null);
-  const [shift, setShift] = (0, import_react18.useState)(0);
+  const clipRef = (0, import_react19.useRef)(null);
+  const [shift, setShift] = (0, import_react19.useState)(0);
   const measure = () => {
     const el = clipRef.current;
     if (!el) return;
     const over = el.scrollWidth - el.clientWidth;
     setShift(over > 4 ? over : 0);
   };
-  (0, import_react18.useEffect)(() => {
+  (0, import_react19.useEffect)(() => {
     measure();
   }, [text]);
-  return /* @__PURE__ */ (0, import_jsx_runtime15.jsx)(
+  return /* @__PURE__ */ (0, import_jsx_runtime16.jsx)(
     "span",
     {
       className: "ts-sess-item-title",
       ref: clipRef,
       title: text,
       onMouseEnter: measure,
-      children: /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)(
+      children: /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)(
         "span",
         {
           className: `ts-marquee${shift > 0 ? " ts-marquee-move" : ""}`,
@@ -7655,19 +7840,19 @@ function MarqueeTitle({ text, prefix }) {
 var ICON_HISTORY = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v3.5l2.5 1.5"/><path d="M12 21a9 9 0 1 1 .001-18.001A9 9 0 0 1 12 21z"/><path d="M3 12h2"/><path d="M19 12h2"/></svg>';
 var ICON_NEW = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>';
 function SessionPicker({ sessions, currentId, onPick, onNew, onArchived }) {
-  const [open, setOpen] = (0, import_react18.useState)(false);
-  const [busy, setBusy] = (0, import_react18.useState)(false);
-  const [pos, setPos] = (0, import_react18.useState)(null);
-  const boxRef = (0, import_react18.useRef)(null);
-  const popRef = (0, import_react18.useRef)(null);
-  const [menuFor, setMenuFor] = (0, import_react18.useState)(null);
-  const [renameFor, setRenameFor] = (0, import_react18.useState)(null);
-  const [renameName, setRenameName] = (0, import_react18.useState)("");
-  const [archiving, setArchiving] = (0, import_react18.useState)(null);
-  const [pendingArchive, setPendingArchive] = (0, import_react18.useState)(null);
-  const [notice, setNotice] = (0, import_react18.useState)(null);
+  const [open, setOpen] = (0, import_react19.useState)(false);
+  const [busy, setBusy] = (0, import_react19.useState)(false);
+  const [pos, setPos] = (0, import_react19.useState)(null);
+  const boxRef = (0, import_react19.useRef)(null);
+  const popRef = (0, import_react19.useRef)(null);
+  const [menuFor, setMenuFor] = (0, import_react19.useState)(null);
+  const [renameFor, setRenameFor] = (0, import_react19.useState)(null);
+  const [renameName, setRenameName] = (0, import_react19.useState)("");
+  const [archiving, setArchiving] = (0, import_react19.useState)(null);
+  const [pendingArchive, setPendingArchive] = (0, import_react19.useState)(null);
+  const [notice, setNotice] = (0, import_react19.useState)(null);
   const pinned = usePinnedSessions();
-  (0, import_react18.useLayoutEffect)(() => {
+  (0, import_react19.useLayoutEffect)(() => {
     if (!open) {
       setPos(null);
       return;
@@ -7698,8 +7883,8 @@ function SessionPicker({ sessions, currentId, onPick, onNew, onArchived }) {
       window.removeEventListener("scroll", place, true);
     };
   }, [open, sessions.length]);
-  const current2 = (0, import_react18.useMemo)(() => sessions.find((s) => s.id === currentId), [sessions, currentId]);
-  (0, import_react18.useEffect)(() => {
+  const current2 = (0, import_react19.useMemo)(() => sessions.find((s) => s.id === currentId), [sessions, currentId]);
+  (0, import_react19.useEffect)(() => {
     if (!open) return;
     const onDoc = (e) => {
       if (!boxRef.current?.contains(e.target) && !popRef.current?.contains(e.target)) setOpen(false);
@@ -7714,7 +7899,7 @@ function SessionPicker({ sessions, currentId, onPick, onNew, onArchived }) {
       document.removeEventListener("keydown", onKey);
     };
   }, [open]);
-  (0, import_react18.useEffect)(() => {
+  (0, import_react19.useEffect)(() => {
     if (!notice) return;
     const timer = window.setTimeout(() => setNotice(null), 4e3);
     return () => window.clearTimeout(timer);
@@ -7780,40 +7965,40 @@ function SessionPicker({ sessions, currentId, onPick, onNew, onArchived }) {
     const child = await forkSession(session.id);
     setNotice(child ? "\u5DF2\u5206\u53C9\uFF1A\u65B0\u4F1A\u8BDD\u5DF2\u51FA\u73B0\u5728\u5217\u8868\u4E2D" : "\u5206\u53C9\u5931\u8D25");
   };
-  return /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("span", { className: "ts-sess", ref: boxRef, children: [
-    /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)(
+  return /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("span", { className: "ts-sess", ref: boxRef, children: [
+    /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)(
       "button",
       {
         className: `ts-sb-btn ts-sess-btn${open ? " active" : ""}`,
         onClick: () => setOpen((v) => !v),
         title: "\u8BE5\u9879\u76EE\u7684\u5386\u53F2\u4F1A\u8BDD\uFF1A\u70B9\u9009\u5373\u5207\u6362\u8FC7\u53BB\uFF0C\u53EF\u76F4\u63A5\u7EE7\u7EED\u53D1\u8A00",
         children: [
-          /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("span", { className: "ts-sess-ico", "aria-hidden": "true", dangerouslySetInnerHTML: { __html: ICON_HISTORY } }),
-          /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("span", { children: [
+          /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { className: "ts-sess-ico", "aria-hidden": "true", dangerouslySetInnerHTML: { __html: ICON_HISTORY } }),
+          /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("span", { children: [
             "\u5386\u53F2\u4F1A\u8BDD\uFF08",
             sessions.length,
             "\uFF09"
           ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("span", { className: "ts-sess-cur", title: current2?.title || currentId, children: current2 ? current2.title : "\u5F53\u524D\u4F1A\u8BDD" }),
-          /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("span", { className: "ts-sess-caret", children: open ? "\u25B4" : "\u25BE" })
+          /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { className: "ts-sess-cur", title: current2?.title || currentId, children: current2 ? current2.title : "\u5F53\u524D\u4F1A\u8BDD" }),
+          /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { className: "ts-sess-caret", children: open ? "\u25B4" : "\u25BE" })
         ]
       }
     ),
-    /* @__PURE__ */ (0, import_jsx_runtime15.jsx)(
+    /* @__PURE__ */ (0, import_jsx_runtime16.jsx)(
       "button",
       {
         className: "ts-sb-btn ts-sess-new",
         onClick: handleNew,
         disabled: busy,
         title: "\u5728\u8BE5\u9879\u76EE\u4E0B\u5F00\u542F\u4E00\u4E2A\u65B0\u5BF9\u8BDD",
-        children: busy ? "\u65B0\u5EFA\u4E2D\u2026" : /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)(import_jsx_runtime15.Fragment, { children: [
-          /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("span", { className: "ts-sess-ico", "aria-hidden": "true", dangerouslySetInnerHTML: { __html: ICON_NEW } }),
+        children: busy ? "\u65B0\u5EFA\u4E2D\u2026" : /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)(import_jsx_runtime16.Fragment, { children: [
+          /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { className: "ts-sess-ico", "aria-hidden": "true", dangerouslySetInnerHTML: { __html: ICON_NEW } }),
           "\u65B0\u5EFA\u4F1A\u8BDD"
         ] })
       }
     ),
-    notice && /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("span", { className: "ts-sess-notice", title: notice, children: notice }),
-    open && (0, import_react_dom5.createPortal)(/* @__PURE__ */ (0, import_jsx_runtime15.jsxs)(
+    notice && /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { className: "ts-sess-notice", title: notice, children: notice }),
+    open && (0, import_react_dom5.createPortal)(/* @__PURE__ */ (0, import_jsx_runtime16.jsxs)(
       "div",
       {
         className: "ts-sess-pop",
@@ -7832,16 +8017,16 @@ function SessionPicker({ sessions, currentId, onPick, onNew, onArchived }) {
           visibility: pos ? void 0 : "hidden"
         },
         children: [
-          /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("div", { className: "ts-sess-pop-head", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("div", { className: "ts-sess-pop-head", children: [
             "\u5386\u53F2\u4F1A\u8BDD \xB7 ",
             sessions.length,
             " \u4E2A"
           ] }),
-          sessions.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("div", { className: "ts-sess-empty", children: "\u8BE5\u9879\u76EE\u8FD8\u6CA1\u6709\u5386\u53F2\u4F1A\u8BDD\u3002\u70B9\u300C\uFF0B \u65B0\u5EFA\u4F1A\u8BDD\u300D\u5F00\u59CB\u7B2C\u4E00\u4E2A\u5BF9\u8BDD\u3002" }) : /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("div", { className: "ts-sess-list", children: sessions.map((s) => {
+          sessions.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("div", { className: "ts-sess-empty", children: "\u8BE5\u9879\u76EE\u8FD8\u6CA1\u6709\u5386\u53F2\u4F1A\u8BDD\u3002\u70B9\u300C\uFF0B \u65B0\u5EFA\u4F1A\u8BDD\u300D\u5F00\u59CB\u7B2C\u4E00\u4E2A\u5BF9\u8BDD\u3002" }) : /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("div", { className: "ts-sess-list", children: sessions.map((s) => {
             const isPinned = pinned.has(s.id);
             const rowOpen = menuFor === s.id || renameFor === s.id;
-            return /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("div", { className: "ts-sess-row", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)(
+            return /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("div", { className: "ts-sess-row", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)(
                 "div",
                 {
                   className: `ts-sess-item${s.id === currentId ? " active" : ""}${rowOpen ? " ts-sess-item-open" : ""}`,
@@ -7860,14 +8045,14 @@ function SessionPicker({ sessions, currentId, onPick, onNew, onArchived }) {
                     onPick(s.id);
                   },
                   children: [
-                    /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("span", { className: `ts-win-dot${s.running ? "" : " idle"}` }),
-                    /* @__PURE__ */ (0, import_jsx_runtime15.jsx)(MarqueeTitle, { text: s.title, prefix: s.explorer ? "\u{1F50D} " : "" }),
-                    isPinned && /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("span", { className: "ts-sess-tag", title: "\u5DF2\u7F6E\u9876", children: "\u{1F4CC}" }),
-                    s.blank && /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("span", { className: "ts-sess-tag", children: "\u7A7A\u767D" }),
-                    /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("span", { className: "ts-sess-slot", children: [
-                      relTime(s.updatedAt) !== "" && /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("span", { className: "ts-sess-time", children: relTime(s.updatedAt) }),
-                      /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("span", { className: "ts-sess-rowops", children: [
-                        /* @__PURE__ */ (0, import_jsx_runtime15.jsx)(
+                    /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { className: `ts-win-dot${s.running ? "" : " idle"}` }),
+                    /* @__PURE__ */ (0, import_jsx_runtime16.jsx)(MarqueeTitle, { text: s.title, prefix: s.explorer ? "\u{1F50D} " : "" }),
+                    isPinned && /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { className: "ts-sess-tag", title: "\u5DF2\u7F6E\u9876", children: "\u{1F4CC}" }),
+                    s.blank && /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { className: "ts-sess-tag", children: "\u7A7A\u767D" }),
+                    /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("span", { className: "ts-sess-slot", children: [
+                      relTime(s.updatedAt) !== "" && /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { className: "ts-sess-time", children: relTime(s.updatedAt) }),
+                      /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("span", { className: "ts-sess-rowops", children: [
+                        /* @__PURE__ */ (0, import_jsx_runtime16.jsx)(
                           "button",
                           {
                             type: "button",
@@ -7883,7 +8068,7 @@ function SessionPicker({ sessions, currentId, onPick, onNew, onArchived }) {
                             children: "\u22EF"
                           }
                         ),
-                        /* @__PURE__ */ (0, import_jsx_runtime15.jsx)(
+                        /* @__PURE__ */ (0, import_jsx_runtime16.jsx)(
                           "button",
                           {
                             type: "button",
@@ -7902,8 +8087,8 @@ function SessionPicker({ sessions, currentId, onPick, onNew, onArchived }) {
                   ]
                 }
               ),
-              menuFor === s.id && /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("div", { className: "ts-sess-menu", role: "menu", children: [
-                /* @__PURE__ */ (0, import_jsx_runtime15.jsx)(
+              menuFor === s.id && /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("div", { className: "ts-sess-menu", role: "menu", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime16.jsx)(
                   "button",
                   {
                     type: "button",
@@ -7913,7 +8098,7 @@ function SessionPicker({ sessions, currentId, onPick, onNew, onArchived }) {
                     children: isPinned ? "\u{1F4CC} \u53D6\u6D88\u7F6E\u9876" : "\u{1F4CC} \u7F6E\u9876\u4F1A\u8BDD"
                   }
                 ),
-                /* @__PURE__ */ (0, import_jsx_runtime15.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime16.jsx)(
                   "button",
                   {
                     type: "button",
@@ -7923,7 +8108,7 @@ function SessionPicker({ sessions, currentId, onPick, onNew, onArchived }) {
                     children: "\u270F\uFE0F \u91CD\u547D\u540D"
                   }
                 ),
-                /* @__PURE__ */ (0, import_jsx_runtime15.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime16.jsx)(
                   "button",
                   {
                     type: "button",
@@ -7934,7 +8119,7 @@ function SessionPicker({ sessions, currentId, onPick, onNew, onArchived }) {
                     children: "\u{1F4E5} \u5F52\u6863"
                   }
                 ),
-                /* @__PURE__ */ (0, import_jsx_runtime15.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime16.jsx)(
                   "button",
                   {
                     type: "button",
@@ -7945,8 +8130,8 @@ function SessionPicker({ sessions, currentId, onPick, onNew, onArchived }) {
                   }
                 )
               ] }),
-              renameFor === s.id && /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("div", { className: "ts-sess-rename", children: [
-                /* @__PURE__ */ (0, import_jsx_runtime15.jsx)(
+              renameFor === s.id && /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("div", { className: "ts-sess-rename", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime16.jsx)(
                   "input",
                   {
                     className: "ts-input ts-sess-rename-input",
@@ -7963,7 +8148,7 @@ function SessionPicker({ sessions, currentId, onPick, onNew, onArchived }) {
                     }
                   }
                 ),
-                /* @__PURE__ */ (0, import_jsx_runtime15.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime16.jsx)(
                   "button",
                   {
                     type: "button",
@@ -7973,28 +8158,28 @@ function SessionPicker({ sessions, currentId, onPick, onNew, onArchived }) {
                     children: "\u4FDD\u5B58"
                   }
                 ),
-                /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("button", { type: "button", className: "ts-btn ts-btn-sm", onClick: () => setRenameFor(null), children: "\u53D6\u6D88" })
+                /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("button", { type: "button", className: "ts-btn ts-btn-sm", onClick: () => setRenameFor(null), children: "\u53D6\u6D88" })
               ] })
             ] }, s.id);
           }) })
         ]
       }
     ), document.body),
-    pendingArchive && /* @__PURE__ */ (0, import_jsx_runtime15.jsx)(
+    pendingArchive && /* @__PURE__ */ (0, import_jsx_runtime16.jsx)(
       ConfirmDialog,
       {
         title: "\u5F52\u6863\u4F1A\u8BDD",
         danger: true,
         confirmText: "\u505C\u6B62\u5E76\u5F52\u6863",
-        message: /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)(import_jsx_runtime15.Fragment, { children: [
-          /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("div", { className: "ts-confirm-lead", children: "\u8BE5\u4F1A\u8BDD\u6B63\u5728\u8FD0\u884C\uFF0C\u76F4\u63A5\u5F52\u6863\u4F1A\u88AB\u62D2\u7EDD\u3002" }),
-          /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("div", { className: "ts-confirm-target", children: /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("span", { className: "ts-confirm-name", children: [
+        message: /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)(import_jsx_runtime16.Fragment, { children: [
+          /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("div", { className: "ts-confirm-lead", children: "\u8BE5\u4F1A\u8BDD\u6B63\u5728\u8FD0\u884C\uFF0C\u76F4\u63A5\u5F52\u6863\u4F1A\u88AB\u62D2\u7EDD\u3002" }),
+          /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("div", { className: "ts-confirm-target", children: /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("span", { className: "ts-confirm-name", children: [
             "\u{1F4AC} ",
             pendingArchive.title
           ] }) }),
-          /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("div", { className: "ts-confirm-note", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("div", { className: "ts-confirm-note", children: [
             "\u70B9\u300C\u505C\u6B62\u5E76\u5F52\u6863\u300D\u4F1A",
-            /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("b", { children: "\u5148\u505C\u6B62\u5B83\u6B63\u5728\u8DD1\u7684\u5DE5\u4F5C" }),
+            /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("b", { children: "\u5148\u505C\u6B62\u5B83\u6B63\u5728\u8DD1\u7684\u5DE5\u4F5C" }),
             "\uFF0C\u518D\u628A\u5B83\u5F52\u6863\u3002 \u5F52\u6863\u53EA\u662F\u4ECE\u5217\u8868\u4E2D\u79FB\u51FA\uFF0C\u4F1A\u8BDD\u8BB0\u5F55\u4E0D\u4F1A\u5220\u9664\uFF0C\u4E4B\u540E\u53EF\u5728\u5BBF\u4E3B\u7684\u300C\u5DF2\u5F52\u6863\u300D\u91CC\u6062\u590D\u3002"
           ] })
         ] }),
@@ -8010,7 +8195,7 @@ function SessionPicker({ sessions, currentId, onPick, onNew, onArchived }) {
 }
 
 // client/src/panel/activity.ts
-var import_react19 = require("react");
+var import_react20 = require("react");
 function statusSnapshot(ctx) {
   try {
     const svc2 = readService(ctx, "uiSession");
@@ -8058,9 +8243,9 @@ function readProjectActivity(ctx, projectPath) {
   }));
 }
 function useProjectsActivity(projects) {
-  const [byProject, setByProject] = (0, import_react19.useState)({});
+  const [byProject, setByProject] = (0, import_react20.useState)({});
   const key = projects.map((p) => `${p.id}:${p.path}`).join("|");
-  (0, import_react19.useEffect)(() => {
+  (0, import_react20.useEffect)(() => {
     const ctx = getClientContext();
     if (!ctx || projects.length === 0) {
       setByProject({});
@@ -8105,9 +8290,9 @@ function useProjectsActivity(projects) {
   return byProject;
 }
 function useProjectLastActivity(projects) {
-  const [byProject, setByProject] = (0, import_react19.useState)({});
+  const [byProject, setByProject] = (0, import_react20.useState)({});
   const key = projects.map((p) => `${p.id}:${p.path}`).join("|");
-  (0, import_react19.useEffect)(() => {
+  (0, import_react20.useEffect)(() => {
     const ctx = getClientContext();
     if (!ctx || projects.length === 0) {
       setByProject({});
@@ -8813,7 +8998,7 @@ function iconSvg(name, size = 14) {
 }
 
 // client/src/panel/DeskDock.tsx
-var import_jsx_runtime16 = require("react/jsx-runtime");
+var import_jsx_runtime17 = require("react/jsx-runtime");
 var SNAPSHOT_KEY = (projectId) => `tokensave:desk-dock.v2:${projectId}`;
 var SAVED_KEY = (projectId) => `tokensave:desk-saved.v2:${projectId}`;
 var REGIONS_KEY = (projectId) => `tokensave:desk-regions.v1:${projectId}`;
@@ -9380,33 +9565,33 @@ function kindLabel(id) {
 }
 var NO_EXPLORERS = [];
 function DeskDock({ project, sessionId, onBack }) {
-  const leftHostRef = (0, import_react20.useRef)(null);
-  const centerHostRef = (0, import_react20.useRef)(null);
-  const rightHostRef = (0, import_react20.useRef)(null);
-  const chatCellRef = (0, import_react20.useRef)(null);
-  const dockRootRef = (0, import_react20.useRef)(null);
-  const dragPanelRef = (0, import_react20.useRef)("");
-  const autoSessionRef = (0, import_react20.useRef)(false);
-  const apiRef = (0, import_react20.useRef)(null);
-  const containersRef = (0, import_react20.useRef)({});
-  const closedRef = (0, import_react20.useRef)(new Set(readClosed(project.id)));
-  const suppressDirtyRef = (0, import_react20.useRef)(false);
-  const restoredFromSnapshotRef = (0, import_react20.useRef)(false);
-  const resetToBuiltinRef = (0, import_react20.useRef)(null);
-  const paneOptsRef = (0, import_react20.useRef)(() => null);
-  const [, bump] = (0, import_react20.useState)(0);
-  const [data, setData] = (0, import_react20.useState)({ explorers: [] });
-  const peekDevUrlRef = (0, import_react20.useRef)("");
+  const leftHostRef = (0, import_react21.useRef)(null);
+  const centerHostRef = (0, import_react21.useRef)(null);
+  const rightHostRef = (0, import_react21.useRef)(null);
+  const chatCellRef = (0, import_react21.useRef)(null);
+  const dockRootRef = (0, import_react21.useRef)(null);
+  const dragPanelRef = (0, import_react21.useRef)("");
+  const autoSessionRef = (0, import_react21.useRef)(false);
+  const apiRef = (0, import_react21.useRef)(null);
+  const containersRef = (0, import_react21.useRef)({});
+  const closedRef = (0, import_react21.useRef)(new Set(readClosed(project.id)));
+  const suppressDirtyRef = (0, import_react21.useRef)(false);
+  const restoredFromSnapshotRef = (0, import_react21.useRef)(false);
+  const resetToBuiltinRef = (0, import_react21.useRef)(null);
+  const paneOptsRef = (0, import_react21.useRef)(() => null);
+  const [, bump] = (0, import_react21.useState)(0);
+  const [data, setData] = (0, import_react21.useState)({ explorers: [] });
+  const peekDevUrlRef = (0, import_react21.useRef)("");
   peekDevUrlRef.current = data.devUrl || "";
-  const [font, setFont] = (0, import_react20.useState)(readFont);
-  const [fontFamily, setFontFamily] = (0, import_react20.useState)(readFontFamily);
-  const [liveIds, setLiveIds] = (0, import_react20.useState)([]);
-  const seenRef = (0, import_react20.useRef)({});
-  const autoStopTurnRef = (0, import_react20.useRef)(0);
-  const explorersRef = (0, import_react20.useRef)([]);
-  const stopAllExplorersRef = (0, import_react20.useRef)(null);
-  const badgesRef = (0, import_react20.useRef)({});
-  (0, import_react20.useEffect)(() => {
+  const [font, setFont] = (0, import_react21.useState)(readFont);
+  const [fontFamily, setFontFamily] = (0, import_react21.useState)(readFontFamily);
+  const [liveIds, setLiveIds] = (0, import_react21.useState)([]);
+  const seenRef = (0, import_react21.useRef)({});
+  const autoStopTurnRef = (0, import_react21.useRef)(0);
+  const explorersRef = (0, import_react21.useRef)([]);
+  const stopAllExplorersRef = (0, import_react21.useRef)(null);
+  const badgesRef = (0, import_react21.useRef)({});
+  (0, import_react21.useEffect)(() => {
     const on = () => {
       setSkinMode(currentThemeMode());
       setSkin(readSkinId());
@@ -9414,9 +9599,9 @@ function DeskDock({ project, sessionId, onBack }) {
     window.addEventListener("ts-theme-changed", on);
     return () => window.removeEventListener("ts-theme-changed", on);
   }, []);
-  const [themeMode, setThemeMode] = (0, import_react20.useState)(() => readThemeMode(getClientContext()));
-  const [themeScheme, setThemeScheme] = (0, import_react20.useState)(() => readActiveScheme(getClientContext()));
-  (0, import_react20.useEffect)(() => {
+  const [themeMode, setThemeMode] = (0, import_react21.useState)(() => readThemeMode(getClientContext()));
+  const [themeScheme, setThemeScheme] = (0, import_react21.useState)(() => readActiveScheme(getClientContext()));
+  (0, import_react21.useEffect)(() => {
     const ctx = getClientContext();
     const sync2 = () => {
       setThemeMode(readThemeMode(ctx));
@@ -9425,24 +9610,24 @@ function DeskDock({ project, sessionId, onBack }) {
     sync2();
     return subscribeThemeMode(ctx, sync2);
   }, []);
-  const closePanelRef = (0, import_react20.useRef)(null);
-  const teardownRef = (0, import_react20.useRef)(false);
-  const paintBadgesRef = (0, import_react20.useRef)(null);
-  const [stopNote, setStopNote] = (0, import_react20.useState)("");
-  const [reloadKey, setReloadKey] = (0, import_react20.useState)(0);
-  const [hiddenRegions, setHiddenRegions] = (0, import_react20.useState)(() => readInitialHiddenRegions(project.id));
-  const hiddenRef = (0, import_react20.useRef)(hiddenRegions);
+  const closePanelRef = (0, import_react21.useRef)(null);
+  const teardownRef = (0, import_react21.useRef)(false);
+  const paintBadgesRef = (0, import_react21.useRef)(null);
+  const [stopNote, setStopNote] = (0, import_react21.useState)("");
+  const [reloadKey, setReloadKey] = (0, import_react21.useState)(0);
+  const [hiddenRegions, setHiddenRegions] = (0, import_react21.useState)(() => readInitialHiddenRegions(project.id));
+  const hiddenRef = (0, import_react21.useRef)(hiddenRegions);
   hiddenRef.current = hiddenRegions;
-  const syncChatSeatRef = (0, import_react20.useRef)(() => {
+  const syncChatSeatRef = (0, import_react21.useRef)(() => {
   });
-  const [layoutDirty, setLayoutDirty] = (0, import_react20.useState)(false);
-  const [settingsOpen, setSettingsOpen] = (0, import_react20.useState)(false);
-  const [projOpen, setProjOpen] = (0, import_react20.useState)(false);
-  const projHoverRef = (0, import_react20.useRef)(null);
-  const [skin, setSkin] = (0, import_react20.useState)(readSkinId);
-  const [skinMode, setSkinMode] = (0, import_react20.useState)(currentThemeMode);
-  const [popPos, setPopPos] = (0, import_react20.useState)(null);
-  const [sideW, setSideW] = (0, import_react20.useState)(() => {
+  const [layoutDirty, setLayoutDirty] = (0, import_react21.useState)(false);
+  const [settingsOpen, setSettingsOpen] = (0, import_react21.useState)(false);
+  const [projOpen, setProjOpen] = (0, import_react21.useState)(false);
+  const projHoverRef = (0, import_react21.useRef)(null);
+  const [skin, setSkin] = (0, import_react21.useState)(readSkinId);
+  const [skinMode, setSkinMode] = (0, import_react21.useState)(currentThemeMode);
+  const [popPos, setPopPos] = (0, import_react21.useState)(null);
+  const [sideW, setSideW] = (0, import_react21.useState)(() => {
     try {
       const raw = window.localStorage.getItem(SIDE_W_KEY);
       const p2 = raw ? JSON.parse(raw) : null;
@@ -9452,27 +9637,27 @@ function DeskDock({ project, sessionId, onBack }) {
       return { left: 220, right: 260 };
     }
   });
-  const applyRegions = (0, import_react20.useCallback)((hidden) => {
+  const applyRegions = (0, import_react21.useCallback)((hidden) => {
     setHiddenRegions(hidden);
     try {
       window.localStorage.setItem(REGIONS_KEY(project.id), JSON.stringify(hidden));
     } catch {
     }
   }, [project.id]);
-  const applySideW = (0, import_react20.useCallback)((w) => {
+  const applySideW = (0, import_react21.useCallback)((w) => {
     setSideW(w);
     try {
       window.localStorage.setItem(SIDE_W_KEY, JSON.stringify(w));
     } catch {
     }
   }, []);
-  const projBtnRef = (0, import_react20.useRef)(null);
-  const settingsBtnRef = (0, import_react20.useRef)(null);
-  const [activeLabel, setActiveLabel] = (0, import_react20.useState)("\u2014");
-  const [liveTip, setLiveTip] = (0, import_react20.useState)({ text: "\u7B49\u5F85\u5BF9\u8BDD\u2026", done: false });
+  const projBtnRef = (0, import_react21.useRef)(null);
+  const settingsBtnRef = (0, import_react21.useRef)(null);
+  const [activeLabel, setActiveLabel] = (0, import_react21.useState)("\u2014");
+  const [liveTip, setLiveTip] = (0, import_react21.useState)({ text: "\u7B49\u5F85\u5BF9\u8BDD\u2026", done: false });
   const sessions = useProjectSessions(project.path);
-  const [sessionError, setSessionError] = (0, import_react20.useState)("");
-  const sid = (0, import_react20.useMemo)(() => {
+  const [sessionError, setSessionError] = (0, import_react21.useState)("");
+  const sid = (0, import_react21.useMemo)(() => {
     const ctx = getClientContext();
     const prop = sessionId || "";
     const known = !!prop && sessions.some((s) => s.id === prop && !s.explorer);
@@ -9481,8 +9666,8 @@ function DeskDock({ project, sessionId, onBack }) {
     }
     return latestProjectSession(ctx, project.path)?.id ?? "";
   }, [project.path, sessionId, sessions]);
-  const [delegateSpans, setDelegateSpans] = (0, import_react20.useState)([]);
-  (0, import_react20.useEffect)(() => {
+  const [delegateSpans, setDelegateSpans] = (0, import_react21.useState)([]);
+  (0, import_react21.useEffect)(() => {
     if (!sid) {
       setDelegateSpans((prev) => prev.length > 0 ? [] : prev);
       return;
@@ -9492,7 +9677,7 @@ function DeskDock({ project, sessionId, onBack }) {
       setDelegateSpans((prev) => prev.length === next.length && prev.every((p, i) => p.startMs === next[i].startMs && p.endMs === next[i].endMs) ? prev : next);
     });
   }, [sid]);
-  const ownsRun = (0, import_react20.useMemo)(() => {
+  const ownsRun = (0, import_react21.useMemo)(() => {
     const run = data.run ?? null;
     if (!run) return true;
     if (run.originSessionId) return run.originSessionId === sid;
@@ -9502,12 +9687,12 @@ function DeskDock({ project, sessionId, onBack }) {
     const at = run.startedAtMs;
     return delegateSpans.some((s) => s.startMs - 5e3 <= at && at <= (s.endMs ?? Date.now()) + 5e3);
   }, [data.run, sid, delegateSpans]);
-  const explorers = (0, import_react20.useMemo)(
+  const explorers = (0, import_react21.useMemo)(
     () => ownsRun ? data.explorers : NO_EXPLORERS,
     [ownsRun, data.explorers]
   );
-  const titleFor = (0, import_react20.useCallback)((id) => paneTitle(id, project.name), [project.name]);
-  (0, import_react20.useEffect)(() => {
+  const titleFor = (0, import_react21.useCallback)((id) => paneTitle(id, project.name), [project.name]);
+  (0, import_react21.useEffect)(() => {
     if (sessionId === sid) return;
     if (sid) {
       rememberOpenedProject(sid, project.id);
@@ -9518,13 +9703,13 @@ function DeskDock({ project, sessionId, onBack }) {
     autoSessionRef.current = true;
     void startProjectSession(project.path, project.id, sessionId);
   }, [sessionId, sid, project.path, project.id]);
-  const markDirtyRef = (0, import_react20.useRef)(null);
+  const markDirtyRef = (0, import_react21.useRef)(null);
   markDirtyRef.current = () => {
     if (!suppressDirtyRef.current) setLayoutDirty(true);
   };
-  const dblClickRef = (0, import_react20.useRef)(null);
-  const openSideRef = (0, import_react20.useRef)(null);
-  (0, import_react20.useEffect)(() => {
+  const dblClickRef = (0, import_react21.useRef)(null);
+  const openSideRef = (0, import_react21.useRef)(null);
+  (0, import_react21.useEffect)(() => {
     if (!sid) {
       setLiveTip({ text: "\u7B49\u5F85\u5BF9\u8BDD\u2026", done: false });
       return;
@@ -9575,7 +9760,7 @@ function DeskDock({ project, sessionId, onBack }) {
     });
     return () => un();
   }, [sid]);
-  const regionOf = (0, import_react20.useCallback)((id) => {
+  const regionOf = (0, import_react21.useCallback)((id) => {
     const apis = apiRef.current;
     if (!apis) return null;
     for (const r of REGIONS) {
@@ -9583,7 +9768,7 @@ function DeskDock({ project, sessionId, onBack }) {
     }
     return null;
   }, []);
-  const paneOpts = (0, import_react20.useCallback)(
+  const paneOpts = (0, import_react21.useCallback)(
     (id, position) => ({
       id,
       component: "pane",
@@ -9595,7 +9780,7 @@ function DeskDock({ project, sessionId, onBack }) {
     [titleFor]
   );
   paneOptsRef.current = paneOpts;
-  (0, import_react20.useEffect)(() => {
+  (0, import_react21.useEffect)(() => {
     let alive = true;
     const pollExplorers = async () => {
       let next = null;
@@ -9628,7 +9813,7 @@ function DeskDock({ project, sessionId, onBack }) {
       window.clearInterval(t2);
     };
   }, [project.path]);
-  const closePanel = (0, import_react20.useCallback)(
+  const closePanel = (0, import_react21.useCallback)(
     (id) => {
       const apis = apiRef.current;
       const cur = regionOf(id);
@@ -9642,7 +9827,7 @@ function DeskDock({ project, sessionId, onBack }) {
     [regionOf, project.id]
   );
   closePanelRef.current = closePanel;
-  const moveWindowTo = (0, import_react20.useCallback)(
+  const moveWindowTo = (0, import_react21.useCallback)(
     (id, region, position) => {
       const apis = apiRef.current;
       if (!apis) return;
@@ -9674,7 +9859,7 @@ function DeskDock({ project, sessionId, onBack }) {
     },
     [regionOf]
   );
-  (0, import_react20.useEffect)(() => {
+  (0, import_react21.useEffect)(() => {
     const hosts = {
       left: leftHostRef.current,
       center: centerHostRef.current,
@@ -10074,7 +10259,7 @@ function DeskDock({ project, sessionId, onBack }) {
       delete window.__tsDeskDock;
     };
   }, [project.id]);
-  (0, import_react20.useEffect)(() => {
+  (0, import_react21.useEffect)(() => {
     const apis = apiRef.current;
     if (!apis) return;
     const hasPreview = !!data.devUrl;
@@ -10174,7 +10359,7 @@ function DeskDock({ project, sessionId, onBack }) {
     [liveIds.join(","), reloadKey],
     `.ts-dock-chatcell[data-desk-chat-cell="${project.id}"]`
   );
-  (0, import_react20.useEffect)(() => {
+  (0, import_react21.useEffect)(() => {
     if (!settingsOpen && !projOpen) return;
     const closeAll = () => {
       setSettingsOpen(false);
@@ -10198,10 +10383,10 @@ function DeskDock({ project, sessionId, onBack }) {
       document.removeEventListener("keydown", onKey, true);
     };
   }, [settingsOpen, projOpen]);
-  (0, import_react20.useEffect)(() => {
+  (0, import_react21.useEffect)(() => {
     syncChatSeatRef.current();
   }, [hiddenRegions]);
-  (0, import_react20.useEffect)(() => {
+  (0, import_react21.useEffect)(() => {
     applyFont(font, fontFamily);
     try {
       window.localStorage.setItem(FONT_KEY, font);
@@ -10209,7 +10394,7 @@ function DeskDock({ project, sessionId, onBack }) {
     } catch {
     }
   }, [font, fontFamily]);
-  const bindResizer = (0, import_react20.useCallback)(
+  const bindResizer = (0, import_react21.useCallback)(
     (side) => {
       return (event) => {
         const el = event.currentTarget;
@@ -10311,7 +10496,7 @@ function DeskDock({ project, sessionId, onBack }) {
     },
     [hiddenRegions, sideW, applyRegions, applySideW]
   );
-  const openSide = (0, import_react20.useCallback)(
+  const openSide = (0, import_react21.useCallback)(
     (side) => {
       const root = dockRootRef.current;
       if (!root || !hiddenRef.current.includes(side)) return;
@@ -10327,19 +10512,19 @@ function DeskDock({ project, sessionId, onBack }) {
     [sideW, applyRegions, applySideW]
   );
   openSideRef.current = openSide;
-  (0, import_react20.useEffect)(() => {
+  (0, import_react21.useEffect)(() => {
     try {
       window.localStorage.setItem(SIDE_W_KEY, JSON.stringify(sideW));
     } catch {
     }
   }, [sideW]);
-  const [drawer, setDrawer] = (0, import_react20.useState)(null);
-  const [narrow, setNarrow] = (0, import_react20.useState)(
+  const [drawer, setDrawer] = (0, import_react21.useState)(null);
+  const [narrow, setNarrow] = (0, import_react21.useState)(
     () => typeof window !== "undefined" && !!window.matchMedia && window.matchMedia("(max-width: 900px)").matches
   );
-  const [chrome, setChrome] = (0, import_react20.useState)(readChromePosition);
+  const [chrome, setChrome] = (0, import_react21.useState)(readChromePosition);
   const chromePos = effectiveChrome(chrome, narrow);
-  (0, import_react20.useEffect)(() => {
+  (0, import_react21.useEffect)(() => {
     const el = document.querySelector("[data-desk-statusbar]");
     if (!el || typeof ResizeObserver === "undefined") return;
     const apply3 = () => {
@@ -10351,7 +10536,7 @@ function DeskDock({ project, sessionId, onBack }) {
     ro.observe(el);
     return () => ro.disconnect();
   }, [liveIds, narrow]);
-  (0, import_react20.useEffect)(() => {
+  (0, import_react21.useEffect)(() => {
     if (typeof window === "undefined" || !window.matchMedia) return;
     const mq = window.matchMedia("(max-width: 900px)");
     const on = () => {
@@ -10387,7 +10572,7 @@ function DeskDock({ project, sessionId, onBack }) {
     });
     return { regions, hidden: [...hiddenRegions], sideW: { ...sideW } };
   };
-  const saveLayout = (0, import_react20.useCallback)(() => {
+  const saveLayout = (0, import_react21.useCallback)(() => {
     const snap = snapshotAll();
     if (!snap) return;
     try {
@@ -10400,7 +10585,7 @@ function DeskDock({ project, sessionId, onBack }) {
     } catch {
     }
   }, [project.id, hiddenRegions, sideW]);
-  const restoreDefaultLayout = (0, import_react20.useCallback)(() => {
+  const restoreDefaultLayout = (0, import_react21.useCallback)(() => {
     const apis = apiRef.current;
     if (!apis) return;
     suppressDirtyRef.current = true;
@@ -10437,7 +10622,7 @@ function DeskDock({ project, sessionId, onBack }) {
       suppressDirtyRef.current = false;
     }, 500);
   }, [project.id, applyRegions, applySideW]);
-  const applySkin2 = (0, import_react20.useCallback)((value) => {
+  const applySkin2 = (0, import_react21.useCallback)((value) => {
     chooseSkin(value);
     setSkin(readSkinId());
   }, []);
@@ -10482,14 +10667,14 @@ function DeskDock({ project, sessionId, onBack }) {
       }
     }, open ? 110 : 260);
   };
-  const projectList = (0, import_react20.useMemo)(() => projOpen ? loadProjects() : [], [projOpen]);
+  const projectList = (0, import_react21.useMemo)(() => projOpen ? loadProjects() : [], [projOpen]);
   const projectLastActive = useProjectLastActivity(projectList);
-  const sortedProjectList = (0, import_react20.useMemo)(() => {
+  const sortedProjectList = (0, import_react21.useMemo)(() => {
     const at = (p) => projectLastActive[p.id] || p.updatedAt || p.createdAt || 0;
     return [...projectList].sort((a, b) => at(b) - at(a));
   }, [projectList, projectLastActive]);
   const projectActivity = useProjectsActivity(projectList);
-  const allPaneIds = (0, import_react20.useMemo)(() => {
+  const allPaneIds = (0, import_react21.useMemo)(() => {
     const ids = [];
     KINDS.forEach((k) => {
       if (k === "preview" && !data.devUrl) return;
@@ -10503,7 +10688,7 @@ function DeskDock({ project, sessionId, onBack }) {
   explorersRef.current = explorers;
   const explorerBadges = useExplorerBadges(explorers, seenRef);
   badgesRef.current = explorerBadges;
-  const paintBadges = (0, import_react20.useCallback)(() => {
+  const paintBadges = (0, import_react21.useCallback)(() => {
     const root = dockRootRef.current;
     if (!root) return;
     root.querySelectorAll("[data-ts-pane]").forEach((pin) => {
@@ -10526,17 +10711,17 @@ function DeskDock({ project, sessionId, onBack }) {
       );
     });
   }, []);
-  const paintRef = (0, import_react20.useRef)(paintBadges);
+  const paintRef = (0, import_react21.useRef)(paintBadges);
   paintRef.current = paintBadges;
   paintBadgesRef.current = paintBadges;
-  (0, import_react20.useEffect)(() => {
+  (0, import_react21.useEffect)(() => {
     paintBadges();
     const t = window.setInterval(() => paintRef.current(), 1500);
     return () => window.clearInterval(t);
   }, [paintBadges, explorerBadges, liveIds, reloadKey]);
-  const ensureByIdRef = (0, import_react20.useRef)(null);
-  const autoMaxRef = (0, import_react20.useRef)(null);
-  const focusPane = (0, import_react20.useCallback)(
+  const ensureByIdRef = (0, import_react21.useRef)(null);
+  const autoMaxRef = (0, import_react21.useRef)(null);
+  const focusPane = (0, import_react21.useCallback)(
     (id) => {
       const apis = apiRef.current;
       if (!apis) return;
@@ -10556,7 +10741,7 @@ function DeskDock({ project, sessionId, onBack }) {
     },
     [regionOf, narrow, drawer]
   );
-  (0, import_react20.useEffect)(() => {
+  (0, import_react21.useEffect)(() => {
     const apis = apiRef.current;
     if (!apis) return;
     if (narrow) {
@@ -10580,7 +10765,7 @@ function DeskDock({ project, sessionId, onBack }) {
       }
     }
   }, [narrow, project.id, regionOf, liveIds]);
-  const stopAllExplorers = (0, import_react20.useCallback)(async () => {
+  const stopAllExplorers = (0, import_react21.useCallback)(async () => {
     const list = explorers.filter((e) => e.state === "running");
     if (!list.length) {
       setStopNote("\u6CA1\u6709\u5728\u8FD0\u884C\u7684\u63A2\u7D22\u8005");
@@ -10595,7 +10780,7 @@ function DeskDock({ project, sessionId, onBack }) {
     window.setTimeout(() => setReloadKey((k) => k + 1), 600);
   }, [explorers]);
   stopAllExplorersRef.current = stopAllExplorers;
-  const ensureById = (0, import_react20.useCallback)(
+  const ensureById = (0, import_react21.useCallback)(
     (id) => {
       const apis = apiRef.current;
       if (!apis) return;
@@ -10631,21 +10816,21 @@ function DeskDock({ project, sessionId, onBack }) {
     [regionOf]
   );
   ensureByIdRef.current = ensureById;
-  const nodeFor = (0, import_react20.useCallback)(
+  const nodeFor = (0, import_react21.useCallback)(
     (id) => {
       const parsed = parsePaneId(id);
       if (!parsed) return null;
       const { kind } = parsed;
-      if (kind === "board") return /* @__PURE__ */ (0, import_jsx_runtime16.jsx)(Blackboard, { workspace: project.path });
+      if (kind === "board") return /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(Blackboard, { workspace: project.path });
       if (kind === "talk") {
-        return /* @__PURE__ */ (0, import_jsx_runtime16.jsx)(
+        return /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(
           TalkColumn,
           {
             sessionId: sid,
             explorers,
-            actions: /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)(import_jsx_runtime16.Fragment, { children: [
-              stopNote ? /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { className: "ts-talk-note", children: stopNote }) : null,
-              /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)(
+            actions: /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)(import_jsx_runtime17.Fragment, { children: [
+              stopNote ? /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("span", { className: "ts-talk-note", children: stopNote }) : null,
+              /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)(
                 "button",
                 {
                   className: "ts-pop-all",
@@ -10653,7 +10838,7 @@ function DeskDock({ project, sessionId, onBack }) {
                   title: "\u505C\u6B62\u6240\u6709\u8FD8\u5728\u8FD0\u884C\u7684\u63A2\u7D22\u8005\uFF08\u4E3B\u5BF9\u8BDD\u5DF2\u7ED3\u675F\u65F6\u7279\u522B\u6709\u7528\uFF09",
                   onClick: () => void stopAllExplorers(),
                   children: [
-                    /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { dangerouslySetInnerHTML: { __html: iconSvg2("stop", 13) } }),
+                    /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("span", { dangerouslySetInnerHTML: { __html: iconSvg2("stop", 13) } }),
                     "\u5168\u90E8\u505C\u6B62"
                   ]
                 }
@@ -10662,9 +10847,9 @@ function DeskDock({ project, sessionId, onBack }) {
           }
         );
       }
-      if (kind === "save") return /* @__PURE__ */ (0, import_jsx_runtime16.jsx)(SavingsColumn, { sessionId: sid, explorers });
+      if (kind === "save") return /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(SavingsColumn, { sessionId: sid, explorers });
       if (kind === "preview") {
-        return /* @__PURE__ */ (0, import_jsx_runtime16.jsx)(
+        return /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(
           PreviewPanel,
           {
             project,
@@ -10677,13 +10862,13 @@ function DeskDock({ project, sessionId, onBack }) {
         );
       }
       if (kind === "chat") {
-        return /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("div", { className: "ts-dock-chatcell", "data-desk-chat-cell": project.id, ref: chatCellRef, children: /* @__PURE__ */ (0, import_jsx_runtime16.jsx)(MainChat, { sessionId: sid }) });
+        return /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("div", { className: "ts-dock-chatcell", "data-desk-chat-cell": project.id, ref: chatCellRef, children: /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(MainChat, { sessionId: sid }) });
       }
       if (kind.startsWith("exp:")) {
         const esid = kind.slice(4);
         const es = explorers.find((x) => x.id === esid);
-        if (!es) return /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("div", { className: "ts-dock-empty", children: "\u63A2\u7D22\u8005\u5DF2\u7ED3\u675F" });
-        return /* @__PURE__ */ (0, import_jsx_runtime16.jsx)(
+        if (!es) return /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("div", { className: "ts-dock-empty", children: "\u63A2\u7D22\u8005\u5DF2\u7ED3\u675F" });
+        return /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(
           ExplorerWindow,
           {
             session: es,
@@ -10712,7 +10897,7 @@ function DeskDock({ project, sessionId, onBack }) {
     },
     [project, sid, data, reloadKey, closePanel, regionOf, explorers]
   );
-  return /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)(
+  return /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)(
     "div",
     {
       ref: dockRootRef,
@@ -10734,9 +10919,9 @@ function DeskDock({ project, sessionId, onBack }) {
         ...hiddenRegions.includes("right") ? {} : { ["--ts-side-r"]: `${sideW.right}px` }
       },
       children: [
-        /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("header", { className: "ts-titlebar", "data-desk-titlebar": "", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("div", { className: "ts-title-left", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)(
+        /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("header", { className: "ts-titlebar", "data-desk-titlebar": "", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "ts-title-left", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)(
               "button",
               {
                 ref: projBtnRef,
@@ -10756,14 +10941,14 @@ function DeskDock({ project, sessionId, onBack }) {
                 onMouseEnter: () => hoverProj(true),
                 onMouseLeave: () => hoverProj(false),
                 children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { "aria-hidden": "true", dangerouslySetInnerHTML: { __html: iconSvg2("zone", 19) } }),
-                  /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { className: "ts-title-caret", "aria-hidden": "true", dangerouslySetInnerHTML: { __html: iconSvg2("chevron", 13) } })
+                  /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("span", { "aria-hidden": "true", dangerouslySetInnerHTML: { __html: iconSvg2("zone", 19) } }),
+                  /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("span", { className: "ts-title-caret", "aria-hidden": "true", dangerouslySetInnerHTML: { __html: iconSvg2("chevron", 13) } })
                 ]
               }
             ),
-            /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { className: "ts-title-proj", "data-desk-title": "", title: project.name, children: project.name }),
-            closedIds.length ? /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { className: "ts-sb-sep", "aria-hidden": "true" }) : null,
-            closedIds.slice(0, 6).map((id) => /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)(
+            /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("span", { className: "ts-title-proj", "data-desk-title": "", title: project.name, children: project.name }),
+            closedIds.length ? /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("span", { className: "ts-sb-sep", "aria-hidden": "true" }) : null,
+            closedIds.slice(0, 6).map((id) => /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)(
               "button",
               {
                 className: "ts-closed-chip",
@@ -10778,8 +10963,8 @@ function DeskDock({ project, sessionId, onBack }) {
               id
             ))
           ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("div", { className: "ts-title-right", children: [
-            ["left", "center", "right"].map((r) => /* @__PURE__ */ (0, import_jsx_runtime16.jsx)(
+          /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "ts-title-right", children: [
+            ["left", "center", "right"].map((r) => /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(
               "button",
               {
                 className: "ts-tg ts-tg--region",
@@ -10794,8 +10979,8 @@ function DeskDock({ project, sessionId, onBack }) {
               },
               r
             )),
-            /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { className: "ts-tg-sep", "aria-hidden": "true" }),
-            /* @__PURE__ */ (0, import_jsx_runtime16.jsx)(
+            /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("span", { className: "ts-tg-sep", "aria-hidden": "true" }),
+            /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(
               ExplorerSettings,
               {
                 variant: "icon",
@@ -10808,8 +10993,8 @@ function DeskDock({ project, sessionId, onBack }) {
                 })
               }
             ),
-            /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { className: "ts-tg-sep", "aria-hidden": "true" }),
-            /* @__PURE__ */ (0, import_jsx_runtime16.jsx)(
+            /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("span", { className: "ts-tg-sep", "aria-hidden": "true" }),
+            /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(
               "button",
               {
                 ref: settingsBtnRef,
@@ -10830,7 +11015,7 @@ function DeskDock({ project, sessionId, onBack }) {
             )
           ] })
         ] }),
-        narrow && drawer ? /* @__PURE__ */ (0, import_jsx_runtime16.jsx)(
+        narrow && drawer ? /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(
           "div",
           {
             className: "ts-drawer-mask",
@@ -10839,9 +11024,9 @@ function DeskDock({ project, sessionId, onBack }) {
             onClick: () => setDrawer(null)
           }
         ) : null,
-        /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("aside", { className: "ts-region", "data-region": "left", "aria-label": "\u4E3B\u4FA7\u680F", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("div", { className: "ts-region-host", ref: leftHostRef, "data-desk-host": "left" }),
-          /* @__PURE__ */ (0, import_jsx_runtime16.jsx)(
+        /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("aside", { className: "ts-region", "data-region": "left", "aria-label": "\u4E3B\u4FA7\u680F", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("div", { className: "ts-region-host", ref: leftHostRef, "data-desk-host": "left" }),
+          /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(
             "div",
             {
               className: "ts-resizer ts-resizer--left",
@@ -10851,10 +11036,10 @@ function DeskDock({ project, sessionId, onBack }) {
             }
           )
         ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("main", { className: "ts-region", "data-region": "center", "aria-label": "\u7F16\u8F91\u533A / \u9762\u677F\u533A", children: /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("div", { className: "ts-region-host", ref: centerHostRef, "data-desk-host": "center" }) }),
-        /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("aside", { className: "ts-region", "data-region": "right", "aria-label": "\u8F85\u52A9\u4FA7\u680F", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("div", { className: "ts-region-host", ref: rightHostRef, "data-desk-host": "right" }),
-          /* @__PURE__ */ (0, import_jsx_runtime16.jsx)(
+        /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("main", { className: "ts-region", "data-region": "center", "aria-label": "\u7F16\u8F91\u533A / \u9762\u677F\u533A", children: /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("div", { className: "ts-region-host", ref: centerHostRef, "data-desk-host": "center" }) }),
+        /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("aside", { className: "ts-region", "data-region": "right", "aria-label": "\u8F85\u52A9\u4FA7\u680F", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("div", { className: "ts-region-host", ref: rightHostRef, "data-desk-host": "right" }),
+          /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(
             "div",
             {
               className: "ts-resizer ts-resizer--right",
@@ -10864,8 +11049,8 @@ function DeskDock({ project, sessionId, onBack }) {
             }
           )
         ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("footer", { className: "ts-statusbar", "data-desk-statusbar": "", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { className: "ts-sb-group ts-sb-grow", children: /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)(
+        /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("footer", { className: "ts-statusbar", "data-desk-statusbar": "", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("span", { className: "ts-sb-group ts-sb-grow", children: /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)(
             "span",
             {
               className: "ts-sb-item",
@@ -10873,13 +11058,13 @@ function DeskDock({ project, sessionId, onBack }) {
               "data-done": liveTip.done ? "1" : void 0,
               title: `${activeLabel} \u2014 ${liveTip.text}`,
               children: [
-                /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { className: "ts-sb-dot", "data-on": liveTip.done ? void 0 : "1", "aria-hidden": "true" }),
+                /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("span", { className: "ts-sb-dot", "data-on": liveTip.done ? void 0 : "1", "aria-hidden": "true" }),
                 liveTip.text
               ]
             }
           ) }),
-          /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("span", { className: "ts-sb-group ts-sb-group--right", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime16.jsx)(
+          /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("span", { className: "ts-sb-group ts-sb-group--right", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(
               SessionPicker,
               {
                 sessions,
@@ -10900,10 +11085,10 @@ function DeskDock({ project, sessionId, onBack }) {
                 }
               }
             ),
-            sessionError ? /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { className: "ts-sb-item", "data-desk-session-error": "", style: { color: "#f85149" }, children: sessionError }) : null,
-            /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { className: "ts-sb-sep", "aria-hidden": "true" }),
-            /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { className: "ts-sb-sep", "aria-hidden": "true" }),
-            /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)(
+            sessionError ? /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("span", { className: "ts-sb-item", "data-desk-session-error": "", style: { color: "#f85149" }, children: sessionError }) : null,
+            /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("span", { className: "ts-sb-sep", "aria-hidden": "true" }),
+            /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("span", { className: "ts-sb-sep", "aria-hidden": "true" }),
+            /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)(
               "button",
               {
                 className: "ts-sb-btn",
@@ -10912,12 +11097,12 @@ function DeskDock({ project, sessionId, onBack }) {
                 onClick: () => saveLayout(),
                 title: layoutDirty ? "\u5E03\u5C40\u5DF2\u6539\u52A8\u4F46\u8FD8\u6CA1\u4FDD\u5B58 \u2014\u2014 \u70B9\u4E00\u4E0B\u5B58\u4E3A\u9ED8\u8BA4\uFF1B\u53F3\u952E/\u957F\u6309\u53EF\u6062\u590D\u9ED8\u8BA4" : "\u628A\u5F53\u524D\u5E03\u5C40\u5B58\u4E3A\u9ED8\u8BA4",
                 children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { dangerouslySetInnerHTML: { __html: iconSvg2("save", 13) } }),
+                  /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("span", { dangerouslySetInnerHTML: { __html: iconSvg2("save", 13) } }),
                   layoutDirty ? "\u4FDD\u5B58\u5E03\u5C40 \u25CF" : "\u5E03\u5C40"
                 ]
               }
             ),
-            /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)(
+            /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)(
               "button",
               {
                 className: "ts-sb-btn",
@@ -10925,30 +11110,30 @@ function DeskDock({ project, sessionId, onBack }) {
                 onClick: restoreDefaultLayout,
                 title: "\u653E\u5F03\u6539\u52A8\uFF0C\u6062\u590D\u9ED8\u8BA4\u5E03\u5C40",
                 children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { dangerouslySetInnerHTML: { __html: iconSvg2("reset", 13) } }),
+                  /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("span", { dangerouslySetInnerHTML: { __html: iconSvg2("reset", 13) } }),
                   "\u6062\u590D"
                 ]
               }
             )
           ] })
         ] }),
-        settingsOpen ? /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)(
+        settingsOpen ? /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)(
           "div",
           {
             className: "ts-pop ts-set",
             "data-desk-settings-panel": "",
             style: popPos ?? { right: 12, top: 48 },
             children: [
-              /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("div", { className: "ts-set-block", "data-desk-set-block": "windows", children: [
-                /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("div", { className: "ts-set-head", children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { className: "ts-set-title", children: "\u663E\u793A / \u9690\u85CF\u7A97\u53E3" }),
-                  /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("button", { className: "ts-pop-all", "data-desk-open-all": "", onClick: () => allPaneIds.forEach(ensureById), children: "\u5168\u90E8\u6253\u5F00" })
+              /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "ts-set-block", "data-desk-set-block": "windows", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "ts-set-head", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("span", { className: "ts-set-title", children: "\u663E\u793A / \u9690\u85CF\u7A97\u53E3" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("button", { className: "ts-pop-all", "data-desk-open-all": "", onClick: () => allPaneIds.forEach(ensureById), children: "\u5168\u90E8\u6253\u5F00" })
                 ] }),
                 allPaneIds.map((id) => {
                   const cur = regionOf(id);
-                  return /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("div", { className: "ts-pop-item", "data-desk-pop-row": id, children: [
-                    /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { dangerouslySetInnerHTML: { __html: iconSvg2(paneIcon(id), 14) } }),
-                    /* @__PURE__ */ (0, import_jsx_runtime16.jsx)(
+                  return /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "ts-pop-item", "data-desk-pop-row": id, children: [
+                    /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("span", { dangerouslySetInnerHTML: { __html: iconSvg2(paneIcon(id), 14) } }),
+                    /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(
                       "button",
                       {
                         className: "ts-pop-name ts-pop-name--jump",
@@ -10958,7 +11143,7 @@ function DeskDock({ project, sessionId, onBack }) {
                         children: kindLabel(id)
                       }
                     ),
-                    /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { className: "ts-pop-where", children: REGIONS.map((r) => /* @__PURE__ */ (0, import_jsx_runtime16.jsx)(
+                    /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("span", { className: "ts-pop-where", children: REGIONS.map((r) => /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(
                       "button",
                       {
                         className: "ts-pop-region",
@@ -10977,14 +11162,14 @@ function DeskDock({ project, sessionId, onBack }) {
                   ] }, id);
                 })
               ] }),
-              narrow ? null : /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("div", { className: "ts-set-block", "data-desk-set-block": "chrome", children: [
-                /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("div", { className: "ts-set-head", children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { className: "ts-set-title", children: "\u6807\u9898\u680F" }),
-                  /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { className: "ts-set-hint", children: CHROME_LABEL[chrome] })
+              narrow ? null : /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "ts-set-block", "data-desk-set-block": "chrome", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "ts-set-head", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("span", { className: "ts-set-title", children: "\u6807\u9898\u680F" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("span", { className: "ts-set-hint", children: CHROME_LABEL[chrome] })
                 ] }),
-                /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("div", { className: "ts-set-row", children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { className: "ts-set-k", children: "\u4F4D\u7F6E" }),
-                  /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { className: "ts-set-seg", children: CHROME_POSITIONS.map((p) => /* @__PURE__ */ (0, import_jsx_runtime16.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "ts-set-row", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("span", { className: "ts-set-k", children: "\u4F4D\u7F6E" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("span", { className: "ts-set-seg", children: CHROME_POSITIONS.map((p) => /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(
                     "button",
                     {
                       className: "ts-set-opt",
@@ -10998,12 +11183,12 @@ function DeskDock({ project, sessionId, onBack }) {
                   )) })
                 ] })
               ] }),
-              /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("div", { className: "ts-set-block", "data-desk-set-block": "theme", children: [
-                /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("div", { className: "ts-set-head", children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { className: "ts-set-title", children: "\u4E3B\u9898" }),
-                  /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { className: "ts-set-hint", "data-desk-theme-status": "", children: themeMode ? THEME_MODE_LABEL[themeMode] + (themeMode === "system" && themeScheme ? ` \xB7 \u5F53\u524D${themeScheme === "light" ? "\u6D45\u8272" : "\u6DF1\u8272"}` : "") : "\u5BBF\u4E3B\u672A\u63D0\u4F9B\u4E3B\u9898\u670D\u52A1" })
+              /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "ts-set-block", "data-desk-set-block": "theme", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "ts-set-head", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("span", { className: "ts-set-title", children: "\u4E3B\u9898" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("span", { className: "ts-set-hint", "data-desk-theme-status": "", children: themeMode ? THEME_MODE_LABEL[themeMode] + (themeMode === "system" && themeScheme ? ` \xB7 \u5F53\u524D${themeScheme === "light" ? "\u6D45\u8272" : "\u6DF1\u8272"}` : "") : "\u5BBF\u4E3B\u672A\u63D0\u4F9B\u4E3B\u9898\u670D\u52A1" })
                 ] }),
-                /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("div", { className: "ts-set-row", children: /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { className: "ts-set-seg ts-set-seg--fill", children: THEME_MODES.map((mode) => /* @__PURE__ */ (0, import_jsx_runtime16.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("div", { className: "ts-set-row", children: /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("span", { className: "ts-set-seg ts-set-seg--fill", children: THEME_MODES.map((mode) => /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(
                   "button",
                   {
                     className: "ts-set-opt",
@@ -11017,13 +11202,13 @@ function DeskDock({ project, sessionId, onBack }) {
                   mode
                 )) }) })
               ] }),
-              /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("div", { className: "ts-set-block", "data-desk-set-block": "skin", children: [
-                /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("div", { className: "ts-set-head", children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { className: "ts-set-title", children: "\u80CC\u666F\u76AE\u80A4" }),
-                  /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { className: "ts-set-hint", "data-desk-skin-status": "", children: skin ? `${SKINS.find((s2) => s2.id === skin)?.label ?? skin} \xB7 ${skinMode === "light" ? "\u6D45\u8272" : "\u6DF1\u8272"}\u4E3B\u9898` : "\u65E0\u76AE\u80A4" })
+              /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "ts-set-block", "data-desk-set-block": "skin", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "ts-set-head", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("span", { className: "ts-set-title", children: "\u80CC\u666F\u76AE\u80A4" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("span", { className: "ts-set-hint", "data-desk-skin-status": "", children: skin ? `${SKINS.find((s2) => s2.id === skin)?.label ?? skin} \xB7 ${skinMode === "light" ? "\u6D45\u8272" : "\u6DF1\u8272"}\u4E3B\u9898` : "\u65E0\u76AE\u80A4" })
                 ] }),
-                /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("div", { className: "ts-skin-scroll", "data-desk-skin-scroll": "", children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime16.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "ts-skin-scroll", "data-desk-skin-scroll": "", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(
                     "button",
                     {
                       className: "ts-skin-cell ts-skin-none",
@@ -11033,9 +11218,9 @@ function DeskDock({ project, sessionId, onBack }) {
                       children: "\u65E0\u76AE\u80A4"
                     }
                   ),
-                  SKIN_GROUPS.filter((g) => skinMode === "light" ? g.group.includes("\u6D45\u8272") : g.group.includes("\u6DF1\u8272")).map((g) => /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("div", { className: "ts-skin-group", children: [
-                    /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { className: "ts-skin-glabel", children: g.group }),
-                    /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("div", { className: "ts-set-grid", children: g.items.map((s2) => /* @__PURE__ */ (0, import_jsx_runtime16.jsx)(
+                  SKIN_GROUPS.filter((g) => skinMode === "light" ? g.group.includes("\u6D45\u8272") : g.group.includes("\u6DF1\u8272")).map((g) => /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "ts-skin-group", children: [
+                    /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("span", { className: "ts-skin-glabel", children: g.group }),
+                    /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("div", { className: "ts-set-grid", children: g.items.map((s2) => /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(
                       "button",
                       {
                         className: "ts-skin-cell",
@@ -11050,18 +11235,18 @@ function DeskDock({ project, sessionId, onBack }) {
                   ] }, g.group))
                 ] })
               ] }),
-              /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("div", { className: "ts-set-block", "data-desk-set-block": "font", children: [
-                /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("div", { className: "ts-set-head", children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { className: "ts-set-title", children: "\u5B57\u4F53" }),
-                  /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("span", { className: "ts-set-hint", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "ts-set-block", "data-desk-set-block": "font", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "ts-set-head", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("span", { className: "ts-set-title", children: "\u5B57\u4F53" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("span", { className: "ts-set-hint", children: [
                     FONT_LEVELS.find((f) => f.id === font)?.label,
                     " \xB7 ",
                     FONT_FAMILIES.find((f) => f.id === fontFamily)?.label
                   ] })
                 ] }),
-                /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("div", { className: "ts-set-row", children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { className: "ts-set-k", children: "\u754C\u9762\u5B57\u53F7" }),
-                  /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { className: "ts-set-seg", children: FONT_LEVELS.map((f) => /* @__PURE__ */ (0, import_jsx_runtime16.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "ts-set-row", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("span", { className: "ts-set-k", children: "\u754C\u9762\u5B57\u53F7" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("span", { className: "ts-set-seg", children: FONT_LEVELS.map((f) => /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(
                     "button",
                     {
                       className: "ts-set-opt",
@@ -11073,9 +11258,9 @@ function DeskDock({ project, sessionId, onBack }) {
                     f.id
                   )) })
                 ] }),
-                /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("div", { className: "ts-set-row", children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { className: "ts-set-k", children: "\u5B57\u65CF" }),
-                  /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { className: "ts-set-seg", children: FONT_FAMILIES.map((f) => /* @__PURE__ */ (0, import_jsx_runtime16.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "ts-set-row", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("span", { className: "ts-set-k", children: "\u5B57\u65CF" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("span", { className: "ts-set-seg", children: FONT_FAMILIES.map((f) => /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(
                     "button",
                     {
                       className: "ts-set-opt",
@@ -11091,7 +11276,7 @@ function DeskDock({ project, sessionId, onBack }) {
             ]
           }
         ) : null,
-        projOpen ? /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)(
+        projOpen ? /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)(
           "div",
           {
             className: "ts-pop ts-projsw",
@@ -11100,19 +11285,19 @@ function DeskDock({ project, sessionId, onBack }) {
             onMouseEnter: () => hoverProj(true),
             onMouseLeave: () => hoverProj(false),
             children: [
-              /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("div", { className: "ts-set-head", children: [
-                /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { className: "ts-set-title", children: "\u5207\u6362\u9879\u76EE" }),
-                /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("span", { className: "ts-set-hint", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "ts-set-head", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("span", { className: "ts-set-title", children: "\u5207\u6362\u9879\u76EE" }),
+                /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("span", { className: "ts-set-hint", children: [
                   projectList.length,
                   " \u4E2A \xB7 \u70B9\u4E00\u884C\u8FDB\u5B83\u7684\u5DE5\u4F5C\u53F0"
                 ] })
               ] }),
-              /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("div", { className: "ts-projsw-list", children: sortedProjectList.map((p) => {
+              /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("div", { className: "ts-projsw-list", children: sortedProjectList.map((p) => {
                 const acts = projectActivity[p.id] || [];
                 const running = acts.filter((a) => a.state === "active").length;
                 const pending = acts.filter((a) => a.state === "pending").length;
                 const current2 = p.id === project.id;
-                return /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)(
+                return /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)(
                   "button",
                   {
                     className: "ts-projsw-row",
@@ -11127,29 +11312,29 @@ ${p.path}` + (acts.length ? `
                       if (!current2) enterProjectWorkbench(p.id);
                     },
                     children: [
-                      /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("span", { className: "ts-projsw-top", children: [
-                        /* @__PURE__ */ (0, import_jsx_runtime16.jsx)(
+                      /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("span", { className: "ts-projsw-top", children: [
+                        /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(
                           "span",
                           {
                             className: `ts-projsw-dot${running ? " is-run" : pending ? " is-wait" : ""}`,
                             "aria-hidden": "true"
                           }
                         ),
-                        /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { className: "ts-projsw-name", children: p.name }),
-                        current2 ? /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { className: "ts-projsw-cur", children: "\u5F53\u524D" }) : null
+                        /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("span", { className: "ts-projsw-name", children: p.name }),
+                        current2 ? /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("span", { className: "ts-projsw-cur", children: "\u5F53\u524D" }) : null
                       ] }),
-                      /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { className: "ts-projsw-meta", children: p.path }),
-                      /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("span", { className: "ts-projsw-tags", children: [
-                        running ? /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("span", { className: "ts-projsw-tag run", children: [
+                      /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("span", { className: "ts-projsw-meta", children: p.path }),
+                      /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("span", { className: "ts-projsw-tags", children: [
+                        running ? /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("span", { className: "ts-projsw-tag run", children: [
                           "\u25CF \u8FD0\u884C\u4E2D ",
                           running
                         ] }) : null,
-                        pending && !running ? /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("span", { className: "ts-projsw-tag wait", children: [
+                        pending && !running ? /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("span", { className: "ts-projsw-tag wait", children: [
                           "\u5F85\u786E\u8BA4 ",
                           pending
                         ] }) : null,
-                        !running && !pending ? /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { className: "ts-projsw-tag idle", children: "\u65E0\u8FDB\u884C\u4E2D\u5BF9\u8BDD" }) : null,
-                        /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("span", { className: "ts-projsw-age", children: [
+                        !running && !pending ? /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("span", { className: "ts-projsw-tag idle", children: "\u65E0\u8FDB\u884C\u4E2D\u5BF9\u8BDD" }) : null,
+                        /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("span", { className: "ts-projsw-age", children: [
                           "\u66F4\u65B0\u4E8E ",
                           relAge(p.updatedAt)
                         ] })
@@ -11172,17 +11357,17 @@ ${p.path}` + (acts.length ? `
 }
 
 // client/src/panel/ControlRoom.tsx
-var import_jsx_runtime17 = require("react/jsx-runtime");
+var import_jsx_runtime18 = require("react/jsx-runtime");
 function ControlRoom({ sessionId }) {
-  (0, import_react21.useEffect)(() => {
+  (0, import_react22.useEffect)(() => {
     injectProjectCenterStyles();
   }, []);
-  (0, import_react21.useEffect)(() => {
+  (0, import_react22.useEffect)(() => {
     setControlRoomScreen("desk");
     requestWorkbench();
   }, []);
-  const [projects, setProjects] = (0, import_react21.useState)(() => loadProjects());
-  (0, import_react21.useEffect)(() => {
+  const [projects, setProjects] = (0, import_react22.useState)(() => loadProjects());
+  (0, import_react22.useEffect)(() => {
     const un = subscribeProjects(setProjects);
     const pull = () => {
       void syncProjectsFromServer().then(() => {
@@ -11208,11 +11393,11 @@ function ControlRoom({ sessionId }) {
     }
     return remembered;
   };
-  const [openedId, setOpenedId] = (0, import_react21.useState)(() => restoreOpenedId(sessionId));
-  (0, import_react21.useLayoutEffect)(() => {
+  const [openedId, setOpenedId] = (0, import_react22.useState)(() => restoreOpenedId(sessionId));
+  (0, import_react22.useLayoutEffect)(() => {
     setOpenedId(restoreOpenedId(sessionId));
   }, [sessionId]);
-  (0, import_react21.useEffect)(() => onRequestWorkbench((targetSid) => {
+  (0, import_react22.useEffect)(() => onRequestWorkbench((targetSid) => {
     setProjects(loadProjects());
     if (targetSid && sessionId && targetSid !== sessionId) return;
     const remembered = sessionId ? recallOpenedProject(sessionId) : null;
@@ -11228,7 +11413,7 @@ function ControlRoom({ sessionId }) {
   }), [sessionId]);
   const opened = openedId ? projects.find((p) => p.id === openedId) : void 0;
   if (sessionId && opened) {
-    return /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(
+    return /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(
       DeskDock,
       {
         project: opened,
@@ -11238,10 +11423,10 @@ function ControlRoom({ sessionId }) {
       opened.id
     );
   }
-  return /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("div", { className: "ts-cr ts-center", children: /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("div", { className: "ts-center-emptywrap", children: /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "ts-center-empty", children: [
-    /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("div", { className: "ts-center-empty-title", children: "\u{1F6E0} \u5DE5\u4F5C\u53F0" }),
-    /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("div", { className: "ts-center-empty-sub", children: sessionId ? "\u8FD8\u6CA1\u6709\u9009\u62E9\u9879\u76EE\u3002\u5230\u300C\u9879\u76EE\u4E2D\u5FC3\u300D\u6311\u4E00\u4E2A\u9879\u76EE\uFF0C\u70B9\u5B83\uFF08\u6216\u70B9\u300C\u8FDB\u5165\u5DE5\u4F5C\u53F0\u300D\uFF09\u5373\u8FDB\u5165\u5DE5\u4F5C\u53F0\u3002" : "\u5F53\u524D\u4F1A\u8BDD\u4E0A\u4E0B\u6587\u4E0D\u53EF\u7528\uFF0C\u65E0\u6CD5\u8FDB\u5165\u5DE5\u4F5C\u53F0\u3002" }),
-    sessionId && /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(
+  return /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("div", { className: "ts-cr ts-center", children: /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("div", { className: "ts-center-emptywrap", children: /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("div", { className: "ts-center-empty", children: [
+    /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("div", { className: "ts-center-empty-title", children: "\u{1F6E0} \u5DE5\u4F5C\u53F0" }),
+    /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("div", { className: "ts-center-empty-sub", children: sessionId ? "\u8FD8\u6CA1\u6709\u9009\u62E9\u9879\u76EE\u3002\u5230\u300C\u9879\u76EE\u4E2D\u5FC3\u300D\u6311\u4E00\u4E2A\u9879\u76EE\uFF0C\u70B9\u5B83\uFF08\u6216\u70B9\u300C\u8FDB\u5165\u5DE5\u4F5C\u53F0\u300D\uFF09\u5373\u8FDB\u5165\u5DE5\u4F5C\u53F0\u3002" : "\u5F53\u524D\u4F1A\u8BDD\u4E0A\u4E0B\u6587\u4E0D\u53EF\u7528\uFF0C\u65E0\u6CD5\u8FDB\u5165\u5DE5\u4F5C\u53F0\u3002" }),
+    sessionId && /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(
       "button",
       {
         className: "ts-btn ts-btn-primary",
@@ -11253,13 +11438,13 @@ function ControlRoom({ sessionId }) {
 }
 
 // client/src/panel/ProjectCenter.tsx
-var import_react23 = require("react");
+var import_react24 = require("react");
 
 // client/src/panel/AddProjectDialog.tsx
-var import_react22 = __toESM(require("react"), 1);
-var import_jsx_runtime18 = require("react/jsx-runtime");
+var import_react23 = __toESM(require("react"), 1);
+var import_jsx_runtime19 = require("react/jsx-runtime");
 function Icon({ name, size = 14 }) {
-  return /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("span", { className: "ts-ico", dangerouslySetInnerHTML: { __html: iconSvg(name, size) } });
+  return /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-ico", dangerouslySetInnerHTML: { __html: iconSvg(name, size) } });
 }
 function baseName(p) {
   const parts = String(p || "").split("/").filter(Boolean);
@@ -11285,36 +11470,36 @@ function rootOf(p) {
   return m ? `${m[1].toUpperCase()}:/` : "/";
 }
 function AddProjectDialog({ onClose, onCreated }) {
-  const [cwd, setCwd] = (0, import_react22.useState)("");
-  const [parent, setParent] = (0, import_react22.useState)(null);
-  const [roots, setRoots] = (0, import_react22.useState)([]);
-  const [entries, setEntries] = (0, import_react22.useState)([]);
-  const [loading, setLoading] = (0, import_react22.useState)(true);
-  const [fsError, setFsError] = (0, import_react22.useState)(null);
-  const [selectedPath, setSelectedPath] = (0, import_react22.useState)(null);
-  const [name, setName] = (0, import_react22.useState)("");
-  const [description, setDescription] = (0, import_react22.useState)("");
-  const [newOpen, setNewOpen] = (0, import_react22.useState)(false);
-  const [newName, setNewName] = (0, import_react22.useState)("");
-  const [renameOpen, setRenameOpen] = (0, import_react22.useState)(false);
-  const [renameName, setRenameName] = (0, import_react22.useState)("");
-  const [folderBusy, setFolderBusy] = (0, import_react22.useState)(false);
-  const [actionError, setActionError] = (0, import_react22.useState)(null);
-  const [source, setSource] = (0, import_react22.useState)("local");
-  const [repoUrl, setRepoUrl] = (0, import_react22.useState)("");
-  const [cloneParent, setCloneParent] = (0, import_react22.useState)(null);
-  const [cloneName, setCloneName] = (0, import_react22.useState)("");
-  const [cloneTaskId, setCloneTaskId] = (0, import_react22.useState)(null);
-  const [cloneStatus, setCloneStatus] = (0, import_react22.useState)(null);
-  const [cloneLog, setCloneLog] = (0, import_react22.useState)([]);
-  const [cloneStarting, setCloneStarting] = (0, import_react22.useState)(false);
+  const [cwd, setCwd] = (0, import_react23.useState)("");
+  const [parent, setParent] = (0, import_react23.useState)(null);
+  const [roots, setRoots] = (0, import_react23.useState)([]);
+  const [entries, setEntries] = (0, import_react23.useState)([]);
+  const [loading, setLoading] = (0, import_react23.useState)(true);
+  const [fsError, setFsError] = (0, import_react23.useState)(null);
+  const [selectedPath, setSelectedPath] = (0, import_react23.useState)(null);
+  const [name, setName] = (0, import_react23.useState)("");
+  const [description, setDescription] = (0, import_react23.useState)("");
+  const [newOpen, setNewOpen] = (0, import_react23.useState)(false);
+  const [newName, setNewName] = (0, import_react23.useState)("");
+  const [renameOpen, setRenameOpen] = (0, import_react23.useState)(false);
+  const [renameName, setRenameName] = (0, import_react23.useState)("");
+  const [folderBusy, setFolderBusy] = (0, import_react23.useState)(false);
+  const [actionError, setActionError] = (0, import_react23.useState)(null);
+  const [source, setSource] = (0, import_react23.useState)("local");
+  const [repoUrl, setRepoUrl] = (0, import_react23.useState)("");
+  const [cloneParent, setCloneParent] = (0, import_react23.useState)(null);
+  const [cloneName, setCloneName] = (0, import_react23.useState)("");
+  const [cloneTaskId, setCloneTaskId] = (0, import_react23.useState)(null);
+  const [cloneStatus, setCloneStatus] = (0, import_react23.useState)(null);
+  const [cloneLog, setCloneLog] = (0, import_react23.useState)([]);
+  const [cloneStarting, setCloneStarting] = (0, import_react23.useState)(false);
   const clonePending = Boolean(cloneTaskId) && cloneStatus?.state === "running";
-  const [repoList, setRepoList] = (0, import_react22.useState)([]);
-  const [repoListError, setRepoListError] = (0, import_react22.useState)("");
-  const [repoListLoading, setRepoListLoading] = (0, import_react22.useState)(false);
-  const [repoQuery, setRepoQuery] = (0, import_react22.useState)("");
-  const [repoPickerOpen, setRepoPickerOpen] = (0, import_react22.useState)(false);
-  const load2 = (0, import_react22.useCallback)(async (path) => {
+  const [repoList, setRepoList] = (0, import_react23.useState)([]);
+  const [repoListError, setRepoListError] = (0, import_react23.useState)("");
+  const [repoListLoading, setRepoListLoading] = (0, import_react23.useState)(false);
+  const [repoQuery, setRepoQuery] = (0, import_react23.useState)("");
+  const [repoPickerOpen, setRepoPickerOpen] = (0, import_react23.useState)(false);
+  const load2 = (0, import_react23.useCallback)(async (path) => {
     setLoading(true);
     setFsError(null);
     try {
@@ -11329,7 +11514,7 @@ function AddProjectDialog({ onClose, onCreated }) {
       setLoading(false);
     }
   }, []);
-  (0, import_react22.useEffect)(() => {
+  (0, import_react23.useEffect)(() => {
     load2();
   }, [load2]);
   const crumbs = crumbsOf(cwd);
@@ -11349,7 +11534,7 @@ function AddProjectDialog({ onClose, onCreated }) {
     setSelectedPath(cwd);
     if (!name) setName(cwd.split("/").pop() || "");
   };
-  (0, import_react22.useEffect)(() => {
+  (0, import_react23.useEffect)(() => {
     setCloneParent(cwd || null);
   }, [cwd]);
   const repoNameFrom = (url) => {
@@ -11410,7 +11595,7 @@ function AddProjectDialog({ onClose, onCreated }) {
     const q = repoQuery.trim().toLowerCase();
     return r.fullName.toLowerCase().includes(q) || r.description.toLowerCase().includes(q) || r.language.toLowerCase().includes(q);
   }) : repoList;
-  (0, import_react22.useEffect)(() => {
+  (0, import_react23.useEffect)(() => {
     if (!cloneTaskId) return;
     let stopped = false;
     let misses = 0;
@@ -11495,19 +11680,19 @@ function AddProjectDialog({ onClose, onCreated }) {
       setFolderBusy(false);
     }
   };
-  return /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("div", { className: "ts-modal-mask", onClick: (e) => {
+  return /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { className: "ts-modal-mask", onClick: (e) => {
     if (e.target === e.currentTarget) onClose();
-  }, children: /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("div", { className: "ts-modal ts-modal-addproj", children: [
-    /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("div", { className: "ts-modal-head", children: [
-      /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("span", { className: "ts-modal-title", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(Icon, { name: "folder", size: 15 }),
+  }, children: /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-modal ts-modal-addproj", children: [
+    /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-modal-head", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("span", { className: "ts-modal-title", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(Icon, { name: "folder", size: 15 }),
         " \u6DFB\u52A0\u9879\u76EE"
       ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("button", { className: "ts-icon-btn", onClick: onClose, title: "\u5173\u95ED", children: "\u2715" })
+      /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("button", { className: "ts-icon-btn", onClick: onClose, title: "\u5173\u95ED", children: "\u2715" })
     ] }),
-    /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("div", { className: "ts-modal-body ts-addproj-body", children: [
-      /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("div", { className: "ts-srcpick", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)(
+    /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-modal-body ts-addproj-body", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-srcpick", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)(
           "button",
           {
             className: `ts-srcbtn${source === "local" ? " ts-srcbtn-on" : ""}`,
@@ -11515,12 +11700,12 @@ function AddProjectDialog({ onClose, onCreated }) {
             disabled: clonePending,
             title: "\u9009\u62E9\u4E00\u4E2A\u5DF2\u6709\u7684\u672C\u5730\u76EE\u5F55\u4F5C\u4E3A\u9879\u76EE",
             children: [
-              /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(Icon, { name: "folder" }),
+              /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(Icon, { name: "folder" }),
               " \u672C\u5730\u5DF2\u6709\u76EE\u5F55"
             ]
           }
         ),
-        /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)(
+        /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)(
           "button",
           {
             className: `ts-srcbtn${source === "clone" ? " ts-srcbtn-on" : ""}`,
@@ -11528,24 +11713,24 @@ function AddProjectDialog({ onClose, onCreated }) {
             disabled: clonePending,
             title: "\u4ECE GitHub \u514B\u9686\u4E00\u4E2A\u4ED3\u5E93\uFF0C\u514B\u9686\u5B8C\u76F4\u63A5\u4F5C\u4E3A\u9879\u76EE",
             children: [
-              /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(Icon, { name: "branch" }),
+              /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(Icon, { name: "branch" }),
               " \u4ECE GitHub \u514B\u9686"
             ]
           }
         )
       ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("div", { className: "ts-addproj-col ts-addproj-col-left", children: /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("div", { className: "ts-addproj-picker", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("label", { className: "ts-field-label", children: source === "clone" ? "\u514B\u9686\u5230\u54EA\u4E2A\u76EE\u5F55\uFF08\u6D4F\u89C8\u9009\u62E9\u7236\u76EE\u5F55\uFF09" : "\u9009\u62E9\u9879\u76EE\u6587\u4EF6\u5939" }),
-        /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("div", { className: "ts-fs", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("div", { className: "ts-fs-crumb", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("div", { className: "ts-fs-crumbs", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("span", { className: "ts-fs-rooticon", onClick: () => load2(roots[0]), title: "\u6839\u76EE\u5F55", children: /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(Icon, { name: "folder", size: 13 }) }),
-              crumbs.map((c, i) => /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)(import_react22.default.Fragment, { children: [
-                /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("span", { onClick: () => gotoCrumb(i), children: c }),
-                i < crumbs.length - 1 && /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("span", { className: "ts-fs-sep", children: "/" })
+      /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { className: "ts-addproj-col ts-addproj-col-left", children: /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-addproj-picker", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("label", { className: "ts-field-label", children: source === "clone" ? "\u514B\u9686\u5230\u54EA\u4E2A\u76EE\u5F55\uFF08\u6D4F\u89C8\u9009\u62E9\u7236\u76EE\u5F55\uFF09" : "\u9009\u62E9\u9879\u76EE\u6587\u4EF6\u5939" }),
+        /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-fs", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-fs-crumb", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-fs-crumbs", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-fs-rooticon", onClick: () => load2(roots[0]), title: "\u6839\u76EE\u5F55", children: /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(Icon, { name: "folder", size: 13 }) }),
+              crumbs.map((c, i) => /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)(import_react23.default.Fragment, { children: [
+                /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { onClick: () => gotoCrumb(i), children: c }),
+                i < crumbs.length - 1 && /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-fs-sep", children: "/" })
               ] }, i))
             ] }),
-            roots.length > 1 && roots.map((r) => /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(
+            roots.length > 1 && roots.map((r) => /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
               "span",
               {
                 className: `ts-fs-drive${r === rootOf(cwd) ? " ts-fs-drive-on" : ""}`,
@@ -11555,7 +11740,7 @@ function AddProjectDialog({ onClose, onCreated }) {
               },
               r
             )),
-            /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(
+            /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
               "button",
               {
                 className: "ts-btn",
@@ -11571,29 +11756,29 @@ function AddProjectDialog({ onClose, onCreated }) {
               }
             )
           ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("div", { className: "ts-fs-list", children: [
-            loading && /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("div", { className: "ts-hint", children: "\u52A0\u8F7D\u4E2D\u2026" }),
-            fsError && /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("div", { className: "ts-hint", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-fs-list", children: [
+            loading && /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { className: "ts-hint", children: "\u52A0\u8F7D\u4E2D\u2026" }),
+            fsError && /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-hint", children: [
               "\u26A0\uFE0F ",
               fsError
             ] }),
-            !loading && !fsError && entries.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("div", { className: "ts-hint", children: "\u8BE5\u76EE\u5F55\u4E0B\u6CA1\u6709\u5B50\u6587\u4EF6\u5939" }),
-            entries.map((entry) => /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("button", { className: "ts-fs-item", onClick: () => enterDir(entry), children: [
-              /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("span", { className: "ts-fs-item-name", children: [
-                /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(Icon, { name: "folder", size: 13 }),
+            !loading && !fsError && entries.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { className: "ts-hint", children: "\u8BE5\u76EE\u5F55\u4E0B\u6CA1\u6709\u5B50\u6587\u4EF6\u5939" }),
+            entries.map((entry) => /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("button", { className: "ts-fs-item", onClick: () => enterDir(entry), children: [
+              /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("span", { className: "ts-fs-item-name", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(Icon, { name: "folder", size: 13 }),
                 " ",
                 entry.name
               ] }),
-              entry.isProject && /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("span", { className: "ts-tag", children: "\u68C0\u6D4B\u5230\u9879\u76EE" })
+              entry.isProject && /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-tag", children: "\u68C0\u6D4B\u5230\u9879\u76EE" })
             ] }, entry.path))
           ] })
         ] })
       ] }) }),
-      /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("div", { className: "ts-addproj-col ts-addproj-col-right", children: [
-        source === "clone" && /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("div", { className: "ts-clone", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("div", { className: "ts-clone-head", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("label", { className: "ts-field-label", children: "\u4ED3\u5E93\u5730\u5740" }),
-            /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)(
+      /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-addproj-col ts-addproj-col-right", children: [
+        source === "clone" && /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-clone", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-clone-head", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("label", { className: "ts-field-label", children: "\u4ED3\u5E93\u5730\u5740" }),
+            /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)(
               "button",
               {
                 className: "ts-btn ts-btn-sm",
@@ -11601,17 +11786,17 @@ function AddProjectDialog({ onClose, onCreated }) {
                 disabled: clonePending,
                 title: "\u4ECE\u4F60 GitHub \u8D26\u53F7\u4E0B\u5DF2\u6709\u7684\u4ED3\u5E93\u4E2D\u9009\u4E00\u4E2A",
                 children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(Icon, { name: "branch" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(Icon, { name: "branch" }),
                   " ",
                   repoPickerOpen ? "\u6536\u8D77\u4ED3\u5E93\u6E05\u5355" : "\u9009\u62E9\u6211\u7684\u4ED3\u5E93"
                 ]
               }
             )
           ] }),
-          repoPickerOpen && /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("div", { className: "ts-repolist", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("div", { className: "ts-repo-search", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(Icon, { name: "search" }),
-              /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(
+          repoPickerOpen && /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-repolist", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-repo-search", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(Icon, { name: "search" }),
+              /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
                 "input",
                 {
                   className: "ts-repo-search-input",
@@ -11621,38 +11806,38 @@ function AddProjectDialog({ onClose, onCreated }) {
                   onChange: (e) => setRepoQuery(e.target.value)
                 }
               ),
-              repoQuery && /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("button", { className: "ts-repo-clear", onClick: () => setRepoQuery(""), title: "\u6E05\u7A7A", children: /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(Icon, { name: "close", size: 12 }) })
+              repoQuery && /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("button", { className: "ts-repo-clear", onClick: () => setRepoQuery(""), title: "\u6E05\u7A7A", children: /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(Icon, { name: "close", size: 12 }) })
             ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("div", { className: "ts-repo-items", children: [
-              repoListLoading && /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("div", { className: "ts-hint", children: "\u6B63\u5728\u8BFB\u53D6\u4F60\u7684\u4ED3\u5E93\u2026" }),
-              !repoListLoading && repoListError && /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("div", { className: "ts-hint", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-repo-items", children: [
+              repoListLoading && /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { className: "ts-hint", children: "\u6B63\u5728\u8BFB\u53D6\u4F60\u7684\u4ED3\u5E93\u2026" }),
+              !repoListLoading && repoListError && /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-hint", children: [
                 "\u26A0\uFE0F ",
                 repoListError
               ] }),
-              !repoListLoading && !repoListError && repoList.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("div", { className: "ts-hint", children: "\u6CA1\u6709\u8BFB\u5230\u4ED3\u5E93" }),
-              !repoListLoading && repoList.length > 0 && filteredRepos.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("div", { className: "ts-hint", children: [
+              !repoListLoading && !repoListError && repoList.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { className: "ts-hint", children: "\u6CA1\u6709\u8BFB\u5230\u4ED3\u5E93" }),
+              !repoListLoading && repoList.length > 0 && filteredRepos.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-hint", children: [
                 "\u6CA1\u6709\u5339\u914D\u300C",
                 repoQuery,
                 "\u300D\u7684\u4ED3\u5E93"
               ] }),
-              filteredRepos.map((r) => /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)(
+              filteredRepos.map((r) => /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)(
                 "button",
                 {
                   className: "ts-repo-item",
                   onClick: () => pickRepo(r),
                   title: r.url,
                   children: [
-                    /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("span", { className: "ts-repo-name", children: r.fullName }),
-                    r.isPrivate && /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("span", { className: "ts-repo-badge", title: "\u79C1\u6709\u4ED3\u5E93", children: /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(Icon, { name: "lock", size: 11 }) }),
-                    r.language && /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("span", { className: "ts-repo-lang", children: r.language }),
-                    r.description && /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("span", { className: "ts-repo-desc", children: r.description })
+                    /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-repo-name", children: r.fullName }),
+                    r.isPrivate && /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-repo-badge", title: "\u79C1\u6709\u4ED3\u5E93", children: /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(Icon, { name: "lock", size: 11 }) }),
+                    r.language && /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-repo-lang", children: r.language }),
+                    r.description && /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-repo-desc", children: r.description })
                   ]
                 },
                 r.fullName
               ))
             ] })
           ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(
+          /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
             "input",
             {
               className: "ts-input",
@@ -11668,8 +11853,8 @@ function AddProjectDialog({ onClose, onCreated }) {
               }
             }
           ),
-          /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("div", { className: "ts-clone-row", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(
+          /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-clone-row", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
               "input",
               {
                 className: "ts-input ts-newfolder-input",
@@ -11679,7 +11864,7 @@ function AddProjectDialog({ onClose, onCreated }) {
                 onChange: (e) => setCloneName(e.target.value)
               }
             ),
-            /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(
+            /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
               "button",
               {
                 className: "ts-btn ts-btn-primary ts-btn-sm",
@@ -11689,33 +11874,33 @@ function AddProjectDialog({ onClose, onCreated }) {
               }
             )
           ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("span", { className: "ts-newfolder-hint", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("span", { className: "ts-newfolder-hint", children: [
             cloneParent ? `\u5C06\u514B\u9686\u5230\uFF1A${cloneParent}` : "\u8BF7\u5148\u5728\u4E0A\u9762\u6D4F\u89C8\u9009\u62E9\u4E00\u4E2A\u76EE\u5F55",
             "\uFF08\u79C1\u6709\u4ED3\u5E93\u81EA\u52A8\u7528\u672C\u673A gh \u767B\u5F55\u6001\uFF09"
           ] }),
-          cloneStatus && /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("div", { className: "ts-clone-progress", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("div", { className: "ts-clone-bar", children: /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(
+          cloneStatus && /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-clone-progress", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { className: "ts-clone-bar", children: /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
               "div",
               {
                 className: `ts-clone-fill${cloneStatus.state === "error" ? " ts-clone-fill-err" : ""}`,
                 style: { width: `${Math.max(2, Math.min(100, cloneStatus.percent))}%` }
               }
             ) }),
-            /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("div", { className: "ts-clone-meta", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("span", { children: [
+            /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-clone-meta", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("span", { children: [
                 cloneStatus.state === "running" && `${cloneStatus.phase || "\u8FDB\u884C\u4E2D"} ${cloneStatus.percent}%`,
                 cloneStatus.state === "done" && `\u2713 \u514B\u9686\u5B8C\u6210\uFF1A${cloneStatus.path}`,
                 cloneStatus.state === "error" && `\u2716 ${cloneStatus.message || "\u514B\u9686\u5931\u8D25"}`,
                 cloneStatus.state === "cancelled" && "\u5DF2\u53D6\u6D88"
               ] }),
-              cloneStatus.state === "done" && /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("button", { className: "ts-btn ts-btn-sm", onClick: finishClone, children: "\u52A0\u5165\u9879\u76EE" })
+              cloneStatus.state === "done" && /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("button", { className: "ts-btn ts-btn-sm", onClick: finishClone, children: "\u52A0\u5165\u9879\u76EE" })
             ] }),
-            cloneLog.length > 0 && cloneStatus.state === "running" && /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("div", { className: "ts-clone-log", children: cloneLog.slice(-3).join("\n") })
+            cloneLog.length > 0 && cloneStatus.state === "running" && /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { className: "ts-clone-log", children: cloneLog.slice(-3).join("\n") })
           ] })
         ] }),
-        source === "local" && /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("div", { className: "ts-addproj-folderops", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("div", { className: "ts-newfolder", children: [
-            !newOpen ? /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(
+        source === "local" && /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-addproj-folderops", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-newfolder", children: [
+            !newOpen ? /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
               "button",
               {
                 className: "ts-btn ts-btn-sm",
@@ -11728,8 +11913,8 @@ function AddProjectDialog({ onClose, onCreated }) {
                 title: "\u5728\u5F53\u524D\u76EE\u5F55\u4E0B\u65B0\u5EFA\u4E00\u4E2A\u6587\u4EF6\u5939\uFF08\u5B83\u672C\u8EAB\u5C31\u662F\u65B0\u9879\u76EE\uFF09",
                 children: "\uFF0B \u65B0\u5EFA\u6587\u4EF6\u5939"
               }
-            ) : /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)(import_jsx_runtime18.Fragment, { children: [
-              /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(
+            ) : /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)(import_jsx_runtime19.Fragment, { children: [
+              /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
                 "input",
                 {
                   className: "ts-input ts-newfolder-input",
@@ -11746,7 +11931,7 @@ function AddProjectDialog({ onClose, onCreated }) {
                   }
                 }
               ),
-              /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(
+              /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
                 "button",
                 {
                   className: "ts-btn ts-btn-primary ts-btn-sm",
@@ -11755,9 +11940,9 @@ function AddProjectDialog({ onClose, onCreated }) {
                   children: folderBusy ? "\u521B\u5EFA\u4E2D\u2026" : "\u521B\u5EFA"
                 }
               ),
-              /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("button", { className: "ts-btn ts-btn-sm", onClick: () => setNewOpen(false), children: "\u53D6\u6D88" })
+              /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("button", { className: "ts-btn ts-btn-sm", onClick: () => setNewOpen(false), children: "\u53D6\u6D88" })
             ] }),
-            selectedPath && (!renameOpen ? /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)(
+            selectedPath && (!renameOpen ? /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)(
               "button",
               {
                 className: "ts-btn ts-btn-sm",
@@ -11769,12 +11954,12 @@ function AddProjectDialog({ onClose, onCreated }) {
                 disabled: folderBusy,
                 title: "\u91CD\u547D\u540D\u5DF2\u9009\u4E2D\u7684\u6587\u4EF6\u5939\uFF08\u540C\u76EE\u5F55\u5185\u6539\u540D\uFF09",
                 children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(Icon, { name: "pencil", size: 12 }),
+                  /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(Icon, { name: "pencil", size: 12 }),
                   " \u91CD\u547D\u540D"
                 ]
               }
-            ) : /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)(import_jsx_runtime18.Fragment, { children: [
-              /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(
+            ) : /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)(import_jsx_runtime19.Fragment, { children: [
+              /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
                 "input",
                 {
                   className: "ts-input ts-newfolder-input",
@@ -11791,7 +11976,7 @@ function AddProjectDialog({ onClose, onCreated }) {
                   }
                 }
               ),
-              /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(
+              /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
                 "button",
                 {
                   className: "ts-btn ts-btn-primary ts-btn-sm",
@@ -11800,10 +11985,10 @@ function AddProjectDialog({ onClose, onCreated }) {
                   children: folderBusy ? "\u6539\u540D\u4E2D\u2026" : "\u786E\u8BA4\u6539\u540D"
                 }
               ),
-              /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("button", { className: "ts-btn ts-btn-sm", onClick: () => setRenameOpen(false), children: "\u53D6\u6D88" })
+              /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("button", { className: "ts-btn ts-btn-sm", onClick: () => setRenameOpen(false), children: "\u53D6\u6D88" })
             ] }))
           ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(
+          /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
             "button",
             {
               className: `ts-btn ${selectedPath === cwd ? "ts-btn-picked" : "ts-btn-primary"} ts-addproj-pickbtn`,
@@ -11814,13 +11999,13 @@ function AddProjectDialog({ onClose, onCreated }) {
             }
           )
         ] }),
-        actionError && /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("span", { className: "ts-newfolder-err", children: [
+        actionError && /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("span", { className: "ts-newfolder-err", children: [
           "\u26A0\uFE0F ",
           actionError
         ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("div", { children: [
-          /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("label", { className: "ts-field-label", children: "\u9879\u76EE\u540D\u79F0\uFF08\u53EF\u9009\uFF0C\u9ED8\u8BA4\u53D6\u6587\u4EF6\u5939\u540D\uFF09" }),
-          /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(
+        /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { children: [
+          /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("label", { className: "ts-field-label", children: "\u9879\u76EE\u540D\u79F0\uFF08\u53EF\u9009\uFF0C\u9ED8\u8BA4\u53D6\u6587\u4EF6\u5939\u540D\uFF09" }),
+          /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
             "input",
             {
               className: "ts-input",
@@ -11830,9 +12015,9 @@ function AddProjectDialog({ onClose, onCreated }) {
             }
           )
         ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("div", { children: [
-          /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("label", { className: "ts-field-label", children: "\u9879\u76EE\u4ECB\u7ECD\uFF08\u53EF\u9009\uFF0C\u5C55\u793A\u5728\u9879\u76EE\u5361\u7247\u4E0E\u5217\u8868\u91CC\uFF09" }),
-          /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(
+        /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { children: [
+          /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("label", { className: "ts-field-label", children: "\u9879\u76EE\u4ECB\u7ECD\uFF08\u53EF\u9009\uFF0C\u5C55\u793A\u5728\u9879\u76EE\u5361\u7247\u4E0E\u5217\u8868\u91CC\uFF09" }),
+          /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
             "textarea",
             {
               className: "ts-input ts-textarea",
@@ -11845,9 +12030,9 @@ function AddProjectDialog({ onClose, onCreated }) {
         ] })
       ] })
     ] }),
-    /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("div", { className: "ts-modal-foot", children: [
-      /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("button", { className: "ts-btn", onClick: onClose, children: "\u53D6\u6D88" }),
-      /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(
+    /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-modal-foot", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("button", { className: "ts-btn", onClick: onClose, children: "\u53D6\u6D88" }),
+      /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
         "button",
         {
           className: "ts-btn ts-btn-primary",
@@ -11862,7 +12047,7 @@ function AddProjectDialog({ onClose, onCreated }) {
 }
 
 // client/src/panel/ProjectCenter.tsx
-var import_jsx_runtime19 = require("react/jsx-runtime");
+var import_jsx_runtime20 = require("react/jsx-runtime");
 installThemeCss();
 startThemeWatch();
 installSkinLayerCss();
@@ -11897,9 +12082,9 @@ function ActivityDots({
 }) {
   if (!items || items.length === 0) return null;
   const tip = items.map((a) => `${dotLabel(a.order)} ${a.state === "pending" ? "\u5F85\u4F60\u786E\u8BA4" : "\u6B63\u5728\u6D3B\u8DC3"} \xB7 ${a.title}`).join("\n");
-  return /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-dots", title: `${tip}
+  return /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { className: "ts-dots", title: `${tip}
 
-\u70B9\u5E8F\u53F7\u53EF\u76F4\u63A5\u8FDB\u5165\u5BF9\u5E94\u5BF9\u8BDD\u7684\u5DE5\u4F5C\u53F0`, children: items.map((a) => /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
+\u70B9\u5E8F\u53F7\u53EF\u76F4\u63A5\u8FDB\u5165\u5BF9\u5E94\u5BF9\u8BDD\u7684\u5DE5\u4F5C\u53F0`, children: items.map((a) => /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
     "button",
     {
       type: "button",
@@ -11916,8 +12101,8 @@ function ActivityDots({
   )) });
 }
 function DescEditor({ project, onSaved }) {
-  const [editing, setEditing] = (0, import_react23.useState)(false);
-  const [draft, setDraft] = (0, import_react23.useState)(project.description);
+  const [editing, setEditing] = (0, import_react24.useState)(false);
+  const [draft, setDraft] = (0, import_react24.useState)(project.description);
   const begin = (e) => {
     e.stopPropagation();
     setDraft(project.description);
@@ -11929,17 +12114,17 @@ function DescEditor({ project, onSaved }) {
     if (updateProjectDescription(project.id, draft)) onSaved();
   };
   if (!editing) {
-    return /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
+    return /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
       "span",
       {
         className: "ts-plist-desc ts-desc-editable",
         title: project.description || "\u70B9\u51FB\u586B\u5199\u9879\u76EE\u4ECB\u7ECD",
         onClick: begin,
-        children: project.description || /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-dim", children: "\u70B9\u51FB\u586B\u5199\u2026" })
+        children: project.description || /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { className: "ts-dim", children: "\u70B9\u51FB\u586B\u5199\u2026" })
       }
     );
   }
-  return /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
+  return /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
     "input",
     {
       className: "ts-input ts-desc-input",
@@ -11962,16 +12147,16 @@ function DescEditor({ project, onSaved }) {
   );
 }
 function ProjectCenter({ sessionId }) {
-  (0, import_react23.useEffect)(() => {
+  (0, import_react24.useEffect)(() => {
     injectProjectCenterStyles();
   }, []);
-  const [projects, setProjects] = (0, import_react23.useState)(() => loadProjects());
-  const [showAdd, setShowAdd] = (0, import_react23.useState)(false);
-  const [prefs, setPrefs] = (0, import_react23.useState)(() => loadViewPrefs());
-  const [pendingRemove, setPendingRemove] = (0, import_react23.useState)(null);
-  const [deleteSource, setDeleteSource] = (0, import_react23.useState)(false);
-  const [removing, setRemoving] = (0, import_react23.useState)(false);
-  const [infos, setInfos] = (0, import_react23.useState)({});
+  const [projects, setProjects] = (0, import_react24.useState)(() => loadProjects());
+  const [showAdd, setShowAdd] = (0, import_react24.useState)(false);
+  const [prefs, setPrefs] = (0, import_react24.useState)(() => loadViewPrefs());
+  const [pendingRemove, setPendingRemove] = (0, import_react24.useState)(null);
+  const [deleteSource, setDeleteSource] = (0, import_react24.useState)(false);
+  const [removing, setRemoving] = (0, import_react24.useState)(false);
+  const [infos, setInfos] = (0, import_react24.useState)({});
   const activity = useProjectsActivity(projects);
   const setPref = (patch) => {
     const next = { ...prefs, ...patch };
@@ -11979,7 +12164,7 @@ function ProjectCenter({ sessionId }) {
     saveViewPrefs(next);
   };
   const infoOf = (p) => infos[p.path];
-  const shown = (0, import_react23.useMemo)(() => {
+  const shown = (0, import_react24.useMemo)(() => {
     const withTime = projects.map((p) => {
       const info = infos[p.path];
       const newest = info?.mtimeMs || 0;
@@ -11993,7 +12178,7 @@ function ProjectCenter({ sessionId }) {
     return sortProjects(withTime, prefs.sort);
   }, [projects, infos, prefs.sort]);
   const refresh = () => setProjects(loadProjects());
-  (0, import_react23.useEffect)(() => {
+  (0, import_react24.useEffect)(() => {
     const un = subscribeProjects(setProjects);
     const pull = () => {
       void syncProjectsFromServer().then(() => refresh());
@@ -12005,12 +12190,12 @@ function ProjectCenter({ sessionId }) {
       window.removeEventListener("focus", pull);
     };
   }, []);
-  (0, import_react23.useEffect)(() => {
+  (0, import_react24.useEffect)(() => {
     setControlRoomScreen("list");
     document.body.classList.add("ts-center-open");
     return () => document.body.classList.remove("ts-center-open");
   }, []);
-  (0, import_react23.useEffect)(() => {
+  (0, import_react24.useEffect)(() => {
     let alive = true;
     const paths = projects.map((p) => p.path);
     if (paths.length === 0) return;
@@ -12032,9 +12217,9 @@ function ProjectCenter({ sessionId }) {
     if (!current2 && !targetSessionId) return;
     if (enterProjectWorkbench(p.id, targetSessionId, intent)) refresh();
   };
-  const [busyId, setBusyId] = (0, import_react23.useState)(null);
-  const [notice, setNotice] = (0, import_react23.useState)(null);
-  (0, import_react23.useEffect)(() => {
+  const [busyId, setBusyId] = (0, import_react24.useState)(null);
+  const [notice, setNotice] = (0, import_react24.useState)(null);
+  (0, import_react24.useEffect)(() => {
     if (!notice) return;
     const timer = window.setTimeout(() => setNotice(null), 4e3);
     return () => window.clearTimeout(timer);
@@ -12080,12 +12265,12 @@ function ProjectCenter({ sessionId }) {
     toggleProjectStatus(id);
     refresh();
   };
-  const cardFace = (p, back) => /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)(import_jsx_runtime19.Fragment, { children: [
-    /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-center-cardhead", children: [
-      /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-center-icon", "aria-hidden": "true", children: back ? "\u2705" : "\u{1F4C1}" }),
-      /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-center-name", title: p.name, children: p.name }),
-      /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(ActivityDots, { items: activity[p.id], onPick: (sid) => enter(p, sid) }),
-      /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
+  const cardFace = (p, back) => /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)(import_jsx_runtime20.Fragment, { children: [
+    /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: "ts-center-cardhead", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { className: "ts-center-icon", "aria-hidden": "true", children: back ? "\u2705" : "\u{1F4C1}" }),
+      /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { className: "ts-center-name", title: p.name, children: p.name }),
+      /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(ActivityDots, { items: activity[p.id], onPick: (sid) => enter(p, sid) }),
+      /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
         "button",
         {
           type: "button",
@@ -12100,23 +12285,23 @@ function ProjectCenter({ sessionId }) {
         }
       )
     ] }),
-    /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-center-path", title: p.path, children: [
-      /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-center-basedir", children: baseName2(p.path) }),
-      /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-center-fullpath", children: p.path })
+    /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: "ts-center-path", title: p.path, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { className: "ts-center-basedir", children: baseName2(p.path) }),
+      /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { className: "ts-center-fullpath", children: p.path })
     ] }),
-    /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { className: "ts-center-desc", title: p.description, children: p.description || /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-dim", children: "\uFF08\u672A\u586B\u5199\u9879\u76EE\u4ECB\u7ECD\uFF09" }) }),
-    /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-center-meta", children: [
-      /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("span", { className: "ts-tag", title: "\u9879\u76EE\u6587\u4EF6\u5939\u5185\u6700\u8001\u6587\u4EF6\u7684\u4FEE\u6539\u65F6\u95F4", children: [
+    /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("div", { className: "ts-center-desc", title: p.description, children: p.description || /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { className: "ts-dim", children: "\uFF08\u672A\u586B\u5199\u9879\u76EE\u4ECB\u7ECD\uFF09" }) }),
+    /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: "ts-center-meta", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("span", { className: "ts-tag", title: "\u9879\u76EE\u6587\u4EF6\u5939\u5185\u6700\u8001\u6587\u4EF6\u7684\u4FEE\u6539\u65F6\u95F4", children: [
         "\u521B\u5EFA\u4E8E ",
         infoOf(p)?.oldestMtimeMs ? formatCreated(infoOf(p).oldestMtimeMs) : "\u2014"
       ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("span", { className: "ts-tag ts-tag-warn", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("span", { className: "ts-tag ts-tag-warn", children: [
         "\u66F4\u65B0\u4E8E ",
         relTime2(infoOf(p)?.mtimeMs || 0)
       ] })
     ] }),
-    /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-center-actions", children: [
-      infoOf(p)?.devRunning ? /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)(
+    /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: "ts-center-actions", children: [
+      infoOf(p)?.devRunning ? /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)(
         "a",
         {
           className: "ts-dev-chip on ts-dev-chip-link",
@@ -12135,11 +12320,11 @@ function ProjectCenter({ sessionId }) {
             }
           },
           children: [
-            /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-dev-chip-state", children: "\u25CF \u5DF2\u542F\u52A8" }),
-            /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-dev-chip-go", children: "\u53BB\u8C03\u8BD5 \u2192" })
+            /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { className: "ts-dev-chip-state", children: "\u25CF \u5DF2\u542F\u52A8" }),
+            /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { className: "ts-dev-chip-go", children: "\u53BB\u8C03\u8BD5 \u2192" })
           ]
         }
-      ) : /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
+      ) : /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
         "span",
         {
           className: "ts-dev-chip",
@@ -12147,7 +12332,7 @@ function ProjectCenter({ sessionId }) {
           children: "\u25CB \u672A\u542F\u52A8"
         }
       ),
-      /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
+      /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
         "button",
         {
           className: "ts-btn ts-btn-sm ts-btn-primary",
@@ -12160,7 +12345,7 @@ function ProjectCenter({ sessionId }) {
           children: busyId === p.id ? "\u65B0\u5EFA\u4E2D\u2026" : "\uFF0B \u65B0\u4F1A\u8BDD"
         }
       ),
-      /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
+      /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
         "button",
         {
           className: "ts-btn ts-btn-sm ts-btn-danger",
@@ -12174,20 +12359,20 @@ function ProjectCenter({ sessionId }) {
       )
     ] })
   ] });
-  return /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-cr ts-center", children: [
-    /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-center-bg", "aria-hidden": "true", children: [
-      /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-center-blob ts-center-blob1" }),
-      /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-center-blob ts-center-blob2" }),
-      /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-center-blob ts-center-blob3" })
+  return /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: "ts-cr ts-center", children: [
+    /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: "ts-center-bg", "aria-hidden": "true", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { className: "ts-center-blob ts-center-blob1" }),
+      /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { className: "ts-center-blob ts-center-blob2" }),
+      /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { className: "ts-center-blob ts-center-blob3" })
     ] }),
-    /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-center-inner", children: [
-      /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { className: "ts-center-head", children: /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-center-headtext", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { className: "ts-center-title", children: "\u{1F39B} \u9879\u76EE\u4E2D\u5FC3" }),
-        /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { className: "ts-center-sub", children: "\u6DFB\u52A0\u9879\u76EE\u6587\u4EF6\u5939 \u2192 \u8FDB\u5165\u5DE5\u4F5C\u53F0\uFF1A\u5E76\u884C\u514D\u8D39\u6A21\u578B\u63A2\u7D22 + \u5171\u4EAB\u9ED1\u677F + \u534F\u4F5C\u6536\u76CA" })
+    /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: "ts-center-inner", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("div", { className: "ts-center-head", children: /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: "ts-center-headtext", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("div", { className: "ts-center-title", children: "\u{1F39B} \u9879\u76EE\u4E2D\u5FC3" }),
+        /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("div", { className: "ts-center-sub", children: "\u6DFB\u52A0\u9879\u76EE\u6587\u4EF6\u5939 \u2192 \u8FDB\u5165\u5DE5\u4F5C\u53F0\uFF1A\u5E76\u884C\u514D\u8D39\u6A21\u578B\u63A2\u7D22 + \u5171\u4EAB\u9ED1\u677F + \u534F\u4F5C\u6536\u76CA" })
       ] }) }),
-      projects.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-center-toolbar", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-seg ts-seg-mode", role: "group", "aria-label": "\u5C55\u793A\u65B9\u5F0F", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
+      projects.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: "ts-center-toolbar", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: "ts-seg ts-seg-mode", role: "group", "aria-label": "\u5C55\u793A\u65B9\u5F0F", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
             "button",
             {
               className: `ts-seg-btn${prefs.mode === "card" ? " active" : ""}`,
@@ -12196,7 +12381,7 @@ function ProjectCenter({ sessionId }) {
               children: "\u25A6 \u5361\u7247"
             }
           ),
-          /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
+          /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
             "button",
             {
               className: `ts-seg-btn${prefs.mode === "list" ? " active" : ""}`,
@@ -12206,9 +12391,9 @@ function ProjectCenter({ sessionId }) {
             }
           )
         ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-seg ts-seg-sort", role: "group", "aria-label": "\u6392\u5E8F\u65B9\u5F0F", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-seg-label", children: "\u6392\u5E8F" }),
-          /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
+        /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: "ts-seg ts-seg-sort", role: "group", "aria-label": "\u6392\u5E8F\u65B9\u5F0F", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { className: "ts-seg-label", children: "\u6392\u5E8F" }),
+          /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
             "button",
             {
               className: `ts-seg-btn${prefs.sort === "name" ? " active" : ""}`,
@@ -12216,7 +12401,7 @@ function ProjectCenter({ sessionId }) {
               children: "\u6309\u540D\u79F0"
             }
           ),
-          /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
+          /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
             "button",
             {
               className: `ts-seg-btn${prefs.sort === "created" ? " active" : ""}`,
@@ -12224,7 +12409,7 @@ function ProjectCenter({ sessionId }) {
               children: "\u6309\u521B\u5EFA\u65F6\u95F4"
             }
           ),
-          /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
+          /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
             "button",
             {
               className: `ts-seg-btn${prefs.sort === "updated" ? " active" : ""}`,
@@ -12232,7 +12417,7 @@ function ProjectCenter({ sessionId }) {
               children: "\u6309\u66F4\u65B0\u65F6\u95F4"
             }
           ),
-          /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
+          /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
             "button",
             {
               className: `ts-seg-btn${prefs.sort === "status" ? " active" : ""}`,
@@ -12242,35 +12427,35 @@ function ProjectCenter({ sessionId }) {
             }
           )
         ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("span", { className: "ts-center-count", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("span", { className: "ts-center-count", children: [
           projects.length,
           " \u4E2A\u9879\u76EE"
         ] })
       ] }),
-      !sessionId && /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { className: "ts-hint", children: "\u5F53\u524D\u4F1A\u8BDD\u4E0A\u4E0B\u6587\u4E0D\u53EF\u7528\uFF0C\u65E0\u6CD5\u8FDB\u5165\u5DE5\u4F5C\u53F0\uFF08\u4ECD\u53EF\u7BA1\u7406\u9879\u76EE\u5217\u8868\uFF09\u3002" }),
-      notice && /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-hint", children: [
+      !sessionId && /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("div", { className: "ts-hint", children: "\u5F53\u524D\u4F1A\u8BDD\u4E0A\u4E0B\u6587\u4E0D\u53EF\u7528\uFF0C\u65E0\u6CD5\u8FDB\u5165\u5DE5\u4F5C\u53F0\uFF08\u4ECD\u53EF\u7BA1\u7406\u9879\u76EE\u5217\u8868\uFF09\u3002" }),
+      notice && /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: "ts-hint", children: [
         "\u26A0\uFE0F ",
         notice
       ] }),
-      projects.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { className: "ts-center-emptywrap", children: /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("button", { className: "ts-center-addcard", onClick: () => setShowAdd(true), children: [
-        /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-center-addplus", children: "\uFF0B" }),
-        /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-center-addlabel", children: "\u6DFB\u52A0\u9879\u76EE" }),
-        /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-center-addhint", children: "\u9009\u62E9\u9879\u76EE\u6587\u4EF6\u5939\u5F00\u59CB" })
+      projects.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("div", { className: "ts-center-emptywrap", children: /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("button", { className: "ts-center-addcard", onClick: () => setShowAdd(true), children: [
+        /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { className: "ts-center-addplus", children: "\uFF0B" }),
+        /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { className: "ts-center-addlabel", children: "\u6DFB\u52A0\u9879\u76EE" }),
+        /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { className: "ts-center-addhint", children: "\u9009\u62E9\u9879\u76EE\u6587\u4EF6\u5939\u5F00\u59CB" })
       ] }) }) : prefs.mode === "list" ? (
         /* —— 列表模式：序号 / 名称 / 路径 / 创建 / 上次更新 / 介绍 / 活跃 / 操作 ——
            点整行 = 进入工作台；介绍可编辑；（点）活跃点可直达对应对话 */
-        /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { className: "ts-plist-wrap", children: /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("table", { className: "ts-plist", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("thead", { children: /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("tr", { children: [
-            /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("th", { className: "ts-plist-idx", children: "\u5E8F\u53F7" }),
-            /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("th", { children: "\u9879\u76EE\u540D\u79F0" }),
-            /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("th", { children: "\u9879\u76EE\u8DEF\u5F84" }),
-            /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("th", { className: "ts-plist-time", title: "\u9879\u76EE\u6587\u4EF6\u5939\u5185\u6700\u8001\u6587\u4EF6\u7684\u4FEE\u6539\u65F6\u95F4\uFF08\u4E0D\u662F\u52A0\u5165\u9879\u76EE\u4E2D\u5FC3\u7684\u65F6\u95F4\uFF09", children: "\u521B\u5EFA\u4E8E" }),
-            /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("th", { className: "ts-plist-time", children: "\u4E0A\u6B21\u66F4\u65B0" }),
-            /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("th", { children: "\u9879\u76EE\u4ECB\u7ECD" }),
-            /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("th", { className: "ts-plist-active", children: "\u6D3B\u8DC3\u5BF9\u8BDD" }),
-            /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("th", { className: "ts-plist-ops", children: "\u64CD\u4F5C" })
+        /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("div", { className: "ts-plist-wrap", children: /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("table", { className: "ts-plist", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("thead", { children: /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("tr", { children: [
+            /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("th", { className: "ts-plist-idx", children: "\u5E8F\u53F7" }),
+            /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("th", { children: "\u9879\u76EE\u540D\u79F0" }),
+            /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("th", { children: "\u9879\u76EE\u8DEF\u5F84" }),
+            /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("th", { className: "ts-plist-time", title: "\u9879\u76EE\u6587\u4EF6\u5939\u5185\u6700\u8001\u6587\u4EF6\u7684\u4FEE\u6539\u65F6\u95F4\uFF08\u4E0D\u662F\u52A0\u5165\u9879\u76EE\u4E2D\u5FC3\u7684\u65F6\u95F4\uFF09", children: "\u521B\u5EFA\u4E8E" }),
+            /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("th", { className: "ts-plist-time", children: "\u4E0A\u6B21\u66F4\u65B0" }),
+            /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("th", { children: "\u9879\u76EE\u4ECB\u7ECD" }),
+            /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("th", { className: "ts-plist-active", children: "\u6D3B\u8DC3\u5BF9\u8BDD" }),
+            /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("th", { className: "ts-plist-ops", children: "\u64CD\u4F5C" })
           ] }) }),
-          /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("tbody", { children: shown.map((p, i) => /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)(
+          /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("tbody", { children: shown.map((p, i) => /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)(
             "tr",
             {
               className: "ts-plist-row-click",
@@ -12285,10 +12470,10 @@ function ProjectCenter({ sessionId }) {
                 }
               },
               children: [
-                /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("td", { className: "ts-plist-idx", children: i + 1 }),
-                /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("td", { children: /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-plist-namecell", children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-plist-name", title: p.name, children: p.name }),
-                  /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("td", { className: "ts-plist-idx", children: i + 1 }),
+                /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("td", { children: /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: "ts-plist-namecell", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { className: "ts-plist-name", title: p.name, children: p.name }),
+                  /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
                     "button",
                     {
                       type: "button",
@@ -12302,20 +12487,20 @@ function ProjectCenter({ sessionId }) {
                     }
                   )
                 ] }) }),
-                /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("td", { children: /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-plist-path", title: p.path, children: p.path }) }),
-                /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("td", { children: /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { className: "ts-plist-path", title: p.path, children: p.path }) }),
+                /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
                   "td",
                   {
                     className: "ts-plist-time",
                     title: `\u9879\u76EE\u6587\u4EF6\u5939\u5185\u6700\u8001\u6587\u4EF6\u7684\u4FEE\u6539\u65F6\u95F4\uFF1A${infoOf(p)?.oldestMtimeMs ? new Date(infoOf(p).oldestMtimeMs).toLocaleString("zh-CN") : "\uFF08\u672A\u8BFB\u53D6\u5230\uFF09"}`,
-                    children: infoOf(p)?.oldestMtimeMs ? formatCreated(infoOf(p).oldestMtimeMs) : /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-dim", children: "\uFF08\u672A\u8BFB\u53D6\u5230\uFF09" })
+                    children: infoOf(p)?.oldestMtimeMs ? formatCreated(infoOf(p).oldestMtimeMs) : /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { className: "ts-dim", children: "\uFF08\u672A\u8BFB\u53D6\u5230\uFF09" })
                   }
                 ),
-                /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("td", { className: "ts-plist-time", title: infoOf(p)?.mtimeMs ? new Date(infoOf(p).mtimeMs).toLocaleString("zh-CN") : "\uFF08\u672A\u8BFB\u53D6\u5230\uFF09", children: relTime2(infoOf(p)?.mtimeMs || 0) }),
-                /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("td", { children: /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(DescEditor, { project: p, onSaved: refresh }) }),
-                /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("td", { className: "ts-plist-active", children: /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(ActivityDots, { items: activity[p.id], onPick: (sid) => enter(p, sid) }) }),
-                /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("td", { className: "ts-plist-ops", children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("td", { className: "ts-plist-time", title: infoOf(p)?.mtimeMs ? new Date(infoOf(p).mtimeMs).toLocaleString("zh-CN") : "\uFF08\u672A\u8BFB\u53D6\u5230\uFF09", children: relTime2(infoOf(p)?.mtimeMs || 0) }),
+                /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("td", { children: /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(DescEditor, { project: p, onSaved: refresh }) }),
+                /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("td", { className: "ts-plist-active", children: /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(ActivityDots, { items: activity[p.id], onPick: (sid) => enter(p, sid) }) }),
+                /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("td", { className: "ts-plist-ops", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
                     "button",
                     {
                       className: "ts-btn ts-btn-sm ts-btn-primary",
@@ -12328,7 +12513,7 @@ function ProjectCenter({ sessionId }) {
                       children: busyId === p.id ? "\u65B0\u5EFA\u4E2D\u2026" : "\uFF0B \u65B0\u4F1A\u8BDD"
                     }
                   ),
-                  /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
+                  /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
                     "button",
                     {
                       className: "ts-btn ts-btn-sm ts-btn-danger",
@@ -12348,8 +12533,8 @@ function ProjectCenter({ sessionId }) {
         ] }) })
       ) : (
         /* —— 卡片模式：点卡片直接进工作台 —— */
-        /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-center-grid", children: [
-          shown.map((p) => /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
+        /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: "ts-center-grid", children: [
+          shown.map((p) => /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
             "div",
             {
               className: `ts-flip-scene ts-center-card-click${sessionId ? "" : " disabled"}`,
@@ -12365,21 +12550,21 @@ function ProjectCenter({ sessionId }) {
                   enter(p);
                 }
               },
-              children: /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: `ts-flip-inner${p.status === "done" ? " is-done" : ""}`, children: [
-                /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { className: "ts-center-card ts-flip-face ts-flip-front", children: cardFace(p, false) }),
-                /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("div", { className: "ts-center-card ts-flip-face ts-flip-back", children: cardFace(p, true) })
+              children: /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: `ts-flip-inner${p.status === "done" ? " is-done" : ""}`, children: [
+                /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("div", { className: "ts-center-card ts-flip-face ts-flip-front", children: cardFace(p, false) }),
+                /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("div", { className: "ts-center-card ts-flip-face ts-flip-back", children: cardFace(p, true) })
               ] })
             },
             p.id
           )),
-          /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("button", { className: "ts-center-card ts-center-addcard", onClick: () => setShowAdd(true), children: [
-            /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-center-addplus", children: "\uFF0B" }),
-            /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-center-addlabel", children: "\u6DFB\u52A0\u9879\u76EE" })
+          /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("button", { className: "ts-center-card ts-center-addcard", onClick: () => setShowAdd(true), children: [
+            /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { className: "ts-center-addplus", children: "\uFF0B" }),
+            /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { className: "ts-center-addlabel", children: "\u6DFB\u52A0\u9879\u76EE" })
           ] })
         ] })
       )
     ] }),
-    showAdd && /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
+    showAdd && /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
       AddProjectDialog,
       {
         onClose: () => setShowAdd(false),
@@ -12390,41 +12575,41 @@ function ProjectCenter({ sessionId }) {
         }
       }
     ),
-    pendingRemove && /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
+    pendingRemove && /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
       ConfirmDialog,
       {
         title: "\u79FB\u9664\u9879\u76EE",
         danger: true,
         confirmText: deleteSource ? "\u5220\u9664\u5E76\u79FB\u9664" : "\u786E\u8BA4\u79FB\u9664",
         busy: removing,
-        message: /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)(import_jsx_runtime19.Fragment, { children: [
-          /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-confirm-lead", children: [
+        message: /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)(import_jsx_runtime20.Fragment, { children: [
+          /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: "ts-confirm-lead", children: [
             "\u786E\u5B9A\u8981\u628A\u4EE5\u4E0B\u9879\u76EE\u4ECE",
-            /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("b", { children: "\u9879\u76EE\u4E2D\u5FC3" }),
+            /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("b", { children: "\u9879\u76EE\u4E2D\u5FC3" }),
             "\u79FB\u9664\u5417\uFF1F"
           ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-confirm-target", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("span", { className: "ts-confirm-name", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: "ts-confirm-target", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("span", { className: "ts-confirm-name", children: [
               "\u{1F4C1} ",
               pendingRemove.name
             ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("span", { className: "ts-confirm-path", children: pendingRemove.path })
+            /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { className: "ts-confirm-path", children: pendingRemove.path })
           ] }),
-          deleteSource ? /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-confirm-note ts-confirm-note-warn", children: [
+          deleteSource ? /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: "ts-confirm-note ts-confirm-note-warn", children: [
             "\u5C06",
-            /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("b", { children: "\u6C38\u4E45\u5220\u9664" }),
+            /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("b", { children: "\u6C38\u4E45\u5220\u9664" }),
             "\u8BE5\u9879\u76EE\u7684",
-            /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("b", { children: "\u6574\u4E2A\u6587\u4EF6\u5939" }),
+            /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("b", { children: "\u6574\u4E2A\u6587\u4EF6\u5939" }),
             "\uFF08\u8FDE\u6587\u4EF6\u5939\u672C\u8EAB\u4E00\u8D77\u5220\u6389\uFF0C\u542B .git \u4E0E\u672A\u63D0\u4EA4\u7684\u4FEE\u6539\uFF09\uFF0C",
-            /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("b", { children: "\u4E0D\u53EF\u6062\u590D" }),
+            /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("b", { children: "\u4E0D\u53EF\u6062\u590D" }),
             "\u3002"
-          ] }) : /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "ts-confirm-note", children: [
+          ] }) : /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: "ts-confirm-note", children: [
             "\u4EC5\u4ECE\u9879\u76EE\u4E2D\u5FC3\u7684\u5217\u8868\u91CC\u79FB\u9664\uFF0C",
-            /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("b", { children: "\u4E0D\u4F1A\u5220\u9664\u78C1\u76D8\u4E0A\u7684\u4EFB\u4F55\u6587\u4EF6" }),
+            /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("b", { children: "\u4E0D\u4F1A\u5220\u9664\u78C1\u76D8\u4E0A\u7684\u4EFB\u4F55\u6587\u4EF6" }),
             "\u3002 \u4E4B\u540E\u53EF\u4EE5\u91CD\u65B0\u300C\u6DFB\u52A0\u9879\u76EE\u300D\u628A\u5B83\u52A0\u56DE\u6765\u3002"
           ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("label", { className: "ts-confirm-opt", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
+          /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("label", { className: "ts-confirm-opt", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
               "input",
               {
                 type: "checkbox",
@@ -12432,9 +12617,9 @@ function ProjectCenter({ sessionId }) {
                 onChange: (e) => setDeleteSource(e.target.checked)
               }
             ),
-            /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("span", { className: "ts-confirm-opt-text", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("span", { className: "ts-confirm-opt-text", children: [
               "\u540C\u65F6",
-              /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("b", { children: "\u5220\u9664\u9879\u76EE\u6E90\u4EE3\u7801" }),
+              /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("b", { children: "\u5220\u9664\u9879\u76EE\u6E90\u4EE3\u7801" }),
               "\uFF08\u628A\u9879\u76EE\u6587\u4EF6\u5939\u4ECE\u78C1\u76D8\u4E0A\u6574\u68F5\u5220\u6389\uFF0C\u4E0D\u53EF\u6062\u590D\uFF09"
             ] })
           ] })
@@ -12447,11 +12632,11 @@ function ProjectCenter({ sessionId }) {
 }
 
 // client/src/panel/ControlRoomEntry.tsx
-var import_react25 = require("react");
+var import_react26 = require("react");
 var import_react_dom7 = require("react-dom");
 
 // client/src/panel/pulse.ts
-var import_react24 = require("react");
+var import_react25 = require("react");
 
 // client/src/panel/todo-collapse.ts
 var TODO_PANEL_SEL = '[data-testid="todo-panel"]';
@@ -12851,8 +13036,8 @@ async function scanOutcomes(ctx, projects) {
   }
 }
 function useActivityPulse() {
-  const [state, setState] = (0, import_react24.useState)(EMPTY);
-  (0, import_react24.useEffect)(() => {
+  const [state, setState] = (0, import_react25.useState)(EMPTY);
+  (0, import_react25.useEffect)(() => {
     const ctx = getClientContext();
     if (!ctx) return;
     let live = true;
@@ -14008,7 +14193,7 @@ function zoneOf(trigger, panel, x, y, pad = CORRIDOR_PAD) {
 }
 
 // client/src/panel/ControlRoomEntry.tsx
-var import_jsx_runtime20 = require("react/jsx-runtime");
+var import_jsx_runtime21 = require("react/jsx-runtime");
 var DOT_COUNT = 3;
 var RAIL_MIN_WIDE = 30;
 var NAV_LOCK_MS = 700;
@@ -14023,9 +14208,9 @@ function panelWidth(left, rows) {
   return panelWidthFor(rows, left);
 }
 function SectionHead({ title, note, children }) {
-  return /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: "ts-sec-head", children: [
-    /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { className: "ts-sec-title", children: title }),
-    note && /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { className: "ts-sec-note", children: note }),
+  return /* @__PURE__ */ (0, import_jsx_runtime21.jsxs)("div", { className: "ts-sec-head", children: [
+    /* @__PURE__ */ (0, import_jsx_runtime21.jsx)("span", { className: "ts-sec-title", children: title }),
+    note && /* @__PURE__ */ (0, import_jsx_runtime21.jsx)("span", { className: "ts-sec-note", children: note }),
     children
   ] });
 }
@@ -14064,23 +14249,23 @@ function PulseDots({
   onHoverIn,
   onHoverOut
 }) {
-  return /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
+  return /* @__PURE__ */ (0, import_jsx_runtime21.jsx)(
     "span",
     {
       className: `ts-pulse${running ? " ts-pulse-run" : ""}${tone === "warn" ? " ts-pulse-warn" : ""}`,
       "aria-hidden": "true",
       onMouseEnter: onHoverIn,
       onMouseLeave: onHoverOut,
-      children: Array.from({ length: count }, (_, i) => /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("i", { className: "ts-pulse-dot", style: { animationDelay: `${i * 0.16}s` } }, i))
+      children: Array.from({ length: count }, (_, i) => /* @__PURE__ */ (0, import_jsx_runtime21.jsx)("i", { className: "ts-pulse-dot", style: { animationDelay: `${i * 0.16}s` } }, i))
     }
   );
 }
 function ContinueSettingsBlock() {
-  const [s, setS] = (0, import_react25.useState)(() => getContinueSettings());
-  (0, import_react25.useEffect)(() => subscribeContinueSettings(() => setS(getContinueSettings())), []);
+  const [s, setS] = (0, import_react26.useState)(() => getContinueSettings());
+  (0, import_react26.useEffect)(() => subscribeContinueSettings(() => setS(getContinueSettings())), []);
   const update = (patch) => setS(setContinueSettings(patch));
-  return /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)(import_jsx_runtime20.Fragment, { children: [
-    /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(SectionHead, { title: "\u81EA\u52A8\u7EE7\u7EED", children: /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
+  return /* @__PURE__ */ (0, import_jsx_runtime21.jsxs)(import_jsx_runtime21.Fragment, { children: [
+    /* @__PURE__ */ (0, import_jsx_runtime21.jsx)(SectionHead, { title: "\u81EA\u52A8\u7EE7\u7EED", children: /* @__PURE__ */ (0, import_jsx_runtime21.jsx)(
       "button",
       {
         type: "button",
@@ -14089,14 +14274,14 @@ function ContinueSettingsBlock() {
         role: "switch",
         "aria-checked": s.enabled,
         onClick: () => update({ enabled: !s.enabled }),
-        children: /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("i", {})
+        children: /* @__PURE__ */ (0, import_jsx_runtime21.jsx)("i", {})
       }
     ) }),
-    /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("div", { className: "ts-cont-block", children: /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: "ts-box", children: [
-      /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: "ts-box-row ts-cont-sw-row", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: "ts-cont-sw-item", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("label", { title: "\u9519\u8BEF\u5206\u7C7B\uFF1A\u5F00\u542F\u540E\uFF0C\u9274\u6743 / \u4F59\u989D / \u672A\u77E5\u6A21\u578B / \u4E0A\u4E0B\u6587\u8D85\u957F\u8FD9\u7C7B\u91CD\u8BD5\u4E5F\u4E0D\u4F1A\u6210\u529F\u7684\u9519\u8BEF\u4F1A\u88AB\u8BC6\u522B\u51FA\u6765\uFF0C\u4E0D\u81EA\u52A8\u91CD\u8BD5\uFF0C\u53EA\u7ED9\u624B\u52A8\u6309\u94AE", children: "\u5206\u7C7B" }),
-          /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
+    /* @__PURE__ */ (0, import_jsx_runtime21.jsx)("div", { className: "ts-cont-block", children: /* @__PURE__ */ (0, import_jsx_runtime21.jsxs)("div", { className: "ts-box", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime21.jsxs)("div", { className: "ts-box-row ts-cont-sw-row", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime21.jsxs)("div", { className: "ts-cont-sw-item", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime21.jsx)("label", { title: "\u9519\u8BEF\u5206\u7C7B\uFF1A\u5F00\u542F\u540E\uFF0C\u9274\u6743 / \u4F59\u989D / \u672A\u77E5\u6A21\u578B / \u4E0A\u4E0B\u6587\u8D85\u957F\u8FD9\u7C7B\u91CD\u8BD5\u4E5F\u4E0D\u4F1A\u6210\u529F\u7684\u9519\u8BEF\u4F1A\u88AB\u8BC6\u522B\u51FA\u6765\uFF0C\u4E0D\u81EA\u52A8\u91CD\u8BD5\uFF0C\u53EA\u7ED9\u624B\u52A8\u6309\u94AE", children: "\u5206\u7C7B" }),
+          /* @__PURE__ */ (0, import_jsx_runtime21.jsx)(
             "button",
             {
               type: "button",
@@ -14105,13 +14290,13 @@ function ContinueSettingsBlock() {
               role: "switch",
               "aria-checked": s.classify,
               onClick: () => update({ classify: !s.classify }),
-              children: /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("i", {})
+              children: /* @__PURE__ */ (0, import_jsx_runtime21.jsx)("i", {})
             }
           )
         ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: "ts-cont-sw-item", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("label", { title: "\u8F93\u51FA\u8FBE\u5230\u957F\u5EA6\u4E0A\u9650\u88AB\u622A\u65AD\u65F6\uFF0C\u81EA\u52A8\u53D1\u300C\u7EE7\u7EED\u300D\u8BA9\u6A21\u578B\u63A5\u7740\u5199\uFF08\u63A8\u8350\u5F00\u542F\uFF1A\u8FD9\u8F6E\u6CA1\u5199\u5B8C\uFF0C\u63A5\u7740\u5199\u5C31\u884C\uFF09", children: "\u622A\u65AD" }),
-          /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
+        /* @__PURE__ */ (0, import_jsx_runtime21.jsxs)("div", { className: "ts-cont-sw-item", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime21.jsx)("label", { title: "\u8F93\u51FA\u8FBE\u5230\u957F\u5EA6\u4E0A\u9650\u88AB\u622A\u65AD\u65F6\uFF0C\u81EA\u52A8\u53D1\u300C\u7EE7\u7EED\u300D\u8BA9\u6A21\u578B\u63A5\u7740\u5199\uFF08\u63A8\u8350\u5F00\u542F\uFF1A\u8FD9\u8F6E\u6CA1\u5199\u5B8C\uFF0C\u63A5\u7740\u5199\u5C31\u884C\uFF09", children: "\u622A\u65AD" }),
+          /* @__PURE__ */ (0, import_jsx_runtime21.jsx)(
             "button",
             {
               type: "button",
@@ -14120,13 +14305,13 @@ function ContinueSettingsBlock() {
               role: "switch",
               "aria-checked": s.autoMaxTokens,
               onClick: () => update({ autoMaxTokens: !s.autoMaxTokens }),
-              children: /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("i", {})
+              children: /* @__PURE__ */ (0, import_jsx_runtime21.jsx)("i", {})
             }
           )
         ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: "ts-cont-sw-item", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("label", { title: "\u77AC\u65F6\u6545\u969C\uFF1A\u7F51\u7EDC\u6296\u52A8 / \u8D85\u65F6 / 5xx / 429 \u9650\u6D41\u8FD9\u7C7B\u7B49\u4E00\u4E0B\u91CD\u8BD5\u5C31\u80FD\u597D\u7684\u9519\u8BEF\uFF0C\u81EA\u52A8\u91CD\u8BD5", children: "\u77AC\u65F6" }),
-          /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
+        /* @__PURE__ */ (0, import_jsx_runtime21.jsxs)("div", { className: "ts-cont-sw-item", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime21.jsx)("label", { title: "\u77AC\u65F6\u6545\u969C\uFF1A\u7F51\u7EDC\u6296\u52A8 / \u8D85\u65F6 / 5xx / 429 \u9650\u6D41\u8FD9\u7C7B\u7B49\u4E00\u4E0B\u91CD\u8BD5\u5C31\u80FD\u597D\u7684\u9519\u8BEF\uFF0C\u81EA\u52A8\u91CD\u8BD5", children: "\u77AC\u65F6" }),
+          /* @__PURE__ */ (0, import_jsx_runtime21.jsx)(
             "button",
             {
               type: "button",
@@ -14135,14 +14320,14 @@ function ContinueSettingsBlock() {
               role: "switch",
               "aria-checked": s.autoTransient,
               onClick: () => update({ autoTransient: !s.autoTransient }),
-              children: /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("i", {})
+              children: /* @__PURE__ */ (0, import_jsx_runtime21.jsx)("i", {})
             }
           )
         ] })
       ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: "ts-box-row ts-cont-num-row", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("label", { title: "\u53D1\u9001\u4E0A\u9650\uFF1A\u8FDE\u7EED\u81EA\u52A8\u7EE7\u7EED\u51E0\u6B21\u540E\u5C31\u505C\u4E0B\u6765\u7B49\u4F60\u4ECB\u5165\uFF08\u7528\u6237\u81EA\u5DF1\u53D1\u6D88\u606F\u6216\u624B\u52A8\u70B9\u300C\u7EE7\u7EED\u300D\u4F1A\u91CD\u7F6E\u8FD9\u4E2A\u8BA1\u6570\uFF09", children: "\u53D1\u9001\u4E0A\u9650" }),
-        /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
+      /* @__PURE__ */ (0, import_jsx_runtime21.jsxs)("div", { className: "ts-box-row ts-cont-num-row", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime21.jsx)("label", { title: "\u53D1\u9001\u4E0A\u9650\uFF1A\u8FDE\u7EED\u81EA\u52A8\u7EE7\u7EED\u51E0\u6B21\u540E\u5C31\u505C\u4E0B\u6765\u7B49\u4F60\u4ECB\u5165\uFF08\u7528\u6237\u81EA\u5DF1\u53D1\u6D88\u606F\u6216\u624B\u52A8\u70B9\u300C\u7EE7\u7EED\u300D\u4F1A\u91CD\u7F6E\u8FD9\u4E2A\u8BA1\u6570\uFF09", children: "\u53D1\u9001\u4E0A\u9650" }),
+        /* @__PURE__ */ (0, import_jsx_runtime21.jsx)(
           "input",
           {
             className: "ts-cont-num",
@@ -14154,10 +14339,10 @@ function ContinueSettingsBlock() {
             onChange: (e) => update({ maxConsecutive: Number(e.target.value) })
           }
         ),
-        /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { className: "ts-cont-unit", children: "\u6B21" }),
-        /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { className: "ts-cont-gap" }),
-        /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("label", { title: "\u51B7\u5374\u57FA\u6570\uFF1A\u4E24\u6B21\u81EA\u52A8\u7EE7\u7EED\u4E4B\u95F4\u81F3\u5C11\u7B49\u8FD9\u4E48\u4E45\uFF1B\u8FDE\u7EED\u5931\u8D25\u4F1A\u6309\u500D\u6570\u9012\u589E\uFF0820s \u2192 40s \u2192 80s\u2026\uFF09\uFF0C\u5C01\u9876 5 \u5206\u949F\u3002\u907F\u514D\u628A\u5DF2\u7ECF\u574F\u4E86\u7684\u4E0A\u6E38\u6253\u5F97\u66F4\u6B7B", children: "\u51B7\u5374\u57FA\u6570" }),
-        /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
+        /* @__PURE__ */ (0, import_jsx_runtime21.jsx)("span", { className: "ts-cont-unit", children: "\u6B21" }),
+        /* @__PURE__ */ (0, import_jsx_runtime21.jsx)("span", { className: "ts-cont-gap" }),
+        /* @__PURE__ */ (0, import_jsx_runtime21.jsx)("label", { title: "\u51B7\u5374\u57FA\u6570\uFF1A\u4E24\u6B21\u81EA\u52A8\u7EE7\u7EED\u4E4B\u95F4\u81F3\u5C11\u7B49\u8FD9\u4E48\u4E45\uFF1B\u8FDE\u7EED\u5931\u8D25\u4F1A\u6309\u500D\u6570\u9012\u589E\uFF0820s \u2192 40s \u2192 80s\u2026\uFF09\uFF0C\u5C01\u9876 5 \u5206\u949F\u3002\u907F\u514D\u628A\u5DF2\u7ECF\u574F\u4E86\u7684\u4E0A\u6E38\u6253\u5F97\u66F4\u6B7B", children: "\u51B7\u5374\u57FA\u6570" }),
+        /* @__PURE__ */ (0, import_jsx_runtime21.jsx)(
           "input",
           {
             className: "ts-cont-num",
@@ -14169,20 +14354,20 @@ function ContinueSettingsBlock() {
             onChange: (e) => update({ cooldownMs: Number(e.target.value) * 1e3 })
           }
         ),
-        /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { className: "ts-cont-unit", children: "\u79D2" })
+        /* @__PURE__ */ (0, import_jsx_runtime21.jsx)("span", { className: "ts-cont-unit", children: "\u79D2" })
       ] })
     ] }) })
   ] });
 }
 function HoverPanel({ pos, panelRef, items, onPick, onHover, onMarkRead, onMarkAllRead, onContinue, onArchive, onArchiveAll, onClose }) {
-  const [, bumpAuto] = (0, import_react25.useState)(0);
-  (0, import_react25.useEffect)(() => subscribeAutoContinue(() => bumpAuto((n) => n + 1)), []);
-  const [s, setS] = (0, import_react25.useState)(() => getSoundSettings());
-  const [playingLabel2, setPlayingLabel] = (0, import_react25.useState)(null);
-  (0, import_react25.useEffect)(() => subscribePlaying(setPlayingLabel), []);
+  const [, bumpAuto] = (0, import_react26.useState)(0);
+  (0, import_react26.useEffect)(() => subscribeAutoContinue(() => bumpAuto((n) => n + 1)), []);
+  const [s, setS] = (0, import_react26.useState)(() => getSoundSettings());
+  const [playingLabel2, setPlayingLabel] = (0, import_react26.useState)(null);
+  (0, import_react26.useEffect)(() => subscribePlaying(setPlayingLabel), []);
   const update = (patch) => setS(setSoundSettings(patch));
-  const [sendState, setSendState] = (0, import_react25.useState)({});
-  const [sendErr, setSendErr] = (0, import_react25.useState)("");
+  const [sendState, setSendState] = (0, import_react26.useState)({});
+  const [sendErr, setSendErr] = (0, import_react26.useState)("");
   const cont = async (it) => {
     const cur = sendState[it.key];
     if (cur === "sending" || cur === "sent") return;
@@ -14198,8 +14383,8 @@ function HoverPanel({ pos, panelRef, items, onPick, onHover, onMarkRead, onMarkA
     }
   };
   const Timer = ({ at }) => {
-    const [, force] = (0, import_react25.useState)(0);
-    (0, import_react25.useEffect)(() => {
+    const [, force] = (0, import_react26.useState)(0);
+    (0, import_react26.useEffect)(() => {
       if (!at) return;
       const id = window.setInterval(() => force((n) => n + 1), 3e4);
       return () => window.clearInterval(id);
@@ -14208,14 +14393,14 @@ function HoverPanel({ pos, panelRef, items, onPick, onHover, onMarkRead, onMarkA
     const diff = Date.now() - at;
     if (diff < 0) return null;
     const mins = Math.floor(diff / 6e4);
-    if (mins < 1) return /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { className: "ts-warn-timer", children: "\u521A\u521A" });
-    if (mins < 60) return /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("span", { className: "ts-warn-timer", children: [
+    if (mins < 1) return /* @__PURE__ */ (0, import_jsx_runtime21.jsx)("span", { className: "ts-warn-timer", children: "\u521A\u521A" });
+    if (mins < 60) return /* @__PURE__ */ (0, import_jsx_runtime21.jsxs)("span", { className: "ts-warn-timer", children: [
       mins,
       " \u5206\u949F\u524D"
     ] });
     const hours = Math.floor(mins / 60);
     const remMins = mins % 60;
-    return /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("span", { className: "ts-warn-timer", children: [
+    return /* @__PURE__ */ (0, import_jsx_runtime21.jsxs)("span", { className: "ts-warn-timer", children: [
       hours,
       " \u5C0F\u65F6",
       remMins > 0 ? ` ${remMins} \u5206` : "",
@@ -14224,7 +14409,7 @@ function HoverPanel({ pos, panelRef, items, onPick, onHover, onMarkRead, onMarkA
   };
   const readable = items.filter((it) => it.status !== "active").length;
   return (0, import_react_dom7.createPortal)(
-    /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)(
+    /* @__PURE__ */ (0, import_jsx_runtime21.jsxs)(
       "div",
       {
         ref: panelRef,
@@ -14235,10 +14420,10 @@ function HoverPanel({ pos, panelRef, items, onPick, onHover, onMarkRead, onMarkA
         onMouseEnter: () => onHover(true),
         onMouseLeave: () => onHover(false),
         children: [
-          /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: "ts-settings", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: "ts-sec", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)(SectionHead, { title: "\u63D0\u793A\u97F3", children: [
-                /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
+          /* @__PURE__ */ (0, import_jsx_runtime21.jsxs)("div", { className: "ts-settings", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime21.jsxs)("div", { className: "ts-sec", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime21.jsxs)(SectionHead, { title: "\u63D0\u793A\u97F3", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime21.jsx)(
                   "button",
                   {
                     type: "button",
@@ -14247,10 +14432,10 @@ function HoverPanel({ pos, panelRef, items, onPick, onHover, onMarkRead, onMarkA
                     role: "switch",
                     "aria-checked": s.enabled,
                     onClick: () => update({ enabled: !s.enabled }),
-                    children: /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("i", {})
+                    children: /* @__PURE__ */ (0, import_jsx_runtime21.jsx)("i", {})
                   }
                 ),
-                pos.mode === "sheet" && /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
+                pos.mode === "sheet" && /* @__PURE__ */ (0, import_jsx_runtime21.jsx)(
                   "button",
                   {
                     type: "button",
@@ -14262,10 +14447,10 @@ function HoverPanel({ pos, panelRef, items, onPick, onHover, onMarkRead, onMarkA
                   }
                 )
               ] }),
-              /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("div", { className: "ts-sound-body", children: /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: "ts-box", children: [
-                /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: "ts-box-row", children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("label", { title: "\u97F3\u91CF\uFF1A\u63D0\u793A\u97F3\u7684\u97F3\u91CF\u5927\u5C0F", children: "\u97F3\u91CF" }),
-                  /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
+              /* @__PURE__ */ (0, import_jsx_runtime21.jsx)("div", { className: "ts-sound-body", children: /* @__PURE__ */ (0, import_jsx_runtime21.jsxs)("div", { className: "ts-box", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime21.jsxs)("div", { className: "ts-box-row", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime21.jsx)("label", { title: "\u97F3\u91CF\uFF1A\u63D0\u793A\u97F3\u7684\u97F3\u91CF\u5927\u5C0F", children: "\u97F3\u91CF" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime21.jsx)(
                     "input",
                     {
                       className: "ts-sound-range",
@@ -14279,19 +14464,19 @@ function HoverPanel({ pos, panelRef, items, onPick, onHover, onMarkRead, onMarkA
                     }
                   )
                 ] }),
-                /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: "ts-box-row", children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("label", { children: "\u5B8C\u6210" }),
-                  /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime21.jsxs)("div", { className: "ts-box-row", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime21.jsx)("label", { children: "\u5B8C\u6210" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime21.jsx)(
                     "select",
                     {
                       className: "ts-select",
                       value: s.doneId,
                       title: "\u6B63\u5E38\u7ED3\u675F\u65F6\u7684\u63D0\u793A\u97F3",
                       onChange: (e) => update({ doneId: e.target.value }),
-                      children: SOUND_OPTIONS.map((o) => /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("option", { value: o.id, children: o.label }, o.id))
+                      children: SOUND_OPTIONS.map((o) => /* @__PURE__ */ (0, import_jsx_runtime21.jsx)("option", { value: o.id, children: o.label }, o.id))
                     }
                   ),
-                  /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
+                  /* @__PURE__ */ (0, import_jsx_runtime21.jsx)(
                     "button",
                     {
                       type: "button",
@@ -14302,19 +14487,19 @@ function HoverPanel({ pos, panelRef, items, onPick, onHover, onMarkRead, onMarkA
                     }
                   )
                 ] }),
-                /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: "ts-box-row", children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("label", { children: "\u4E2D\u65AD" }),
-                  /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime21.jsxs)("div", { className: "ts-box-row", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime21.jsx)("label", { children: "\u4E2D\u65AD" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime21.jsx)(
                     "select",
                     {
                       className: "ts-select",
                       value: s.failId,
                       title: "\u88AB\u4E2D\u65AD / \u5931\u8D25 / \u88AB\u622A\u65AD\u65F6\u7684\u63D0\u793A\u97F3",
                       onChange: (e) => update({ failId: e.target.value }),
-                      children: SOUND_OPTIONS.map((o) => /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("option", { value: o.id, children: o.label }, o.id))
+                      children: SOUND_OPTIONS.map((o) => /* @__PURE__ */ (0, import_jsx_runtime21.jsx)("option", { value: o.id, children: o.label }, o.id))
                     }
                   ),
-                  /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
+                  /* @__PURE__ */ (0, import_jsx_runtime21.jsx)(
                     "button",
                     {
                       type: "button",
@@ -14325,19 +14510,19 @@ function HoverPanel({ pos, panelRef, items, onPick, onHover, onMarkRead, onMarkA
                     }
                   )
                 ] }),
-                /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: "ts-box-row", children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("label", { children: "\u65F6\u957F" }),
-                  /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime21.jsxs)("div", { className: "ts-box-row", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime21.jsx)("label", { children: "\u65F6\u957F" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime21.jsx)(
                     "select",
                     {
                       className: "ts-select",
                       value: s.duration,
                       title: "\u6BCF\u6B21\u63D0\u9192\u6301\u7EED\u591A\u4E45\uFF08\u5230\u70B9\u81EA\u52A8\u505C\uFF09",
                       onChange: (e) => update({ duration: e.target.value }),
-                      children: DURATION_OPTIONS.map((o) => /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("option", { value: o.id, children: o.label }, o.id))
+                      children: DURATION_OPTIONS.map((o) => /* @__PURE__ */ (0, import_jsx_runtime21.jsx)("option", { value: o.id, children: o.label }, o.id))
                     }
                   ),
-                  s.duration === "custom" && /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
+                  s.duration === "custom" && /* @__PURE__ */ (0, import_jsx_runtime21.jsx)(
                     "input",
                     {
                       className: "ts-sound-min",
@@ -14349,8 +14534,8 @@ function HoverPanel({ pos, panelRef, items, onPick, onHover, onMarkRead, onMarkA
                       onChange: (e) => update({ customMinutes: Number(e.target.value) })
                     }
                   ),
-                  s.duration === "custom" && /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { className: "ts-sound-unit", children: "\u5206\u949F" }),
-                  /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
+                  s.duration === "custom" && /* @__PURE__ */ (0, import_jsx_runtime21.jsx)("span", { className: "ts-sound-unit", children: "\u5206\u949F" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime21.jsx)(
                     "button",
                     {
                       type: "button",
@@ -14363,12 +14548,12 @@ function HoverPanel({ pos, panelRef, items, onPick, onHover, onMarkRead, onMarkA
                 ] })
               ] }) })
             ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("div", { className: "ts-sec", children: /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(ContinueSettingsBlock, {}) })
+            /* @__PURE__ */ (0, import_jsx_runtime21.jsx)("div", { className: "ts-sec", children: /* @__PURE__ */ (0, import_jsx_runtime21.jsx)(ContinueSettingsBlock, {}) })
           ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: "ts-sec ts-sec-list", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(SectionHead, { title: "\u5BF9\u8BDD\u6E05\u5355", note: String(items.length), children: /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("span", { className: "ts-warn-headops", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { className: "ts-warn-slot", "aria-hidden": "true" }),
-              /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
+          /* @__PURE__ */ (0, import_jsx_runtime21.jsxs)("div", { className: "ts-sec ts-sec-list", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime21.jsx)(SectionHead, { title: "\u5BF9\u8BDD\u6E05\u5355", note: String(items.length), children: /* @__PURE__ */ (0, import_jsx_runtime21.jsxs)("span", { className: "ts-warn-headops", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime21.jsx)("span", { className: "ts-warn-slot", "aria-hidden": "true" }),
+              /* @__PURE__ */ (0, import_jsx_runtime21.jsx)(
                 "button",
                 {
                   type: "button",
@@ -14377,10 +14562,10 @@ function HoverPanel({ pos, panelRef, items, onPick, onHover, onMarkRead, onMarkA
                   title: readable === 0 ? "\u6CA1\u6709\u9700\u8981\u6807\u6CE8\u5DF2\u8BFB\u7684\u5BF9\u8BDD" : `\u628A\u6E05\u5355\u91CC\u8FD9 ${readable} \u6761\u5168\u90E8\u6807\u4E3A\u5DF2\u8BFB\uFF0C\u4E0D\u518D\u63D0\u9192\uFF08\u65B0\u4E00\u8F6E / \u65B0\u7684\u5F85\u786E\u8BA4\u4F1A\u91CD\u65B0\u63D0\u9192\uFF09`,
                   "aria-label": "\u5168\u90E8\u6807\u4E3A\u5DF2\u8BFB",
                   onClick: onMarkAllRead,
-                  children: /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { className: "ts-warn-ico", "aria-hidden": "true", dangerouslySetInnerHTML: { __html: iconSvg("check", 12) } })
+                  children: /* @__PURE__ */ (0, import_jsx_runtime21.jsx)("span", { className: "ts-warn-ico", "aria-hidden": "true", dangerouslySetInnerHTML: { __html: iconSvg("check", 12) } })
                 }
               ),
-              /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
+              /* @__PURE__ */ (0, import_jsx_runtime21.jsx)(
                 "button",
                 {
                   type: "button",
@@ -14389,15 +14574,15 @@ function HoverPanel({ pos, panelRef, items, onPick, onHover, onMarkRead, onMarkA
                   title: items.length === 0 ? "\u6E05\u5355\u91CC\u6CA1\u6709\u5BF9\u8BDD" : `\u628A\u6E05\u5355\u91CC\u8FD9 ${items.length} \u6761\u5BF9\u8BDD\u5168\u90E8\u5F52\u6863\uFF08\u53EF\u5728\u4FA7\u680F\u300C\u5168\u90E8\u5BF9\u8BDD\uFF08\u663E\u793A\u5DF2\u5F52\u6863\uFF09\u300D\u91CC\u6062\u590D\uFF09`,
                   "aria-label": "\u5168\u90E8\u5F52\u6863",
                   onClick: onArchiveAll,
-                  children: /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { className: "ts-warn-ico", "aria-hidden": "true", dangerouslySetInnerHTML: { __html: iconSvg("archive", 12) } })
+                  children: /* @__PURE__ */ (0, import_jsx_runtime21.jsx)("span", { className: "ts-warn-ico", "aria-hidden": "true", dangerouslySetInnerHTML: { __html: iconSvg("archive", 12) } })
                 }
               )
             ] }) }),
-            /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("div", { className: "ts-list-body", children: /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("div", { className: "ts-box ts-box-list", children: /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: "ts-warn-pop-list", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime21.jsx)("div", { className: "ts-list-body", children: /* @__PURE__ */ (0, import_jsx_runtime21.jsx)("div", { className: "ts-box ts-box-list", children: /* @__PURE__ */ (0, import_jsx_runtime21.jsxs)("div", { className: "ts-warn-pop-list", children: [
               items.map((it) => {
                 const auto = autoStateOf(it.sessionId);
-                return /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: `ts-warn-row${it.status === "active" ? " is-active" : ""}`, children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)(
+                return /* @__PURE__ */ (0, import_jsx_runtime21.jsxs)("div", { className: `ts-warn-row${it.status === "active" ? " is-active" : ""}`, children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime21.jsxs)(
                     "button",
                     {
                       type: "button",
@@ -14405,7 +14590,7 @@ function HoverPanel({ pos, panelRef, items, onPick, onHover, onMarkRead, onMarkA
                       title: [it.title, it.sub, it.continueHint, "\u70B9\u51FB\uFF1A\u6253\u5F00\u8FD9\u6761\u5BF9\u8BDD\u7684\u5DE5\u4F5C\u53F0"].filter(Boolean).join("\n"),
                       onClick: () => onPick(it),
                       children: [
-                        /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
+                        /* @__PURE__ */ (0, import_jsx_runtime21.jsx)(
                           "span",
                           {
                             className: `ts-warn-icon is-${it.status}`,
@@ -14413,29 +14598,29 @@ function HoverPanel({ pos, panelRef, items, onPick, onHover, onMarkRead, onMarkA
                             dangerouslySetInnerHTML: { __html: iconSvg(STATUS_ICONS[it.status], 18) }
                           }
                         ),
-                        /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("span", { className: "ts-warn-body", children: [
-                          /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { className: "ts-warn-title", children: it.title }),
-                          /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("span", { className: "ts-warn-tags", children: [
-                            it.sub && /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { className: "ts-warn-sub", style: pillStyle(it.projectKey), children: it.sub }),
-                            it.status === "active" && /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(Timer, { at: it.lastPromptAt }),
-                            it.shortReason && /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { className: "ts-warn-reason", children: it.shortReason })
+                        /* @__PURE__ */ (0, import_jsx_runtime21.jsxs)("span", { className: "ts-warn-body", children: [
+                          /* @__PURE__ */ (0, import_jsx_runtime21.jsx)("span", { className: "ts-warn-title", children: it.title }),
+                          /* @__PURE__ */ (0, import_jsx_runtime21.jsxs)("span", { className: "ts-warn-tags", children: [
+                            it.sub && /* @__PURE__ */ (0, import_jsx_runtime21.jsx)("span", { className: "ts-warn-sub", style: pillStyle(it.projectKey), children: it.sub }),
+                            it.status === "active" && /* @__PURE__ */ (0, import_jsx_runtime21.jsx)(Timer, { at: it.lastPromptAt }),
+                            it.shortReason && /* @__PURE__ */ (0, import_jsx_runtime21.jsx)("span", { className: "ts-warn-reason", children: it.shortReason })
                           ] })
                         ] })
                       ]
                     }
                   ),
-                  /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: "ts-warn-actions", children: [
-                    /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("span", { className: "ts-warn-slot", children: [
-                      it.canContinue && auto === "sent" && /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
+                  /* @__PURE__ */ (0, import_jsx_runtime21.jsxs)("div", { className: "ts-warn-actions", children: [
+                    /* @__PURE__ */ (0, import_jsx_runtime21.jsxs)("span", { className: "ts-warn-slot", children: [
+                      it.canContinue && auto === "sent" && /* @__PURE__ */ (0, import_jsx_runtime21.jsx)(
                         "span",
                         {
                           className: "ts-warn-done",
                           title: it.continueHint ? `\u5DF2\u81EA\u52A8\u53D1\u9001\u300C\u7EE7\u7EED\u300D\uFF1A${it.continueHint}` : "\u5DF2\u81EA\u52A8\u53D1\u9001\u300C\u7EE7\u7EED\u300D\u8BA9\u6A21\u578B\u63A5\u7740\u8F93\u51FA",
-                          children: /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { className: "ts-warn-ico", "aria-hidden": "true", dangerouslySetInnerHTML: { __html: iconSvg("sent", 12) } })
+                          children: /* @__PURE__ */ (0, import_jsx_runtime21.jsx)("span", { className: "ts-warn-ico", "aria-hidden": "true", dangerouslySetInnerHTML: { __html: iconSvg("sent", 12) } })
                         }
                       ),
-                      it.canContinue && auto === "sending" && /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { className: "ts-warn-done is-busy", title: "\u6B63\u5728\u53D1\u9001\u300C\u7EE7\u7EED\u300D\u2026", children: /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { className: "ts-warn-ico", "aria-hidden": "true", dangerouslySetInnerHTML: { __html: iconSvg("play", 12) } }) }),
-                      it.canContinue && (auto === "idle" || auto === "error") && /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
+                      it.canContinue && auto === "sending" && /* @__PURE__ */ (0, import_jsx_runtime21.jsx)("span", { className: "ts-warn-done is-busy", title: "\u6B63\u5728\u53D1\u9001\u300C\u7EE7\u7EED\u300D\u2026", children: /* @__PURE__ */ (0, import_jsx_runtime21.jsx)("span", { className: "ts-warn-ico", "aria-hidden": "true", dangerouslySetInnerHTML: { __html: iconSvg("play", 12) } }) }),
+                      it.canContinue && (auto === "idle" || auto === "error") && /* @__PURE__ */ (0, import_jsx_runtime21.jsx)(
                         "button",
                         {
                           type: "button",
@@ -14447,11 +14632,11 @@ function HoverPanel({ pos, panelRef, items, onPick, onHover, onMarkRead, onMarkA
                             void cont(it);
                           },
                           disabled: sendState[it.key] === "sending",
-                          children: /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { className: "ts-warn-ico", "aria-hidden": "true", dangerouslySetInnerHTML: { __html: iconSvg("play", 12) } })
+                          children: /* @__PURE__ */ (0, import_jsx_runtime21.jsx)("span", { className: "ts-warn-ico", "aria-hidden": "true", dangerouslySetInnerHTML: { __html: iconSvg("play", 12) } })
                         }
                       )
                     ] }),
-                    /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { className: "ts-warn-slot", children: /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
+                    /* @__PURE__ */ (0, import_jsx_runtime21.jsx)("span", { className: "ts-warn-slot", children: /* @__PURE__ */ (0, import_jsx_runtime21.jsx)(
                       "button",
                       {
                         type: "button",
@@ -14462,10 +14647,10 @@ function HoverPanel({ pos, panelRef, items, onPick, onHover, onMarkRead, onMarkA
                           e.stopPropagation();
                           onMarkRead(it.key);
                         },
-                        children: /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { className: "ts-warn-ico", "aria-hidden": "true", dangerouslySetInnerHTML: { __html: iconSvg("check", 12) } })
+                        children: /* @__PURE__ */ (0, import_jsx_runtime21.jsx)("span", { className: "ts-warn-ico", "aria-hidden": "true", dangerouslySetInnerHTML: { __html: iconSvg("check", 12) } })
                       }
                     ) }),
-                    /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { className: "ts-warn-slot", children: /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
+                    /* @__PURE__ */ (0, import_jsx_runtime21.jsx)("span", { className: "ts-warn-slot", children: /* @__PURE__ */ (0, import_jsx_runtime21.jsx)(
                       "button",
                       {
                         type: "button",
@@ -14476,14 +14661,14 @@ function HoverPanel({ pos, panelRef, items, onPick, onHover, onMarkRead, onMarkA
                           e.stopPropagation();
                           onArchive(it);
                         },
-                        children: /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { className: "ts-warn-ico", "aria-hidden": "true", dangerouslySetInnerHTML: { __html: iconSvg("archive", 12) } })
+                        children: /* @__PURE__ */ (0, import_jsx_runtime21.jsx)("span", { className: "ts-warn-ico", "aria-hidden": "true", dangerouslySetInnerHTML: { __html: iconSvg("archive", 12) } })
                       }
                     ) })
                   ] })
                 ] }, it.key);
               }),
-              items.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: "ts-warn-empty", children: [
-                /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { "aria-hidden": "true", children: "\u25CB" }),
+              items.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime21.jsxs)("div", { className: "ts-warn-empty", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime21.jsx)("span", { "aria-hidden": "true", children: "\u25CB" }),
                 "\u6CA1\u6709\u6B63\u5728\u5173\u6CE8\u7684\u5BF9\u8BDD"
               ] })
             ] }) }) })
@@ -14495,11 +14680,11 @@ function HoverPanel({ pos, panelRef, items, onPick, onHover, onMarkRead, onMarkA
   );
 }
 function ControlRoomEntry({ wide }) {
-  (0, import_react25.useEffect)(() => {
+  (0, import_react26.useEffect)(() => {
     injectProjectCenterStyles();
   }, []);
-  const [screen, setScreen] = (0, import_react25.useState)(() => getLiveScreen());
-  (0, import_react25.useEffect)(() => {
+  const [screen, setScreen] = (0, import_react26.useState)(() => getLiveScreen());
+  (0, import_react26.useEffect)(() => {
     const sync2 = () => setScreen(getLiveScreen());
     sync2();
     const offList = onRequestProjectList(sync2);
@@ -14511,9 +14696,9 @@ function ControlRoomEntry({ wide }) {
   }, []);
   const pulse = useActivityPulse();
   const alive = pulse.alive > 0;
-  const navigatingRef = (0, import_react25.useRef)(false);
-  const [offSurface, setOffSurface] = (0, import_react25.useState)(false);
-  (0, import_react25.useEffect)(() => {
+  const navigatingRef = (0, import_react26.useRef)(false);
+  const [offSurface, setOffSurface] = (0, import_react26.useState)(false);
+  (0, import_react26.useEffect)(() => {
     const probe = () => setOffSurface(activeHostPanelId(getClientContext()) !== null);
     probe();
     const timer = window.setInterval(probe, 500);
@@ -14523,9 +14708,9 @@ function ControlRoomEntry({ wide }) {
   const running = pulse.running > 0;
   const warnUnread = pulse.warn > 0;
   const doneUnread = pulse.done.length > 0;
-  const btnRef = (0, import_react25.useRef)(null);
-  const [dotCount, setDotCount] = (0, import_react25.useState)(DOT_COUNT);
-  (0, import_react25.useEffect)(() => {
+  const btnRef = (0, import_react26.useRef)(null);
+  const [dotCount, setDotCount] = (0, import_react26.useState)(DOT_COUNT);
+  (0, import_react26.useEffect)(() => {
     const el = btnRef.current;
     if (!el) return;
     const measure = () => {
@@ -14570,9 +14755,9 @@ function ControlRoomEntry({ wide }) {
     }
     setArchiveError(`\u5F52\u6863\u5931\u8D25\uFF1A${res.error}`);
   };
-  const [archivingId, setArchivingId] = (0, import_react25.useState)("");
-  const [pendingArchive, setPendingArchive] = (0, import_react25.useState)(null);
-  const [archiveError, setArchiveError] = (0, import_react25.useState)("");
+  const [archivingId, setArchivingId] = (0, import_react26.useState)("");
+  const [pendingArchive, setPendingArchive] = (0, import_react26.useState)(null);
+  const [archiveError, setArchiveError] = (0, import_react26.useState)("");
   const archiveAll = async () => {
     const list = hoverItems.filter((it) => it.sessionId);
     if (list.length === 0) return;
@@ -14636,8 +14821,8 @@ function ControlRoomEntry({ wide }) {
     ...warnItems,
     ...doneItems
   ];
-  const [hoverPos, setHoverPos] = (0, import_react25.useState)(null);
-  const hoverTimer = (0, import_react25.useRef)(null);
+  const [hoverPos, setHoverPos] = (0, import_react26.useState)(null);
+  const hoverTimer = (0, import_react26.useRef)(null);
   const clearHoverTimer = () => {
     if (hoverTimer.current) {
       window.clearTimeout(hoverTimer.current);
@@ -14647,12 +14832,12 @@ function ControlRoomEntry({ wide }) {
   const wantBox = hoverPos && hoverItems.length > 0 ? hoverPos.mode === "sheet" ? sheetBox(window.innerWidth, hoverItems) : { left: hoverPos.left, width: panelWidth(hoverPos.left, hoverItems) } : null;
   const wantW = wantBox?.width ?? 0;
   const wantLeft = wantBox?.left ?? 0;
-  (0, import_react25.useEffect)(() => {
+  (0, import_react26.useEffect)(() => {
     if (!hoverPos || wantW === 0) return;
     if (hoverPos.width === wantW && hoverPos.left === wantLeft) return;
     setHoverPos({ ...hoverPos, left: wantLeft, width: wantW });
   }, [wantW, wantLeft]);
-  (0, import_react25.useEffect)(() => {
+  (0, import_react26.useEffect)(() => {
     if (!hoverPos) return;
     let raf2 = 0;
     const onResize = () => {
@@ -14703,10 +14888,10 @@ function ControlRoomEntry({ wide }) {
     const pos = computePanelPos();
     if (pos) setHoverPos(pos);
   };
-  const insideRef = (0, import_react25.useRef)(false);
-  const renewRef = (0, import_react25.useRef)(0);
-  const staleRef = (0, import_react25.useRef)(0);
-  const interactAtRef = (0, import_react25.useRef)(0);
+  const insideRef = (0, import_react26.useRef)(false);
+  const renewRef = (0, import_react26.useRef)(0);
+  const staleRef = (0, import_react26.useRef)(0);
+  const interactAtRef = (0, import_react26.useRef)(0);
   const panelFormActive = () => {
     const p = panelRef.current;
     const a = document.activeElement;
@@ -14761,10 +14946,10 @@ function ControlRoomEntry({ wide }) {
     renewRef.current = 0;
     scheduleClose();
   };
-  (0, import_react25.useEffect)(() => clearHoverTimer, []);
-  const triggerRef = (0, import_react25.useRef)(null);
-  const panelRef = (0, import_react25.useRef)(null);
-  const pointerRef = (0, import_react25.useRef)(null);
+  (0, import_react26.useEffect)(() => clearHoverTimer, []);
+  const triggerRef = (0, import_react26.useRef)(null);
+  const panelRef = (0, import_react26.useRef)(null);
+  const pointerRef = (0, import_react26.useRef)(null);
   const pointerZone = () => {
     const pt = pointerRef.current;
     const t = triggerRef.current;
@@ -14776,7 +14961,7 @@ function ControlRoomEntry({ wide }) {
       pt?.y ?? null
     );
   };
-  (0, import_react25.useEffect)(() => {
+  (0, import_react26.useEffect)(() => {
     const onMove = (e) => {
       pointerRef.current = { x: e.clientX, y: e.clientY };
     };
@@ -14802,7 +14987,7 @@ function ControlRoomEntry({ wide }) {
       togglePanel(e);
     }
   };
-  (0, import_react25.useEffect)(() => {
+  (0, import_react26.useEffect)(() => {
     if (!hoverPos) return;
     const onDown = (ev) => {
       const t = ev.target;
@@ -14832,11 +15017,11 @@ function ControlRoomEntry({ wide }) {
       document.removeEventListener("keydown", onKey);
     };
   }, [hoverPos]);
-  (0, import_react25.useEffect)(() => {
+  (0, import_react26.useEffect)(() => {
     return initSoundBridge();
   }, []);
-  return /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)(import_jsx_runtime20.Fragment, { children: [
-    /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)(
+  return /* @__PURE__ */ (0, import_jsx_runtime21.jsxs)(import_jsx_runtime21.Fragment, { children: [
+    /* @__PURE__ */ (0, import_jsx_runtime21.jsxs)(
       "button",
       {
         ref: btnRef,
@@ -14862,7 +15047,7 @@ function ControlRoomEntry({ wide }) {
           window.setTimeout(() => setScreen(getLiveScreen()), NAV_LOCK_MS);
         },
         children: [
-          (!alive || wide) && /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
+          (!alive || wide) && /* @__PURE__ */ (0, import_jsx_runtime21.jsx)(
             "span",
             {
               className: "ts-side-icon",
@@ -14870,8 +15055,8 @@ function ControlRoomEntry({ wide }) {
               dangerouslySetInnerHTML: { __html: iconSvg(toDesk ? "compass" : "folder", wide ? 16 : 18) }
             }
           ),
-          wide && /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { className: "ts-side-label", children: toDesk ? "\u56DE\u5230\u5DE5\u4F5C\u53F0" : "\u9879\u76EE\u4E2D\u5FC3" }),
-          alive && /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)(
+          wide && /* @__PURE__ */ (0, import_jsx_runtime21.jsx)("span", { className: "ts-side-label", children: toDesk ? "\u56DE\u5230\u5DE5\u4F5C\u53F0" : "\u9879\u76EE\u4E2D\u5FC3" }),
+          alive && /* @__PURE__ */ (0, import_jsx_runtime21.jsxs)(
             "span",
             {
               ref: triggerRef,
@@ -14879,7 +15064,7 @@ function ControlRoomEntry({ wide }) {
               onMouseOver: openHover,
               onMouseLeave: closeHover,
               children: [
-                warnUnread && /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
+                warnUnread && /* @__PURE__ */ (0, import_jsx_runtime21.jsx)(
                   "span",
                   {
                     className: "ts-side-badge is-warn",
@@ -14895,7 +15080,7 @@ ${pulse.tip}`,
                     children: pulse.warn
                   }
                 ),
-                doneUnread && /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
+                doneUnread && /* @__PURE__ */ (0, import_jsx_runtime21.jsx)(
                   "span",
                   {
                     className: "ts-side-badge is-done",
@@ -14909,7 +15094,7 @@ ${pulse.tip}`,
                     children: pulse.done.length
                   }
                 ),
-                breathing > 0 && /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
+                breathing > 0 && /* @__PURE__ */ (0, import_jsx_runtime21.jsx)(
                   PulseDots,
                   {
                     tone,
@@ -14923,7 +15108,7 @@ ${pulse.tip}`,
         ]
       }
     ),
-    hoverPos && /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
+    hoverPos && /* @__PURE__ */ (0, import_jsx_runtime21.jsx)(
       HoverPanel,
       {
         pos: hoverPos,
@@ -14963,11 +15148,11 @@ ${pulse.tip}`,
         }
       }
     ),
-    pendingArchive && /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
+    pendingArchive && /* @__PURE__ */ (0, import_jsx_runtime21.jsx)(
       ConfirmDialog,
       {
         title: "\u505C\u6B62\u5E76\u5F52\u6863\u8FD9\u6761\u5BF9\u8BDD\uFF1F",
-        message: /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)(import_jsx_runtime20.Fragment, { children: [
+        message: /* @__PURE__ */ (0, import_jsx_runtime21.jsxs)(import_jsx_runtime21.Fragment, { children: [
           "\u300C",
           pendingArchive.title,
           "\u300D\u8FD8\u6709\u6B63\u5728\u8FDB\u884C\u7684\u5DE5\u4F5C\u3002\u5F52\u6863\u4F1A\u5148\u505C\u6B62\u8FD9\u4E9B\u5DE5\u4F5C\uFF1B\u4E4B\u540E\u53EF\u5728\u4FA7\u680F\u300C\u5168\u90E8\u5BF9\u8BDD\uFF08\u663E\u793A\u5DF2\u5F52\u6863\uFF09\u300D\u91CC\u6062\u590D\uFF0C\u88AB\u505C\u6B62\u7684\u5DE5\u4F5C\u4E0D\u4F1A\u81EA\u52A8\u7EE7\u7EED\u3002"
@@ -15812,8 +15997,8 @@ function installComposerFocus() {
 }
 
 // client/src/panel/dock-spike.tsx
-var import_react26 = require("react");
-var import_jsx_runtime21 = require("react/jsx-runtime");
+var import_react27 = require("react");
+var import_jsx_runtime22 = require("react/jsx-runtime");
 var SPIKE_FLAG_KEY = "tokensave:dock-spike.v1";
 var SPIKE_CSS_ID = "tokensave-dock-spike-css";
 var SPIKE_CSS = `
@@ -15950,11 +16135,11 @@ function buildPaneDom(spec, state) {
   return root;
 }
 function DockSpike() {
-  const hostRef = (0, import_react26.useRef)(null);
-  const apiRef = (0, import_react26.useRef)(null);
-  const stateRef = (0, import_react26.useRef)({ ticks: {}, drafts: {}, focusLog: [], layoutOps: [] });
-  const [locked, setLocked] = (0, import_react26.useState)(false);
-  (0, import_react26.useEffect)(() => {
+  const hostRef = (0, import_react27.useRef)(null);
+  const apiRef = (0, import_react27.useRef)(null);
+  const stateRef = (0, import_react27.useRef)({ ticks: {}, drafts: {}, focusLog: [], layoutOps: [] });
+  const [locked, setLocked] = (0, import_react27.useState)(false);
+  (0, import_react27.useEffect)(() => {
     const host = hostRef.current;
     if (!host) return;
     const DVC = installDockview();
@@ -16077,10 +16262,10 @@ function DockSpike() {
       delete window.__tsDockSpike;
     };
   }, []);
-  return /* @__PURE__ */ (0, import_jsx_runtime21.jsxs)("div", { className: "ts-spike-shell", "data-spike-shell": "", children: [
-    /* @__PURE__ */ (0, import_jsx_runtime21.jsxs)("div", { className: "ts-spike-bar", children: [
-      /* @__PURE__ */ (0, import_jsx_runtime21.jsx)("b", { children: "dockview spike\uFF08Step A\uFF09" }),
-      /* @__PURE__ */ (0, import_jsx_runtime21.jsx)(
+  return /* @__PURE__ */ (0, import_jsx_runtime22.jsxs)("div", { className: "ts-spike-shell", "data-spike-shell": "", children: [
+    /* @__PURE__ */ (0, import_jsx_runtime22.jsxs)("div", { className: "ts-spike-bar", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime22.jsx)("b", { children: "dockview spike\uFF08Step A\uFF09" }),
+      /* @__PURE__ */ (0, import_jsx_runtime22.jsx)(
         "button",
         {
           className: "ts-spike-btn",
@@ -16093,28 +16278,28 @@ function DockSpike() {
           children: locked ? "\u89E3\u9501\u5E03\u5C40" : "\u9501\u5B9A\u5E03\u5C40\uFF08disableDnd\uFF09"
         }
       ),
-      /* @__PURE__ */ (0, import_jsx_runtime21.jsx)("button", { className: "ts-spike-btn", onClick: () => apiRef.current?.addFloatingGroup(apiRef.current.getPanel("A:chat"), { width: 520, height: 380 }), children: "\u6D6E\u52A8 \u9879\u76EEA \xB7 \u4E3B\u5BF9\u8BDD" }),
-      /* @__PURE__ */ (0, import_jsx_runtime21.jsx)("button", { className: "ts-spike-btn", onClick: () => apiRef.current?.getPanel("A:preview")?.api.setVisible(false), children: "\u9690\u85CF \u9879\u76EEA \xB7 \u9884\u89C8" }),
-      /* @__PURE__ */ (0, import_jsx_runtime21.jsx)("button", { className: "ts-spike-btn", onClick: () => apiRef.current?.getPanel("A:preview")?.api.setVisible(true), children: "\u663E\u793A \u9879\u76EEA \xB7 \u9884\u89C8" }),
-      /* @__PURE__ */ (0, import_jsx_runtime21.jsx)("span", { style: { color: "#6b7280" }, children: "\u62D6\u62FD/\u7F29\u653E\u9762\u677F\uFF0C\u7136\u540E\u770B\u4E24\u4E2A\u9879\u76EE\u7684\u8F93\u5165\u6846\u662F\u5426\u4E92\u4E0D\u5E72\u6270" })
+      /* @__PURE__ */ (0, import_jsx_runtime22.jsx)("button", { className: "ts-spike-btn", onClick: () => apiRef.current?.addFloatingGroup(apiRef.current.getPanel("A:chat"), { width: 520, height: 380 }), children: "\u6D6E\u52A8 \u9879\u76EEA \xB7 \u4E3B\u5BF9\u8BDD" }),
+      /* @__PURE__ */ (0, import_jsx_runtime22.jsx)("button", { className: "ts-spike-btn", onClick: () => apiRef.current?.getPanel("A:preview")?.api.setVisible(false), children: "\u9690\u85CF \u9879\u76EEA \xB7 \u9884\u89C8" }),
+      /* @__PURE__ */ (0, import_jsx_runtime22.jsx)("button", { className: "ts-spike-btn", onClick: () => apiRef.current?.getPanel("A:preview")?.api.setVisible(true), children: "\u663E\u793A \u9879\u76EEA \xB7 \u9884\u89C8" }),
+      /* @__PURE__ */ (0, import_jsx_runtime22.jsx)("span", { style: { color: "#6b7280" }, children: "\u62D6\u62FD/\u7F29\u653E\u9762\u677F\uFF0C\u7136\u540E\u770B\u4E24\u4E2A\u9879\u76EE\u7684\u8F93\u5165\u6846\u662F\u5426\u4E92\u4E0D\u5E72\u6270" })
     ] }),
-    /* @__PURE__ */ (0, import_jsx_runtime21.jsx)("div", { className: "ts-spike-dock", ref: hostRef, "data-spike-dock": "" })
+    /* @__PURE__ */ (0, import_jsx_runtime22.jsx)("div", { className: "ts-spike-dock", ref: hostRef, "data-spike-dock": "" })
   ] });
 }
 function DockSpikeGate() {
-  const [on] = (0, import_react26.useState)(() => spikeEnabled());
+  const [on] = (0, import_react27.useState)(() => spikeEnabled());
   if (!on) return null;
-  return /* @__PURE__ */ (0, import_jsx_runtime21.jsx)(DockSpike, {});
+  return /* @__PURE__ */ (0, import_jsx_runtime22.jsx)(DockSpike, {});
 }
 
 // client/src/index.ts
 var inject = { slots: true };
 function Probe(props) {
   const sid = props?.sessionId;
-  (0, import_react27.useEffect)(() => {
+  (0, import_react28.useEffect)(() => {
     setCurrentSessionId(sid ? String(sid) : "");
   }, [sid]);
-  (0, import_react27.useEffect)(() => {
+  (0, import_react28.useEffect)(() => {
     const ctx = getClientContext();
     if (!ctx) return;
     if (sid) {

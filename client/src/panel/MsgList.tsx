@@ -25,6 +25,7 @@ import { RichText, stripMarkdown } from './RichText'
 import type { ChatView } from './chat-view'
 import { ChangesCard } from './changes-card'
 import { MessageImages } from './message-images'
+import { QueuedMessage } from './queued-message'
 import { injectProjectCenterStyles } from './styles'
 
 /** 最多渲染的轮数（超出只显示最近这些） */
@@ -1237,11 +1238,7 @@ export function MsgList({
             {t.notice && <TurnNoticeRow notice={t.notice.notice!} />}
             {t.queued.map((m, i) => (
               <div className="ts-msg-block ts-msg-block-user" key={`q${i}`} data-turn-queued="">
-                <div className="ts-msg-user ts-msg-queued">
-                  {m.content}
-                  <span className="ts-queued-tag" title="会话正忙：这条消息在宿主收件箱队列里，下一轮开始时送达模型（与原生对话的队列面板同源）">排队中</span>
-                </div>
-                {m.images?.length ? <MessageImages sessionId={sessionId} images={m.images} align="end" gallery={galleryImages} /> : null}
+                <QueuedMessage sessionId={sessionId} message={m} gallery={galleryImages} />
                 <MsgTime time={m.time} copyContent={m.content} />
               </div>
             ))}
