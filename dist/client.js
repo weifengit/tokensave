@@ -288,9 +288,20 @@ function noticeFromEvent(ev) {
   }
   return null;
 }
+function dropConnectedRetries(msgs, turn) {
+  let dropped = false;
+  const kept = msgs.filter((m) => {
+    const retry = m.retry;
+    if (!retry || retry.state !== "started") return true;
+    if (turn > 0 && retry.turn > 0 && retry.turn !== turn) return true;
+    dropped = true;
+    return false;
+  });
+  return dropped ? kept : null;
+}
 function messagesFromWindow(snap) {
   const entries = Array.isArray(snap?.entries) ? snap.entries : [];
-  const out = [];
+  let out = [];
   const queue = [];
   let live = null;
   let liveAttempt = "";
@@ -306,6 +317,7 @@ function messagesFromWindow(snap) {
       const chunk = ev2?.data?.chunk;
       const ct = chunk?.type;
       if (ct !== "text-delta" && ct !== "reasoning-delta" || typeof chunk.text !== "string" || !chunk.text) continue;
+      out = dropConnectedRetries(out, currentTurn) ?? out;
       const isReasoning = ct === "reasoning-delta";
       const id = String(ev2?.data?.attemptId ?? "");
       const slot = isReasoning ? "reasoning" : "text";
@@ -327,6 +339,7 @@ function messagesFromWindow(snap) {
       continue;
     }
     if (ev.type === "tool/call") {
+      out = dropConnectedRetries(out, currentTurn) ?? out;
       const p = fileEditOf(ev.data?.name, ev.data?.arguments);
       if (p) out.push({ role: "tool", content: "", type: "tool/call", kind: "file-edit", editPath: p, ...turnTag() });
       continue;
@@ -358,6 +371,7 @@ function messagesFromWindow(snap) {
     }
     if (ev.type === "system/message") continue;
     if (ev.type === "assistant/message") {
+      out = dropConnectedRetries(out, currentTurn) ?? out;
       const think = reasoningOf(ev);
       const text = visibleTextOf(ev);
       const imgs = imagesOf(ev);
@@ -393,6 +407,7 @@ function messagesFromWindow(snap) {
     const images = imagesOf(ev);
     if (!content && images.length === 0) continue;
     live = null;
+    out = dropConnectedRetries(out, currentTurn) ?? out;
     const inj = injectionOf(ev);
     out.push({
       role: roleOf(ev.type),
@@ -506,9 +521,13 @@ function emitEvent(ch, x) {
     return;
   }
   if (ev.type === "tool/call") {
+    const trimmed2 = dropConnectedRetries(ch.msgs, ch.turn ?? 0);
+    if (trimmed2) ch.msgs = trimmed2;
     const p = fileEditOf(ev.data?.name, ev.data?.arguments);
     if (p) {
       ch.msgs = ch.msgs.concat({ role: "tool", content: "", type: "tool/call", kind: "file-edit", editPath: p, ...turnTag });
+      publish(ch);
+    } else if (trimmed2) {
       publish(ch);
     }
     return;
@@ -573,6 +592,8 @@ function emitEvent(ch, x) {
   const content = contentOf(ev);
   const images = imagesOf(ev);
   if (!content && images.length === 0) return;
+  const trimmed = dropConnectedRetries(ch.msgs, ch.turn ?? 0);
+  if (trimmed) ch.msgs = trimmed;
   const inj = injectionOf(ev);
   ch.msgs = ch.msgs.concat({
     role: roleOf(ev.type),
@@ -3472,6 +3493,15 @@ body.ts-vsplit-dragging .ts-card { transition:none !important; animation:none !i
 .ts-img-lightbox-close { position:fixed; top:max(12px, env(safe-area-inset-top, 0px)); right:max(12px, env(safe-area-inset-right, 0px)); box-sizing:border-box; width:44px; height:44px; padding:0; display:inline-flex; align-items:center; justify-content:center; border:1px solid rgba(255,255,255,.3); border-radius:12px; background:rgba(0,0,0,.45); color:#fff; font:inherit; font-size:18px; line-height:1; cursor:pointer; }
 .ts-img-lightbox-close:hover { background:rgba(0,0,0,.7); }
 .ts-img-lightbox-close:focus-visible { outline:2px solid rgba(96,165,250,.9); outline-offset:2px; }
+/* \u7FFB\u9875\uFF1A\u4E24\u4FA7 44px \u5706\u94AE\uFF08\u624B\u673A\u6CA1\u952E\u76D8\u4E5F\u80FD\u70B9\uFF09+ \u5E95\u90E8\u8BA1\u6570\uFF1B\u53EA\u5728\u56FE > 1 \u65F6\u6E32\u67D3\u3002
+   \u6309\u94AE\u538B\u5728\u56FE\u7247\u8FB9\u7F18\u4E0A\u662F\u6709\u610F\u7684\uFF1A\u56FE\u7247\u5DF2\u7ECF\u5360 92vw\uFF0C\u7559\u4E24\u4FA7\u7A7A\u767D\u4F1A\u628A\u5B83\u7F29\u5F97\u592A\u5C0F\u3002 */
+.ts-img-lightbox-nav { position:fixed; top:50%; transform:translateY(-50%); z-index:1; box-sizing:border-box; width:44px; height:44px; padding:0; display:inline-flex; align-items:center; justify-content:center; border:1px solid rgba(255,255,255,.32); border-radius:50%; background:rgba(0,0,0,.5); color:#fff; font:inherit; font-size:26px; line-height:1; cursor:pointer; }
+.ts-img-lightbox-nav:hover { background:rgba(0,0,0,.75); }
+.ts-img-lightbox-nav:focus-visible { outline:2px solid rgba(96,165,250,.9); outline-offset:2px; }
+.ts-img-lightbox-nav.is-prev { left:max(12px, env(safe-area-inset-left, 0px)); }
+.ts-img-lightbox-nav.is-next { right:max(12px, env(safe-area-inset-right, 0px)); }
+.ts-img-lightbox-count { position:fixed; left:50%; bottom:max(16px, env(safe-area-inset-bottom, 0px)); transform:translateX(-50%); padding:3px 12px; border-radius:999px; background:rgba(0,0,0,.55); color:#fff; font-size:calc(var(--ts-fs, 13.5px) * 0.86); font-variant-numeric:tabular-nums; line-height:1.5; }
+.ts-img-lightbox-tip { color:#fff; opacity:.82; font-size:calc(var(--ts-fs, 13.5px) * 0.94); padding:10px 16px; border-radius:10px; background:rgba(0,0,0,.45); }
 .ts-msg-tool, .ts-msg-system { align-self:stretch; opacity:.62; font-size:calc(var(--ts-fs, 13.5px) * 0.88); border-left:2px solid rgba(127,127,127,.5); padding:2px 8px; }
 /* \u2014\u2014 \u6BCF\u6761\u6D88\u606F\u7684\u53D1\u51FA\u65F6\u95F4\uFF08\u7528\u6237\u6C14\u6CE1 / \u52A9\u624B\u56DE\u7B54 / \u8FC7\u7A0B\u9879 / \u6CE8\u5165\u9879\uFF09\u2014\u2014
    \u5757\u5BB9\u5668\uFF1A\u6C14\u6CE1\u4E0E\u65F6\u95F4\u7684 column flex\uFF1Buser \u5757\u6574\u4F53\u53F3\u5BF9\u9F50\u3001assistant \u5757\u62C9\u4F38\u6EE1\u5BBD\u3002 */
@@ -5205,7 +5235,7 @@ function ImageTile({ sessionId, image, compact, onOpen }) {
       "aria-label": url ? `\u67E5\u770B\u56FE\u7247\uFF1A${label}` : `${label} \u8F7D\u5165\u4E2D`,
       "aria-busy": url && !loaded ? true : void 0,
       onClick: () => {
-        if (url) onOpen({ url, name: image.name });
+        if (url) onOpen(url);
       },
       children: [
         url && /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
@@ -5225,23 +5255,91 @@ function ImageTile({ sessionId, image, compact, onOpen }) {
     }
   );
 }
-function Lightbox({ state, onClose }) {
+function urlKeyOf(image) {
+  return image.attachmentId;
+}
+function Lightbox({ state, sessionId, onClose }) {
   const closeRef = (0, import_react7.useRef)(null);
+  const [index, setIndex] = (0, import_react7.useState)(state.index);
+  const [urls, setUrls] = (0, import_react7.useState)(() => {
+    const first = state.images[state.index];
+    return first && state.initialUrl ? { [urlKeyOf(first)]: state.initialUrl } : {};
+  });
+  const [failed, setFailed] = (0, import_react7.useState)(false);
+  const total = state.images.length;
+  const current2 = state.images[index];
+  const currentKey = current2 ? urlKeyOf(current2) : "";
+  const step = (delta) => {
+    if (total < 2) return;
+    setIndex((i) => (i + delta + total) % total);
+    setFailed(false);
+  };
   (0, import_react7.useEffect)(() => {
     closeRef.current?.focus();
+  }, []);
+  (0, import_react7.useEffect)(() => {
     const onKey = (e) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") {
+        e.preventDefault();
+        onClose();
+        return;
+      }
+      if (e.key === "ArrowLeft" || e.key === "PageUp") {
+        e.preventDefault();
+        step(-1);
+        return;
+      }
+      if (e.key === "ArrowRight" || e.key === "PageDown") {
+        e.preventDefault();
+        step(1);
+      }
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  });
+  (0, import_react7.useEffect)(() => {
+    if (!current2) return;
+    let live = true;
+    const need = !urls[currentKey];
+    if (need) {
+      setFailed(false);
+      resolveSessionImageUrl(sessionId, current2).then(
+        (next) => {
+          if (!live || !next) return;
+          setUrls((m) => m[currentKey] ? m : { ...m, [currentKey]: next });
+        },
+        () => {
+          if (live) setFailed(true);
+        }
+      );
+    }
+    for (const delta of [1, -1]) {
+      if (total < 2) break;
+      const neighbor = state.images[(index + delta + total) % total];
+      if (!neighbor) continue;
+      const key = urlKeyOf(neighbor);
+      if (urls[key]) continue;
+      void resolveSessionImageUrl(sessionId, neighbor).then(
+        (next) => {
+          if (!live || !next) return;
+          setUrls((m) => m[key] ? m : { ...m, [key]: next });
+        },
+        () => void 0
+      );
+    }
+    return () => {
+      live = false;
+    };
+  }, [sessionId, index, total, state.images, current2, currentKey, urls]);
+  const label = current2?.name || "\u56FE\u7247";
+  const url = current2 ? urls[currentKey] : void 0;
   return /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)(
     "div",
     {
       className: "ts-img-lightbox",
       role: "dialog",
       "aria-modal": "true",
-      "aria-label": state.name || "\u67E5\u770B\u56FE\u7247",
+      "aria-label": label,
       onClick: onClose,
       children: [
         /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
@@ -5256,15 +5354,58 @@ function Lightbox({ state, onClose }) {
             children: "\u2715"
           }
         ),
-        /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("img", { src: state.url, alt: state.name || "\u56FE\u7247", onClick: (e) => e.stopPropagation() })
+        total > 1 && /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)(import_jsx_runtime6.Fragment, { children: [
+          /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
+            "button",
+            {
+              type: "button",
+              className: "ts-img-lightbox-nav is-prev",
+              title: "\u4E0A\u4E00\u5F20\uFF08\u2190\uFF09",
+              "aria-label": "\u4E0A\u4E00\u5F20",
+              onClick: (e) => {
+                e.stopPropagation();
+                step(-1);
+              },
+              children: "\u2039"
+            }
+          ),
+          /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
+            "button",
+            {
+              type: "button",
+              className: "ts-img-lightbox-nav is-next",
+              title: "\u4E0B\u4E00\u5F20\uFF08\u2192\uFF09",
+              "aria-label": "\u4E0B\u4E00\u5F20",
+              onClick: (e) => {
+                e.stopPropagation();
+                step(1);
+              },
+              children: "\u203A"
+            }
+          ),
+          /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)("div", { className: "ts-img-lightbox-count", "aria-live": "polite", children: [
+            index + 1,
+            " / ",
+            total
+          ] })
+        ] }),
+        url ? /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("img", { src: url, alt: label, onClick: (e) => e.stopPropagation() }) : failed ? /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("div", { className: "ts-img-lightbox-tip", onClick: (e) => e.stopPropagation(), children: "\u8FD9\u5F20\u56FE\u8BFB\u53D6\u5931\u8D25\uFF0C\u53EF\u5148\u5173\u95ED\u518D\u70B9\u7F29\u7565\u56FE\u91CD\u8BD5" }) : /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("div", { className: "ts-img-lightbox-tip", onClick: (e) => e.stopPropagation(), children: "\u8F7D\u5165\u4E2D\u2026" })
       ]
     }
   );
 }
-function MessageImages({ sessionId, images, align = "start" }) {
+function MessageImages({ sessionId, images, align = "start", gallery }) {
   const [lightbox, setLightbox] = (0, import_react7.useState)(null);
   if (!sessionId || images.length === 0) return null;
   const compact = images.length > 1;
+  const found = gallery && gallery.length > 0 ? gallery.indexOf(images[0]) : -1;
+  const scope = found >= 0 ? gallery : images;
+  const base = found >= 0 ? found : 0;
+  const open = (url, index) => setLightbox({
+    images: scope,
+    index: base + index,
+    initialUrl: url
+  });
   return /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)(import_jsx_runtime6.Fragment, { children: [
     /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("div", { className: `ts-msg-images${align === "end" ? " is-end" : ""}`, children: images.map((image, index) => /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
       ImageTile,
@@ -5272,12 +5413,12 @@ function MessageImages({ sessionId, images, align = "start" }) {
         sessionId,
         image,
         compact,
-        onOpen: setLightbox
+        onOpen: (url) => open(url, index)
       },
       `${image.attachmentId}:${index}`
     )) }),
     lightbox && (0, import_react_dom2.createPortal)(
-      /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(Lightbox, { state: lightbox, onClose: () => setLightbox(null) }),
+      /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(Lightbox, { state: lightbox, sessionId, onClose: () => setLightbox(null) }),
       document.body
     )
   ] });
@@ -5444,7 +5585,7 @@ function InjectionRow({ items }) {
     ] }, i)) })
   ] });
 }
-function ProcessGroup({ items, sessionId }) {
+function ProcessGroup({ items, sessionId, gallery }) {
   const [open, setOpen] = (0, import_react8.useState)(false);
   const tools = items.filter((m) => m.role === "tool").length;
   const thinks = items.filter((m) => m.kind === "reasoning").length;
@@ -5477,7 +5618,7 @@ function ProcessGroup({ items, sessionId }) {
         ]
       }
     ),
-    withImages.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("div", { className: "ts-proc-images", children: withImages.map((m, i) => /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(MessageImages, { sessionId, images: m.images, align: "start" }, `img${i}`)) }),
+    withImages.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("div", { className: "ts-proc-images", children: withImages.map((m, i) => /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(MessageImages, { sessionId, images: m.images, align: "start", gallery }, `img${i}`)) }),
     open && /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("div", { className: "ts-proc-body", onClick: collapseOnBodyClick(() => setOpen(false)), children: items.map((m, i) => /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(ProcItem, { msg: m }, i)) })
   ] });
 }
@@ -5729,6 +5870,16 @@ function MsgList({
     }),
     [visible]
   );
+  const galleryImages = (0, import_react8.useMemo)(() => {
+    const all = [];
+    for (const t of visible) {
+      for (const m of t.users) if (m.images?.length) all.push(...m.images);
+      for (const m of t.proc) if (m.images?.length) all.push(...m.images);
+      if (t.answer?.images?.length) all.push(...t.answer.images);
+      for (const m of t.queued) if (m.images?.length) all.push(...m.images);
+    }
+    return all;
+  }, [visible]);
   const hasHiddenInDom = hiddenTurns > 0;
   const canLoadOlder = hasHiddenInDom || hasMore && !!onLoadOlder;
   const startOlderAnchor = (0, import_react8.useCallback)(() => {
@@ -5974,16 +6125,16 @@ function MsgList({
       visible.map((t, ti) => /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("div", { className: "ts-turn", "data-turn-key": visibleKeys[ti], children: [
         t.users.map((m, i) => /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("div", { className: "ts-msg-block ts-msg-block-user", children: [
           m.content ? /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("div", { className: "ts-msg-user", children: m.content }) : null,
-          m.images?.length ? /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(MessageImages, { sessionId, images: m.images, align: "end" }) : null,
+          m.images?.length ? /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(MessageImages, { sessionId, images: m.images, align: "end", gallery: galleryImages }) : null,
           /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(MsgTime, { time: m.time, copyContent: m.content })
         ] }, `u${i}`)),
         /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(InjectionRow, { items: t.injects }),
-        t.proc.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(ProcessGroup, { items: t.proc, sessionId }),
+        t.proc.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(ProcessGroup, { items: t.proc, sessionId, gallery: galleryImages }),
         t.retries.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("div", { className: "ts-retries", children: t.retries.map((m, i) => /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(ModelRetryRow, { retry: m.retry }, m.retry?.retryId ?? `retry${i}`)) }),
         t.answer && /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("div", { className: "ts-msg-block ts-msg-block-assistant", children: [
           /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("div", { className: "ts-msg-assistant", children: [
             /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(RichText, { text: t.answer.content }),
-            t.answer.images?.length ? /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(MessageImages, { sessionId, images: t.answer.images, align: "start" }) : null
+            t.answer.images?.length ? /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(MessageImages, { sessionId, images: t.answer.images, align: "start", gallery: galleryImages }) : null
           ] }),
           /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(MsgTime, { time: t.answer.time, copyContent: t.answer.content })
         ] }),
@@ -5994,7 +6145,7 @@ function MsgList({
             m.content,
             /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("span", { className: "ts-queued-tag", title: "\u4F1A\u8BDD\u6B63\u5FD9\uFF1A\u8FD9\u6761\u6D88\u606F\u5728\u5BBF\u4E3B\u6536\u4EF6\u7BB1\u961F\u5217\u91CC\uFF0C\u4E0B\u4E00\u8F6E\u5F00\u59CB\u65F6\u9001\u8FBE\u6A21\u578B\uFF08\u4E0E\u539F\u751F\u5BF9\u8BDD\u7684\u961F\u5217\u9762\u677F\u540C\u6E90\uFF09", children: "\u6392\u961F\u4E2D" })
           ] }),
-          m.images?.length ? /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(MessageImages, { sessionId, images: m.images, align: "end" }) : null,
+          m.images?.length ? /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(MessageImages, { sessionId, images: m.images, align: "end", gallery: galleryImages }) : null,
           /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(MsgTime, { time: m.time, copyContent: m.content })
         ] }, `q${i}`))
       ] }, visibleKeys[ti] ?? ti)),
@@ -12342,7 +12493,7 @@ globalThis.__tokensaveTodo = {
 // client/src/panel/pulse.ts
 var EMPTY = { alive: 0, warn: 0, running: 0, tip: "", items: [], done: [], active: [] };
 var SCAN_INTERVAL_MS = 1e4;
-var SCAN_WINDOW_MS = 60 * 60 * 1e3;
+var SCAN_WINDOW_MS = 6 * 60 * 60 * 1e3;
 var SCAN_LIMIT = 5;
 var READ_TIMEOUT_MS = 8e3;
 var SCAN_STUCK_MS = 6e4;
@@ -12676,7 +12827,8 @@ async function scanOutcomes(ctx, projects) {
       const stale = stop > 0 && o.turnAt + TURN_FRESH_SLACK_MS < stop;
       if (stale && Date.now() - stop < STALE_NEGATIVE_GRACE_MS) continue;
       outcomeCache.set(c.id, { at, failed: o.failed, title, project: c.project, projectId: c.projectId, turnAt: o.turnAt, checkedAt: Date.now(), interruptKind: o.failed ? o.kind : void 0, ...o.failed ? { interrupt: o.info } : {} });
-      if (!o.failed && (o.kind === "completed" || o.kind === "forked") && stop > 0 && Date.now() - stop < 6e4) {
+      const endedAgo = Date.now() - o.turnAt;
+      if (!o.failed && (o.kind === "completed" || o.kind === "forked") && o.turnAt > 0 && endedAgo >= 0 && endedAgo < SCAN_WINDOW_MS) {
         recordDone({ sessionId: c.id, project: c.project, projectId: c.projectId, title, turnAt: o.turnAt });
       }
       notifyOutcome();
