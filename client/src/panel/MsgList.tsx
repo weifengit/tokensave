@@ -20,7 +20,7 @@
  * 拉一页更早的历史（见 MainChat 的 onLoadOlder），并在内容变高后把视口钉回原处。
  */
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import type { ModelRetryNotice, StreamMsg } from '../session-subscribe'
+import type { ModelRetryNotice, StreamImageAttachment, StreamMsg } from '../session-subscribe'
 import { RichText, stripMarkdown } from './RichText'
 import type { ChatView } from './chat-view'
 import { ChangesCard } from './changes-card'
@@ -289,7 +289,7 @@ function InjectionRow({ items }: { items: StreamMsg[] }) {
  * 头部会报出「思考 N 段」/「工具 M 次」——用户发完消息后一眼就能确认模型已开工，
  * 不必展开（反馈 #1）。展开后逐条列出，思考单独标注。
  */
-function ProcessGroup({ items, sessionId }: { items: StreamMsg[]; sessionId: string }) {
+function ProcessGroup({ items, sessionId, gallery }: { items: StreamMsg[]; sessionId: string; gallery?: readonly StreamImageAttachment[] }) {
   const [open, setOpen] = useState(false)
   const tools = items.filter((m) => m.role === 'tool').length
   const thinks = items.filter((m) => m.kind === 'reasoning').length
@@ -313,7 +313,7 @@ function ProcessGroup({ items, sessionId }: { items: StreamMsg[]; sessionId: str
       {withImages.length > 0 && (
         <div className="ts-proc-images">
           {withImages.map((m, i) => (
-            <MessageImages key={`img${i}`} sessionId={sessionId} images={m.images!} align="start" />
+            <MessageImages key={`img${i}`} sessionId={sessionId} images={m.images!} align="start" gallery={gallery} />
           ))}
         </div>
       )}
@@ -747,6 +747,20 @@ export function MsgList({
       }),
     [visible],
   )
+  /**
+   * 整段对话的图片，按屏幕上的显示顺序排列 —— 灯箱据此跨消息翻页。
+   * 顺序必须与渲染顺序一致：用户气泡 → 过程（含工具结果）→ 最终回答 → 排队消息。
+   */
+  const galleryImages = useMemo(() => {
+    const all: StreamImageAttachment[] = []
+    for (const t of visible) {
+      for (const m of t.users) if (m.images?.length) all.push(...m.images)
+      for (const m of t.proc) if (m.images?.length) all.push(...m.images)
+      if (t.answer?.images?.length) all.push(...t.answer.images)
+      for (const m of t.queued) if (m.images?.length) all.push(...m.images)
+    }
+    return all
+  }, [visible])
   /** DOM 里还有被窗口裁掉的更早轮（无需请求宿主，直接放大窗口即可） */
   const hasHiddenInDom = hiddenTurns > 0
   const canLoadOlder = hasHiddenInDom || (hasMore && !!onLoadOlder)
@@ -1192,12 +1206,12 @@ export function MsgList({
             {t.users.map((m, i) => (
               <div className="ts-msg-block ts-msg-block-user" key={`u${i}`}>
                 {m.content ? <div className="ts-msg-user">{m.content}</div> : null}
-                {m.images?.length ? <MessageImages sessionId={sessionId} images={m.images} align="end" /> : null}
+                {m.images?.length ? <MessageImages sessionId={sessionId} images={m.images} align="end" gallery={galleryImages} /> : null}
                 <MsgTime time={m.time} copyContent={m.content} />
               </div>
             ))}
             <InjectionRow items={t.injects} />
-            {t.proc.length > 0 && <ProcessGroup items={t.proc} sessionId={sessionId} />}
+            {t.proc.length > 0 && <ProcessGroup items={t.proc} sessionId={sessionId} gallery={galleryImages} />}
             {/* 模型重试提醒：与原生对话同口径，但恒显在过程折叠外（见 ModelRetryRow） */}
             {t.retries.length > 0 && (
               <div className="ts-retries">
@@ -1210,7 +1224,7 @@ export function MsgList({
               <div className="ts-msg-block ts-msg-block-assistant">
                 <div className="ts-msg-assistant">
                   <RichText text={t.answer.content} />
-                  {t.answer.images?.length ? <MessageImages sessionId={sessionId} images={t.answer.images} align="start" /> : null}
+                  {t.answer.images?.length ? <MessageImages sessionId={sessionId} images={t.answer.images} align="start" gallery={galleryImages} /> : null}
                 </div>
                 <MsgTime time={t.answer.time} copyContent={t.answer.content} />
               </div>
@@ -1227,7 +1241,7 @@ export function MsgList({
                   {m.content}
                   <span className="ts-queued-tag" title="会话正忙：这条消息在宿主收件箱队列里，下一轮开始时送达模型（与原生对话的队列面板同源）">排队中</span>
                 </div>
-                {m.images?.length ? <MessageImages sessionId={sessionId} images={m.images} align="end" /> : null}
+                {m.images?.length ? <MessageImages sessionId={sessionId} images={m.images} align="end" gallery={galleryImages} /> : null}
                 <MsgTime time={m.time} copyContent={m.content} />
               </div>
             ))}

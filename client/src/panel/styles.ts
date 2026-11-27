@@ -1197,6 +1197,15 @@ body.ts-vsplit-dragging .ts-card { transition:none !important; animation:none !i
 .ts-img-lightbox-close { position:fixed; top:max(12px, env(safe-area-inset-top, 0px)); right:max(12px, env(safe-area-inset-right, 0px)); box-sizing:border-box; width:44px; height:44px; padding:0; display:inline-flex; align-items:center; justify-content:center; border:1px solid rgba(255,255,255,.3); border-radius:12px; background:rgba(0,0,0,.45); color:#fff; font:inherit; font-size:18px; line-height:1; cursor:pointer; }
 .ts-img-lightbox-close:hover { background:rgba(0,0,0,.7); }
 .ts-img-lightbox-close:focus-visible { outline:2px solid rgba(96,165,250,.9); outline-offset:2px; }
+/* 翻页：两侧 44px 圆钮（手机没键盘也能点）+ 底部计数；只在图 > 1 时渲染。
+   按钮压在图片边缘上是有意的：图片已经占 92vw，留两侧空白会把它缩得太小。 */
+.ts-img-lightbox-nav { position:fixed; top:50%; transform:translateY(-50%); z-index:1; box-sizing:border-box; width:44px; height:44px; padding:0; display:inline-flex; align-items:center; justify-content:center; border:1px solid rgba(255,255,255,.32); border-radius:50%; background:rgba(0,0,0,.5); color:#fff; font:inherit; font-size:26px; line-height:1; cursor:pointer; }
+.ts-img-lightbox-nav:hover { background:rgba(0,0,0,.75); }
+.ts-img-lightbox-nav:focus-visible { outline:2px solid rgba(96,165,250,.9); outline-offset:2px; }
+.ts-img-lightbox-nav.is-prev { left:max(12px, env(safe-area-inset-left, 0px)); }
+.ts-img-lightbox-nav.is-next { right:max(12px, env(safe-area-inset-right, 0px)); }
+.ts-img-lightbox-count { position:fixed; left:50%; bottom:max(16px, env(safe-area-inset-bottom, 0px)); transform:translateX(-50%); padding:3px 12px; border-radius:999px; background:rgba(0,0,0,.55); color:#fff; font-size:calc(var(--ts-fs, 13.5px) * 0.86); font-variant-numeric:tabular-nums; line-height:1.5; }
+.ts-img-lightbox-tip { color:#fff; opacity:.82; font-size:calc(var(--ts-fs, 13.5px) * 0.94); padding:10px 16px; border-radius:10px; background:rgba(0,0,0,.45); }
 .ts-msg-tool, .ts-msg-system { align-self:stretch; opacity:.62; font-size:calc(var(--ts-fs, 13.5px) * 0.88); border-left:2px solid rgba(127,127,127,.5); padding:2px 8px; }
 /* —— 每条消息的发出时间（用户气泡 / 助手回答 / 过程项 / 注入项）——
    块容器：气泡与时间的 column flex；user 块整体右对齐、assistant 块拉伸满宽。 */

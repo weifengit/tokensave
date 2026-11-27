@@ -78,9 +78,9 @@ check('轮 key 优先用 turn（过程增长不重挂整轮，图片不回到「
 console.log('— 2. 呈现层：四处渲染 + 授权读取 —')
 
 check('用户气泡渲染图片（靠右）',
-  /\{m\.images\?\.length \? <MessageImages sessionId=\{sessionId\} images=\{m\.images\} align="end" \/> : null\}/.test(msgList))
+  /\{m\.images\?\.length \? <MessageImages sessionId=\{sessionId\} images=\{m\.images\} align="end" gallery=\{galleryImages\} \/> : null\}/.test(msgList))
 check('最终回答渲染图片（靠左）',
-  /\{t\.answer\.images\?\.length \? <MessageImages sessionId=\{sessionId\} images=\{t\.answer\.images\} align="start" \/> : null\}/.test(msgList))
+  /\{t\.answer\.images\?\.length \? <MessageImages sessionId=\{sessionId\} images=\{t\.answer\.images\} align="start" gallery=\{galleryImages\} \/> : null\}/.test(msgList))
 check('过程折叠之外的图片常显（工具结果不被埋进「过程 N 步」）',
   /const withImages = items\.filter\(\(m\) => \(m\.images\?\.length \?\? 0\) > 0\)/.test(msgList) &&
   /className="ts-proc-images"/.test(msgList) &&
@@ -104,6 +104,39 @@ check('单图外框按图片自身尺寸：长边 240 / 比例钳 [0.25,4] / 不
   /\.ts-msg-image img \{ position:absolute; inset:0; display:block; width:100%; height:100%; object-fit:cover; \}/.test(styles))
 check('多图收成 64px 方块',
   /\.ts-msg-image\.is-tile \{ flex:none; width:64px; height:64px; \}/.test(styles))
+
+console.log('— 3. 多图翻页：整段对话范围内上一张 / 下一张 —')
+
+check('MsgList 按渲染顺序汇总整段对话的图片（用户 → 过程 → 回答 → 排队）',
+  /const galleryImages = useMemo/.test(msgList) &&
+  /for \(const t of visible\)/.test(msgList) &&
+  /for \(const m of t\.users\) if \(m\.images\?\.length\) all\.push\(\.\.\.m\.images\)/.test(msgList) &&
+  /for \(const m of t\.proc\) if \(m\.images\?\.length\) all\.push\(\.\.\.m\.images\)/.test(msgList) &&
+  /if \(t\.answer\?\.images\?\.length\) all\.push\(\.\.\.t\.answer\.images\)/.test(msgList) &&
+  /for \(const m of t\.queued\) if \(m\.images\?\.length\) all\.push\(\.\.\.m\.images\)/.test(msgList))
+check('四处图片渲染都拿到同一份 gallery',
+  (msgList.match(/gallery=\{galleryImages\}/g) || []).length >= 4 &&
+  /gallery=\{gallery\}/.test(msgList))
+check('图片组按整段对话定位点击下标（不从头数）',
+  /const found = gallery && gallery\.length > 0 \? gallery\.indexOf\(images\[0\]\) : -1/.test(imagesSrc) &&
+  /index: base \+ index/.test(imagesSrc))
+check('灯箱有上一张 / 下一张按钮与「3 / 7」计数',
+  /className="ts-img-lightbox-nav is-prev"/.test(imagesSrc) &&
+  /className="ts-img-lightbox-nav is-next"/.test(imagesSrc) &&
+  /className="ts-img-lightbox-count"/.test(imagesSrc) &&
+  /\{index \+ 1\} \/ \{total\}/.test(imagesSrc))
+check('键盘 ← / →（另兼容 PageUp / PageDown）也能翻页',
+  /e\.key === 'ArrowLeft'/.test(imagesSrc) &&
+  /e\.key === 'ArrowRight'/.test(imagesSrc) &&
+  /e\.key === 'PageUp'/.test(imagesSrc) &&
+  /e\.key === 'PageDown'/.test(imagesSrc))
+check('点翻页按钮不触发遮罩关闭（stopPropagation）',
+  /e\.stopPropagation\(\); step\(-1\)/.test(imagesSrc) &&
+  /e\.stopPropagation\(\); step\(1\)/.test(imagesSrc))
+check('翻页按钮 44px 命中区 + 左右安全区（手机上可点）',
+  /\.ts-img-lightbox-nav \{[^}]*width:44px[^}]*height:44px/.test(styles) &&
+  /\.ts-img-lightbox-nav\.is-prev \{ left:max\(12px, env\(safe-area-inset-left/.test(styles) &&
+  /\.ts-img-lightbox-nav\.is-next \{ right:max\(12px, env\(safe-area-inset-right/.test(styles))
 
 console.log(fail === 0 ? '\n全部通过' : `\n${fail} 项失败`)
 process.exit(fail === 0 ? 0 : 1)
