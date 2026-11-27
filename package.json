@@ -61,10 +61,11 @@
     "test:pending-alert": "node scripts/check-pending-alert.mjs",
     "test:card-layout": "node scripts/check-card-layout.mjs",
     "test:mobile": "node scripts/check-mobile-layout.mjs",
+    "test:badge-restore": "node scripts/check-badge-restore.mjs",
     "test:chrome": "node scripts/check-chrome-position.mjs",
     "test:chrome-geo": "node scripts/check-chrome-geometry.mjs",
     "test:expset": "node scripts/check-expset-panel.mjs",
-    "test": "pnpm check && pnpm test:auto-commit && pnpm test:continue && pnpm test:width && pnpm test:hover && pnpm test:sound && pnpm test:sound-sync && pnpm test:pending-alert && pnpm test:todo && pnpm test:chrome && pnpm test:theme && pnpm test:expset && pnpm test:sidebar && pnpm test:composer-focus && pnpm test:nav && pnpm test:composer-resize && pnpm test:turn-edits && pnpm test:model-retry && pnpm test:composer-status && pnpm test:changes-card && pnpm test:agent-preset && pnpm test:dockview && pnpm test:desk && pnpm test:desk-dock && pnpm test:chat-scroll && pnpm test:msg-queue && pnpm test:chat-images && pnpm test:copy-btn && pnpm test:clone && pnpm test:project-remove && pnpm test:card-flip && pnpm test:card-layout && pnpm test:mobile && pnpm test:install && pnpm test:ui && pnpm test:desk-layout && pnpm test:first-entry && pnpm test:gh-cli",
+    "test": "pnpm check && pnpm test:auto-commit && pnpm test:continue && pnpm test:width && pnpm test:hover && pnpm test:sound && pnpm test:sound-sync && pnpm test:pending-alert && pnpm test:todo && pnpm test:chrome && pnpm test:theme && pnpm test:expset && pnpm test:sidebar && pnpm test:composer-focus && pnpm test:nav && pnpm test:composer-resize && pnpm test:turn-edits && pnpm test:model-retry && pnpm test:composer-status && pnpm test:changes-card && pnpm test:agent-preset && pnpm test:dockview && pnpm test:desk && pnpm test:desk-dock && pnpm test:chat-scroll && pnpm test:msg-queue && pnpm test:chat-images && pnpm test:copy-btn && pnpm test:clone && pnpm test:project-remove && pnpm test:card-flip && pnpm test:card-layout && pnpm test:mobile && pnpm test:badge-restore && pnpm test:install && pnpm test:ui && pnpm test:desk-layout && pnpm test:first-entry && pnpm test:gh-cli",
     "test:desk-layout": "node scripts/check-desk-first-layout.mjs"
   },
   "devDependencies": {

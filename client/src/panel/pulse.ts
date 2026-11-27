@@ -99,8 +99,11 @@ const EMPTY: PulseState = { alive: 0, warn: 0, running: 0, tip: '', items: [], d
 // —— 「上一轮是否正常结束」的判定（限量 / 节流 / 缓存）——
 /** 两次扫描之间的最小间隔 */
 const SCAN_INTERVAL_MS = 10_000
-/** 只看最近这段时间内有活动的会话（更旧的失败不再扫描，但仍保留缓存结论） */
-const SCAN_WINDOW_MS = 60 * 60 * 1000
+/** 只看最近这段时间内有活动的会话（更旧的失败 / 完成不再扫描，但仍保留缓存结论）。
+ *  为什么是 6 小时：手机新开页面时，本页不可能「观察」到别的设备上早已发生的停止
+ *  （stoppedAt 只记本页看到的）。这个窗口同时决定「连接后能把多久内的完成 / 卡住
+ *  复原成蓝黄角标」——窗口太短，用户隔一小时拿起手机就什么都没有了。 */
+const SCAN_WINDOW_MS = 6 * 60 * 60 * 1000
 /** 一次扫描最多 retain 几个会话（成本上限） */
 const SCAN_LIMIT = 5
 /** 单次 retain 读结局的超时（超过就放弃这一次，绝不能把 scanning 永久顶住） */
@@ -642,7 +645,12 @@ async function scanOutcomes(ctx: any, projects: ProjectRecord[]): Promise<void> 
       if (stale && Date.now() - stop < STALE_NEGATIVE_GRACE_MS) continue
       outcomeCache.set(c.id, { at, failed: o.failed, title, project: c.project, projectId: c.projectId, turnAt: o.turnAt, checkedAt: Date.now(), interruptKind: o.failed ? (o.kind as InterruptKind) : undefined, ...(o.failed ? { interrupt: o.info } : {}) })
       //（即时路读不到时，兜底扫描补上，不漏“正常结束”提醒）
-      if (!o.failed && (o.kind === 'completed' || o.kind === 'forked') && stop > 0 && Date.now() - stop < 60_000) {
+      // 蓝角标（未读的正常结束）不能只靠「本页观察到的停止」：手机 / 刷新后新开的
+      // 页面永远观察不到上一次停止，旧条件（stop > 0）会让角标在手机上彻底消失。
+      // 改为「这一轮刚结束不久」即可复原；已读标注仍按 turnAt 去重，看过的不会再提醒。
+      const endedAgo = Date.now() - o.turnAt
+      if (!o.failed && (o.kind === 'completed' || o.kind === 'forked')
+        && o.turnAt > 0 && endedAgo >= 0 && endedAgo < SCAN_WINDOW_MS) {
         recordDone({ sessionId: c.id, project: c.project, projectId: c.projectId, title, turnAt: o.turnAt })
       }
       notifyOutcome()
